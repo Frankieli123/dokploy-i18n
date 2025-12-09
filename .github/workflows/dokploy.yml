@@ -5,6 +5,9 @@ on:
     branches: [main, canary, "fix/re-apply-database-migration-fix", i18n]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 env:
   IMAGE_NAME: a3180623/dokploy-i18n
 
