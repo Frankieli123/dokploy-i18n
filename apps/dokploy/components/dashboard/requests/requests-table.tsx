@@ -53,6 +53,18 @@ import { createColumns, getStatusColor } from "./columns";
 import type { LogEntry } from "./show-requests";
 import { DataTableFacetedFilter } from "./status-request-filter";
 
+const getRequestsColumnLabel = (
+	columnId: string,
+	t: (key: string) => string,
+) => {
+	const columnLabelMap: Record<string, string> = {
+		level: t("requests.columns.level"),
+		RequestPath: t("requests.columns.message"),
+		time: t("requests.columns.time"),
+	};
+	return columnLabelMap[columnId] || columnId;
+};
+
 export const priorities = [
 	{
 		label: "100 - 199",
@@ -194,7 +206,8 @@ export const RequestsTable = ({ dateRange }: RequestsTableProps) => {
 										variant="outline"
 										className="sm:ml-auto max-sm:w-full"
 									>
-										{t("table.columns")} <ChevronDown className="ml-2 h-4 w-4" />
+										{t("table.columns")}{" "}
+										<ChevronDown className="ml-2 h-4 w-4" />
 									</Button>
 								</DropdownMenuTrigger>
 								<DropdownMenuContent align="end">
@@ -211,7 +224,7 @@ export const RequestsTable = ({ dateRange }: RequestsTableProps) => {
 														column.toggleVisibility(!!value)
 													}
 												>
-													{column.id}
+													{getRequestsColumnLabel(column.id, t)}
 												</DropdownMenuCheckboxItem>
 											);
 										})}

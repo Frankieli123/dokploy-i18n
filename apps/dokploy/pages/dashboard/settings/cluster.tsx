@@ -6,6 +6,7 @@ import superjson from "superjson";
 import { ShowNodes } from "@/components/dashboard/settings/cluster/nodes/show-nodes";
 import { DashboardLayout } from "@/components/layouts/dashboard-layout";
 import { appRouter } from "@/server/api/root";
+import { getLocale, serverSideTranslations } from "@/utils/i18n";
 
 const Page = () => {
 	return (
@@ -58,9 +59,12 @@ export async function getServerSideProps(
 	});
 	await helpers.user.get.prefetch();
 
+	const locale = getLocale((req as any).cookies ?? {});
+
 	return {
 		props: {
 			trpcState: helpers.dehydrate(),
+			...(await serverSideTranslations(locale, ["settings"])),
 		},
 	};
 }

@@ -48,6 +48,24 @@ interface Props {
 	serverId?: string;
 }
 
+const getNodeStatusLabel = (status: string, t: (key: string) => string) => {
+	const statusMap: Record<string, string> = {
+		Ready: t("settings.cluster.nodes.status.ready"),
+		Down: t("settings.cluster.nodes.status.down"),
+		Unknown: t("settings.cluster.nodes.status.unknown"),
+		Disconnected: t("settings.cluster.nodes.status.disconnected"),
+	};
+	return statusMap[status] || status;
+};
+
+const getNodeRoleLabel = (role: string, t: (key: string) => string) => {
+	const roleMap: Record<string, string> = {
+		manager: t("settings.cluster.nodes.role.manager"),
+		worker: t("settings.cluster.nodes.role.worker"),
+	};
+	return roleMap[role] || role;
+};
+
 export const ShowNodes = ({ serverId }: Props) => {
 	const { t } = useTranslation("settings");
 	const { data, isLoading, refetch } = api.cluster.getNodes.useQuery({
@@ -124,13 +142,13 @@ export const ShowNodes = ({ serverId }: Props) => {
 														{node.Description.Hostname}
 													</TableCell>
 													<TableCell className="text-right">
-														{node.Status.State}
+														{getNodeStatusLabel(node.Status.State, t)}
 													</TableCell>
 													<TableCell className="text-right">
 														<Badge
 															variant={isManager ? "default" : "secondary"}
 														>
-															{node?.Spec?.Role}
+															{getNodeRoleLabel(node?.Spec?.Role || "", t)}
 														</Badge>
 													</TableCell>
 													<TableCell className="text-right">

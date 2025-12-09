@@ -14,8 +14,8 @@ import {
 	type VisibilityState,
 } from "@tanstack/react-table";
 import { ChevronDown } from "lucide-react";
-import React from "react";
 import { useTranslation } from "next-i18next";
+import React from "react";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -36,6 +36,22 @@ interface DataTableProps<TData, TValue> {
 	columns: ColumnDef<TData, TValue>[];
 	data: TData[];
 }
+
+const getSwarmColumnLabel = (columnId: string, t: (key: string) => string) => {
+	const columnLabelMap: Record<string, string> = {
+		ID: t("swarm.applications.table.id"),
+		Name: t("swarm.applications.table.name"),
+		Image: t("swarm.applications.table.image"),
+		Mode: t("swarm.applications.table.mode"),
+		CurrentState: t("swarm.applications.table.currentState"),
+		DesiredState: t("swarm.applications.table.desiredState"),
+		Replicas: t("swarm.applications.table.replicas"),
+		Ports: t("swarm.applications.table.ports"),
+		Errors: t("swarm.applications.table.errors"),
+		Logs: t("swarm.applications.table.logs"),
+	};
+	return columnLabelMap[columnId] || columnId;
+};
 
 export function DataTable<TData, TValue>({
 	columns,
@@ -105,7 +121,7 @@ export function DataTable<TData, TValue>({
 												column.toggleVisibility(!!value)
 											}
 										>
-											{column.id}
+											{getSwarmColumnLabel(column.id, t)}
 										</DropdownMenuCheckboxItem>
 									);
 								})}

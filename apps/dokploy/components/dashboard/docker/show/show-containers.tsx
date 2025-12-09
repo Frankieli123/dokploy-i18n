@@ -45,6 +45,16 @@ interface Props {
 	serverId?: string;
 }
 
+const getColumnLabel = (columnId: string, t: (key: string) => string) => {
+	const columnLabelMap: Record<string, string> = {
+		name: t("docker.containers.table.name"),
+		state: t("docker.containers.table.state"),
+		status: t("docker.containers.table.status"),
+		image: t("docker.containers.table.image"),
+	};
+	return columnLabelMap[columnId] || columnId;
+};
+
 export const ShowContainers = ({ serverId }: Props) => {
 	const { t } = useTranslation("common");
 	const { data, isLoading } = api.docker.getContainers.useQuery({
@@ -115,7 +125,8 @@ export const ShowContainers = ({ serverId }: Props) => {
 												variant="outline"
 												className="sm:ml-auto max-sm:w-full"
 											>
-												{t("table.columns")} <ChevronDown className="ml-2 h-4 w-4" />
+												{t("table.columns")}{" "}
+												<ChevronDown className="ml-2 h-4 w-4" />
 											</Button>
 										</DropdownMenuTrigger>
 										<DropdownMenuContent align="end">
@@ -132,7 +143,7 @@ export const ShowContainers = ({ serverId }: Props) => {
 																column.toggleVisibility(!!value)
 															}
 														>
-															{column.id}
+															{getColumnLabel(column.id, t)}
 														</DropdownMenuCheckboxItem>
 													);
 												})}
