@@ -913,4 +913,5 @@ export const AddUserPermissions = ({ userId }: Props) => {
 				</Form>
 			</DialogContent>
 		</Dialog>
+		);
 };
