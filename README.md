@@ -31,33 +31,33 @@ Dokploy 是一款免费、可自托管的 PaaS（平台即服务），用于简�
 
 ## 🌐 选择语言 / Choose Language / 言語を選択 / 선택 언어
 
-本项目提供多语言 README 文档。请选择您的语言：
+多语言 README 已收纳至 `docs/readmes/`，请选择您的语言：
 
-This project provides multi-language README documents. Please select your language:
+This project provides multi-language README documents. Please select your language from `docs/readmes/`:
 
-このプロジェクトは多言語 README ドキュメントを提供します。言語を選択してください：
+このプロジェクトは多言語 README ドキュメントを提供します。`docs/readmes/` から言語を選択してください：
 
-- [简体中文 (Simplified Chinese)](README-zh-Hans.md)
-- [繁體中文 (Traditional Chinese)](README-zh-Hant.md)
-- [English](README-en.md)
-- [Español (Spanish)](README-es.md)
-- [Deutsch (German)](README-de.md)
-- [Français (French)](README-fr.md)
-- [Italiano (Italian)](README-it.md)
-- [日本語 (Japanese)](README-ja.md)
-- [한국어 (Korean)](README-ko.md)
-- [Русский (Russian)](README-ru.md)
-- [Türkçe (Turkish)](README-tr.md)
-- [Português (Brasil)](README-pt-br.md)
-- [Nederlands (Dutch)](README-nl.md)
-- [Norsk (Norwegian)](README-no.md)
-- [Polski (Polish)](README-pl.md)
-- [Українська (Ukrainian)](README-uk.md)
-- [فارسی (Persian/Farsi)](README-fa.md)
-- [Bahasa Indonesia](README-id.md)
-- [Қазақша (Kazakh)](README-kz.md)
-- [Azərbaycanca (Azerbaijani)](README-az.md)
-- [മലയാളം (Malayalam)](README-ml.md)
+- [简体中文 (Simplified Chinese)](docs/readmes/README-zh-Hans.md)
+- [繁體中文 (Traditional Chinese)](docs/readmes/README-zh-Hant.md)
+- [English](docs/readmes/README-en.md)
+- [Español (Spanish)](docs/readmes/README-es.md)
+- [Deutsch (German)](docs/readmes/README-de.md)
+- [Français (French)](docs/readmes/README-fr.md)
+- [Italiano (Italian)](docs/readmes/README-it.md)
+- [日本語 (Japanese)](docs/readmes/README-ja.md)
+- [한국어 (Korean)](docs/readmes/README-ko.md)
+- [Русский (Russian)](docs/readmes/README-ru.md)
+- [Türkçe (Turkish)](docs/readmes/README-tr.md)
+- [Português (Brasil)](docs/readmes/README-pt-br.md)
+- [Nederlands (Dutch)](docs/readmes/README-nl.md)
+- [Norsk (Norwegian)](docs/readmes/README-no.md)
+- [Polski (Polish)](docs/readmes/README-pl.md)
+- [Українська (Ukrainian)](docs/readmes/README-uk.md)
+- [فارسی (Persian/Farsi)](docs/readmes/README-fa.md)
+- [Bahasa Indonesia](docs/readmes/README-id.md)
+- [Қазақша (Kazakh)](docs/readmes/README-kz.md)
+- [Azərbaycanca (Azerbaijani)](docs/readmes/README-az.md)
+- [മലയാളം (Malayalam)](docs/readmes/README-ml.md)
 
 ---
 

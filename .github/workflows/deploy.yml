@@ -26,7 +26,7 @@ jobs:
           file: ./Dockerfile.cloud
           push: true
           tags: |
-            siumauricio/cloud:${{ github.ref_name == 'main' && 'latest' || 'canary' }}
+            a3180623/cloud:${{ github.ref_name == 'main' && 'latest' || 'canary' }}
           platforms: linux/amd64
           build-args: |
             NEXT_PUBLIC_UMAMI_HOST=${{ secrets.NEXT_PUBLIC_UMAMI_HOST }}
@@ -53,7 +53,7 @@ jobs:
           file: ./Dockerfile.schedule
           push: true
           tags: |
-            siumauricio/schedule:${{ github.ref_name == 'main' && 'latest' || 'canary' }}
+            a3180623/schedule:${{ github.ref_name == 'main' && 'latest' || 'canary' }}
           platforms: linux/amd64
 
   build-and-push-server-image:
@@ -76,5 +76,5 @@ jobs:
           file: ./Dockerfile.server
           push: true
           tags: |
-            siumauricio/server:${{ github.ref_name == 'main' && 'latest' || 'canary' }}
+            a3180623/server:${{ github.ref_name == 'main' && 'latest' || 'canary' }}
           platforms: linux/amd64
