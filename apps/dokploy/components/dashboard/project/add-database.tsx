@@ -164,7 +164,7 @@ const databasesMap = {
 	},
 };
 
-type AddDatabase = z.infer<ReturnType<typeof createMySchema>>;
+type AddDatabaseForm = z.infer<ReturnType<typeof createMySchema>>;
 
 interface Props {
 	environmentId: string;
@@ -193,7 +193,7 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 	// Self-hosted: show only if there are remote servers (Dokploy is default, hide if no remote servers)
 	const shouldShowServerDropdown = hasServers;
 
-	const form = useForm<AddDatabase>({
+	const form = useForm<AddDatabaseForm>({
 		defaultValues: {
 			type: "postgres",
 			dockerImage: "",
@@ -216,7 +216,7 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 		mysql: mysqlMutation,
 	};
 
-	const onSubmit = async (data: AddDatabase) => {
+	const onSubmit = async (data: AddDatabaseForm) => {
 		const defaultDockerImage =
 			data.dockerImage || dockerImageDefaultPlaceholder[data.type];
 
@@ -465,7 +465,6 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 											)}
 										/>
 									)}
-								/>
 								<FormField
 									control={form.control}
 									name="appName"
