@@ -1,5 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowUpDown, MoreHorizontal } from "lucide-react";
+import type { TFunction } from "next-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,7 +15,7 @@ import { DockerTerminalModal } from "../terminal/docker-terminal-modal";
 import type { Container } from "./show-containers";
 
 export const createColumns = (
-	t: (key: string) => string,
+	t: TFunction,
 ): ColumnDef<Container>[] => [
 	{
 		accessorKey: "name",
@@ -113,7 +114,7 @@ export const createColumns = (
 				/^(\d+)\s+(second|seconds|minute|minutes|hour|hours|day|days|week|weeks|month|months)(\s+ago)?$/i,
 			);
 
-			if (timeMatch) {
+			if (timeMatch && timeMatch[2]) {
 				const amount = timeMatch[1];
 				const unit = timeMatch[2].toLowerCase();
 				const isAgo = timeMatch[3]?.trim() === "ago";
