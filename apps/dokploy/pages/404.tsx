@@ -1,5 +1,6 @@
-import Link from "next/link";
 import type { GetStaticProps } from "next";
+import Head from "next/head";
+import Link from "next/link";
 import { useTranslation } from "next-i18next";
 import { Logo } from "@/components/shared/logo";
 import { buttonVariants } from "@/components/ui/button";
@@ -10,6 +11,9 @@ export default function NotFoundPage() {
 
 	return (
 		<div className="h-screen">
+			<Head>
+				<title>{t("error.pageNotFoundTitle")}</title>
+			</Head>
 			<div className="max-w-[50rem] flex flex-col mx-auto size-full">
 				<header className="mb-auto flex justify-center z-50 w-full py-4">
 					<nav className="px-4 sm:px-6 lg:px-8" aria-label="Global">
@@ -28,6 +32,9 @@ export default function NotFoundPage() {
 						<h1 className="block text-7xl font-bold text-primary sm:text-9xl">
 							404
 						</h1>
+						<h2 className="mt-3 text-2xl font-semibold text-foreground">
+							{t("error.pageNotFoundHeading")}
+						</h2>
 						<p className="mt-3 text-muted-foreground">
 							{t("error.pageNotFoundMessage")}
 						</p>
@@ -85,4 +92,3 @@ export const getStaticProps: GetStaticProps = async ({ locale }) => {
 		},
 	};
 };
-

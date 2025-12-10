@@ -164,7 +164,7 @@ export const duplicateEnvironment = async (
 export const createProductionEnvironment = async (projectId: string) => {
 	return createEnvironment({
 		name: "production",
-		description: "Production environment",
+		description: null,
 		projectId,
 	});
 };

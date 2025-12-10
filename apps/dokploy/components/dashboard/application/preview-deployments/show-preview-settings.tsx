@@ -1,5 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { HelpCircle, Plus, Settings2, X } from "lucide-react";
+import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -79,6 +80,7 @@ interface Props {
 export const ShowPreviewSettings = ({ applicationId }: Props) => {
 	const [isOpen, setIsOpen] = useState(false);
 	const [isEnabled, setIsEnabled] = useState(false);
+	const { t } = useTranslation("common");
 	const { mutateAsync: updateApplication, isLoading } =
 		api.application.update.useMutation();
 
@@ -178,7 +180,9 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 										name="wildcardDomain"
 										render={({ field }) => (
 											<FormItem>
-												<FormLabel>{t("preview.settings.wildcardDomain")}</FormLabel>
+												<FormLabel>
+													{t("preview.settings.wildcardDomain")}
+												</FormLabel>
 												<FormControl>
 													<Input placeholder="*.traefik.me" {...field} />
 												</FormControl>
@@ -191,7 +195,9 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 										name="previewPath"
 										render={({ field }) => (
 											<FormItem>
-												<FormLabel>{t("preview.settings.previewPath")}</FormLabel>
+												<FormLabel>
+													{t("preview.settings.previewPath")}
+												</FormLabel>
 												<FormControl>
 													<Input placeholder="/" {...field} />
 												</FormControl>
@@ -218,16 +224,16 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 										render={({ field }) => (
 											<FormItem className="md:col-span-2">
 												<div className="flex items-center gap-2">
-													<FormLabel>{t("preview.settings.previewLabels")}</FormLabel>
+													<FormLabel>
+														{t("preview.settings.previewLabels")}
+													</FormLabel>
 													<TooltipProvider>
 														<Tooltip>
 															<TooltipTrigger asChild>
 																<HelpCircle className="size-4 text-muted-foreground hover:text-foreground transition-colors cursor-pointer" />
 															</TooltipTrigger>
 															<TooltipContent>
-																<p>
-																	{t("preview.settings.previewLabelsHelp")}
-																</p>
+																<p>{t("preview.settings.previewLabelsHelp")}</p>
 															</TooltipContent>
 														</Tooltip>
 													</TooltipProvider>
@@ -298,7 +304,9 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 										name="previewLimit"
 										render={({ field }) => (
 											<FormItem>
-												<FormLabel>{t("preview.settings.previewLimit")}</FormLabel>
+												<FormLabel>
+													{t("preview.settings.previewLimit")}
+												</FormLabel>
 												<FormControl>
 													<NumberInput placeholder="3000" {...field} />
 												</FormControl>
@@ -312,7 +320,9 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 										render={({ field }) => (
 											<FormItem className="flex flex-row items-center justify-between p-3 mt-4 border rounded-lg shadow-sm">
 												<div className="space-y-0.5">
-													<FormLabel>{t("preview.settings.previewHttps")}</FormLabel>
+													<FormLabel>
+														{t("preview.settings.previewHttps")}
+													</FormLabel>
 													<FormDescription>
 														{t("preview.settings.previewHttpsDesc")}
 													</FormDescription>
@@ -333,33 +343,33 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 											name="previewCertificateType"
 											render={({ field }) => (
 												<FormItem>
-												<FormLabel>
-													{t("preview.settings.previewCertificateType")}
-												</FormLabel>
+													<FormLabel>
+														{t("preview.settings.previewCertificateType")}
+													</FormLabel>
 													<Select
 														onValueChange={field.onChange}
 														defaultValue={field.value || ""}
 													>
 														<FormControl>
 															<SelectTrigger>
-															<SelectValue
-																placeholder={t(
-																	"preview.settings.previewCertificatePlaceholder",
-																)}
-															/>
+																<SelectValue
+																	placeholder={t(
+																		"preview.settings.previewCertificatePlaceholder",
+																	)}
+																/>
 															</SelectTrigger>
 														</FormControl>
 
 														<SelectContent>
-														<SelectItem value="none">
-															{t("preview.settings.cert.none")}
-														</SelectItem>
-														<SelectItem value={"letsencrypt"}>
-															{t("preview.settings.cert.letsencrypt")}
-														</SelectItem>
-														<SelectItem value={"custom"}>
-															{t("preview.settings.cert.custom")}
-														</SelectItem>
+															<SelectItem value="none">
+																{t("preview.settings.cert.none")}
+															</SelectItem>
+															<SelectItem value={"letsencrypt"}>
+																{t("preview.settings.cert.letsencrypt")}
+															</SelectItem>
+															<SelectItem value={"custom"}>
+																{t("preview.settings.cert.custom")}
+															</SelectItem>
 														</SelectContent>
 													</Select>
 													<FormMessage />
@@ -374,9 +384,9 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 											name="previewCustomCertResolver"
 											render={({ field }) => (
 												<FormItem>
-												<FormLabel>
-													{t("preview.settings.previewCustomCertResolver")}
-												</FormLabel>
+													<FormLabel>
+														{t("preview.settings.previewCustomCertResolver")}
+													</FormLabel>
 													<FormControl>
 														<Input
 															placeholder="my-custom-resolver"

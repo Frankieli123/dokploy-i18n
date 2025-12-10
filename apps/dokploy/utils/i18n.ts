@@ -16,7 +16,9 @@ export const serverSideTranslations = (
 ) =>
 	originalServerSideTranslations(
 		locale,
-		Array.from(new Set([...(DEFAULT_NAMESPACES as unknown as string[]), ...namespaces])),
+		Array.from(
+			new Set([...(DEFAULT_NAMESPACES as unknown as string[]), ...namespaces]),
+		),
 		{
 			fallbackLng: "en",
 			keySeparator: false,

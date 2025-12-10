@@ -89,13 +89,71 @@ export const createColumns = (
 			const match = value.match(
 				/^(Up|Exited|Paused|Restarting|Created|Removing|Dead)(.*)$/i,
 			);
-			const translated =
-				match?.[1]
-					? `${t(`docker.containers.status.${match[1].toLowerCase()}`, {
-							defaultValue: match[1],
-						})}${match[2] ?? ""}`
-					: value;
-			return <div className="capitalize">{translated}</div>;
+			
+			if (!match?.[1]) {
+				return <div className="capitalize">{value}</div>;
+			}
+
+			const statusKey = match[1].toLowerCase();
+			const statusTranslated = t(`docker.containers.status.${statusKey}`, {
+				defaultValue: match[1],
+			});
+
+			// Parse and translate time information (e.g., " 4 hours", " 2 minutes", " 1 day", " (0) 2 days ago")
+			const timePart = match[2]?.trim() || "";
+			if (!timePart) {
+				return <div className="capitalize">{statusTranslated}</div>;
+			}
+
+			// Remove parentheses content (e.g., "(0)") if present
+			const cleanedTimePart = timePart.replace(/\([^)]*\)\s*/g, "").trim();
+
+			// Match time patterns: "4 hours", "2 minutes", "1 day", "2 days ago", etc.
+			const timeMatch = cleanedTimePart.match(
+				/^(\d+)\s+(second|seconds|minute|minutes|hour|hours|day|days|week|weeks|month|months)(\s+ago)?$/i,
+			);
+
+			if (timeMatch) {
+				const amount = timeMatch[1];
+				const unit = timeMatch[2].toLowerCase();
+				const isAgo = timeMatch[3]?.trim() === "ago";
+
+				// Map English units to translation keys
+				const unitMap: Record<string, string> = {
+					second: "docker.containers.uptime.second",
+					seconds: "docker.containers.uptime.seconds",
+					minute: "docker.containers.uptime.minute",
+					minutes: "docker.containers.uptime.minutes",
+					hour: "docker.containers.uptime.hour",
+					hours: "docker.containers.uptime.hours",
+					day: "docker.containers.uptime.day",
+					days: "docker.containers.uptime.days",
+					week: "docker.containers.uptime.week",
+					weeks: "docker.containers.uptime.weeks",
+					month: "docker.containers.uptime.month",
+					months: "docker.containers.uptime.months",
+				};
+
+				const unitKey = unitMap[unit] || unit;
+				const unitTranslated = t(unitKey, { defaultValue: unit });
+				const agoTranslated = isAgo
+					? ` ${t("docker.containers.uptime.ago", { defaultValue: "ago" })}`
+					: "";
+
+				return (
+					<div className="capitalize">
+						{statusTranslated} {amount} {unitTranslated}
+						{agoTranslated}
+					</div>
+				);
+			}
+
+			// If no time match, return status with original time part
+			return (
+				<div className="capitalize">
+					{statusTranslated} {timePart}
+				</div>
+			);
 		},
 	},
 	{

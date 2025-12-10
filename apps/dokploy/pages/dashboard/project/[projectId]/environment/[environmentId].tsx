@@ -950,7 +950,14 @@ const EnvironmentPage = (
 									</EnvironmentVariables>
 								</CardTitle>
 								<CardDescription>
-									{currentEnvironment.description || t("environment.noDescription")}
+									{currentEnvironment.description
+											? currentEnvironment.description
+											: t("environment.description.default", {
+												name:
+													currentEnvironment.name === "production"
+														? t("environment.default.production")
+														: currentEnvironment.name,
+											})}
 								</CardDescription>
 							</CardHeader>
 							<div className="flex flex-row gap-4 flex-wrap justify-between items-center">
