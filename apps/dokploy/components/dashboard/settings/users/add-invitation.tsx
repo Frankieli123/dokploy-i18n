@@ -55,8 +55,9 @@ type AddInvitation = z.infer<ReturnType<typeof createAddInvitationSchema>>;
 export const AddInvitation = () => {
 	const [open, setOpen] = useState(false);
 	const utils = api.useUtils();
-	const { t } = useTranslation(["common", "settings"]);
-	const schema = useMemo(() => createAddInvitationSchema(t), [t]);
+	const { t } = useTranslation("settings");
+	const { t: tCommon } = useTranslation("common");
+	const schema = useMemo(() => createAddInvitationSchema(tCommon), [tCommon]);
 	const [isLoading, setIsLoading] = useState(false);
 	const { data: isCloud } = api.settings.isCloud.useQuery();
 	const { data: emailProviders } =
