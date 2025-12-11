@@ -86,7 +86,7 @@ Die aktuelle Version wird mit einer integrierten mehrsprachigen Benutzeroberflä
 - മലയാളം (ml)
 - Polski (pl)
 
-Sie können die Sprache von der oberen rechten Ecke des Dokploy-Dashboards aus ändern.
+Sie können die Sprache von der unteren linken Ecke des Dokploy-Dashboards aus ändern.
 
 ## ♥️ Sponsoren
 

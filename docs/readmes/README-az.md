@@ -86,7 +86,7 @@ Mövcud versiya daxili çoxdilli interfeyslə (i18n) təchiz edilmişdir və aş
 - മലയാളം (ml)
 - Polski (pl)
 
-Dil Dokploy idarə panelinin sağ yuxarı küncündən dəyişdirilə bilər.
+Dil Dokploy idarə panelinin sol aşağı küncündən dəyişdirilə bilər.
 
 ## ♥️ Sponsorlar
 

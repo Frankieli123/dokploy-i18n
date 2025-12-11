@@ -86,7 +86,7 @@ La versión actual viene con una interfaz multiidioma (i18n) integrada y soporta
 - മലയാളം (ml)
 - Polski (pl)
 
-Puedes cambiar el idioma desde la esquina superior derecha del panel de Dokploy.
+Puedes cambiar el idioma desde la esquina inferior izquierda del panel de Dokploy.
 
 ## ♥️ Patrocinadores
 

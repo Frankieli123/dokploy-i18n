@@ -86,7 +86,7 @@ curl -sSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/insta
 - മലയാളം (ml)
 - Polski (pl)
 
-Dokploy ഡാഷ്‌ബോർഡിന്റെ മുകളിലെ വലത് മൂലയിൽ നിന്ന് നിങ്ങൾക്ക് ഭാഷ മാറ്റാം.
+Dokploy ഡാഷ്‌ബോർഡിന്റെ താഴെയുള്ള ഇടത് മൂലയിൽ നിന്ന് നിങ്ങൾക്ക് ഭാഷ മാറ്റാം.
 
 ## ♥️ സ്പോൺസർമാർ
 

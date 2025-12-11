@@ -86,7 +86,7 @@ Aktualna wersja jest dostarczana ze zintegrowanym wielojęzycznym interfejsem (i
 - മലയാളം (ml)
 - Polski (pl)
 
-Możesz zmienić język z prawego górnego rogu panelu Dokploy.
+Możesz zmienić język z lewego dolnego rogu panelu Dokploy.
 
 ## ♥️ Sponsorzy
 

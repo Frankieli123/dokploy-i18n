@@ -86,7 +86,7 @@ Den nåværende versjonen leveres med et innebygd flerspråklig grensesnitt (i18
 - മലയാളം (ml)
 - Polski (pl)
 
-Du kan endre språket fra øvre høyre hjørne av Dokploy-dashbordet.
+Du kan endre språket fra nedre venstre hjørne av Dokploy-dashbordet.
 
 ## ♥️ Sponsorer
 

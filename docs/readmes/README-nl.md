@@ -86,7 +86,7 @@ De huidige versie wordt geleverd met een ingebouwde meertalige interface (i18n) 
 - മലയാളം (ml)
 - Polski (pl)
 
-U kunt de taal wijzigen vanuit de rechterbovenhoek van het Dokploy-dashboard.
+U kunt de taal wijzigen vanuit de linkerbenedenhoek van het Dokploy-dashboard.
 
 ## ♥️ Sponsors
 

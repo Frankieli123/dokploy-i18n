@@ -3,6 +3,10 @@ name: Dokploy Monitoring Build
 on:
   push:
     branches: [main, canary, i18n]
+    paths-ignore:
+      - 'docs/**'
+      - 'README*.md'
+      - '*.md'
 
 env:
   IMAGE_NAME: a3180623/dokploy-monitoring

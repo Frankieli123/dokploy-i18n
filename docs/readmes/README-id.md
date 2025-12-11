@@ -86,7 +86,7 @@ Versi saat ini dilengkapi dengan antarmuka multi-bahasa (i18n) bawaan dan menduk
 - മലയാളം (ml)
 - Polski (pl)
 
-Anda dapat mengubah bahasa dari sudut kanan atas dashboard Dokploy.
+Anda dapat mengubah bahasa dari sudut kiri bawah dashboard Dokploy.
 
 ## ♥️ Sponsor
 

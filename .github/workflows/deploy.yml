@@ -3,6 +3,10 @@ name: Build Docker images
 on:
   push:
     branches: [main, canary]
+    paths-ignore:
+      - 'docs/**'
+      - 'README*.md'
+      - '*.md'
   workflow_dispatch:
 
 jobs:

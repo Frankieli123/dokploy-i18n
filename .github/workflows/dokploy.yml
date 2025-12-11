@@ -3,6 +3,10 @@ name: Dokploy Docker Build
 on:
   push:
     branches: [main, canary, "fix/re-apply-database-migration-fix", i18n]
+    paths-ignore:
+      - 'docs/**'
+      - 'README*.md'
+      - '*.md'
   workflow_dispatch:
 
 permissions:

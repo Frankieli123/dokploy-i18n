@@ -86,7 +86,7 @@ Mevcut sürüm, yerleşik çok dilli arayüz (i18n) ile birlikte gelir ve aşağ
 - മലയാളം (ml)
 - Polski (pl)
 
-Dil, Dokploy kontrol panelinin sağ üst köşesinden değiştirilebilir.
+Dil, Dokploy kontrol panelinin sol alt köşesinden değiştirilebilir.
 
 ## ♥️ Sponsorlar
 

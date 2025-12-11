@@ -86,7 +86,7 @@ curl -sSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/insta
 - മലയാളം (ml)
 - Polski (pl)
 
-Dokploy 대시보드의 오른쪽 상단에서 언어를 변경할 수 있습니다.
+Dokploy 대시보드의 왼쪽 하단에서 언어를 변경할 수 있습니다.
 
 ## ♥️ 스폰서
 

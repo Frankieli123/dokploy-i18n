@@ -86,7 +86,7 @@ The current version comes with a built-in multi-language interface (i18n) and su
 - മലയാളം (ml)
 - Polski (pl)
 
-You can switch the language from the top-right corner of the Dokploy dashboard.
+You can switch the language from the bottom-left corner of the Dokploy dashboard.
 
 ## ♥️ Sponsors
 
