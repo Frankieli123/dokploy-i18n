@@ -1,4 +1,5 @@
 import { format } from "date-fns";
+import { enUS, zhCN, zhTW } from "date-fns/locale";
 import { Loader2, MoreHorizontal, Users } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
@@ -32,11 +33,24 @@ import { api } from "@/utils/api";
 import { AddUserPermissions } from "./add-permissions";
 
 export const ShowUsers = () => {
-	const { t } = useTranslation("settings");
+	const { t, i18n } = useTranslation("settings");
 	const { data: isCloud } = api.settings.isCloud.useQuery();
 	const { data, isLoading, refetch } = api.user.all.useQuery();
 	const { mutateAsync } = api.user.remove.useMutation();
 	const utils = api.useUtils();
+
+	const locale =
+		i18n?.language === "zh-Hans"
+			? zhCN
+			: i18n?.language === "zh-Hant"
+				? zhTW
+				: enUS;
+
+	const roleLabels: Record<string, string> = {
+		owner: t("settings.invitations.role.owner"),
+		admin: t("settings.invitations.role.admin"),
+		member: t("settings.invitations.role.member"),
+	};
 
 	return (
 		<div className="w-full">
@@ -104,7 +118,8 @@ export const ShowUsers = () => {
 																			: "secondary"
 																	}
 																>
-																	{member.role}
+																	{roleLabels[member.role] ||
+																		member.role}
 																</Badge>
 															</TableCell>
 															<TableCell className="text-center">
@@ -114,7 +129,9 @@ export const ShowUsers = () => {
 															</TableCell>
 															<TableCell className="text-center">
 																<span className="text-sm text-muted-foreground">
-																	{format(new Date(member.createdAt), "PPpp")}
+																	{format(new Date(member.createdAt), "PPpp", {
+																		locale,
+																	})}
 																</span>
 															</TableCell>
 

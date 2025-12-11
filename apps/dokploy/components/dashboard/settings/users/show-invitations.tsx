@@ -1,5 +1,6 @@
 import copy from "copy-to-clipboard";
 import { format, isPast } from "date-fns";
+import { enUS, zhCN, zhTW } from "date-fns/locale";
 import { Loader2, Mail, MoreHorizontal, Users } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "next-i18next";
@@ -33,9 +34,16 @@ import { api } from "@/utils/api";
 import { AddInvitation } from "./add-invitation";
 
 export const ShowInvitations = () => {
-	const { t } = useTranslation("settings");
+	const { t, i18n } = useTranslation("settings");
 	const { data, isLoading, refetch } =
 		api.organization.allInvitations.useQuery();
+
+	const locale =
+		i18n?.language === "zh-Hans"
+			? zhCN
+			: i18n?.language === "zh-Hant"
+				? zhTW
+				: enUS;
 
 	const roleLabels: Record<string, string> = {
 		owner: t("settings.invitations.role.owner"),
@@ -143,7 +151,9 @@ export const ShowInvitations = () => {
 																</Badge>
 															</TableCell>
 															<TableCell className="text-center">
-																{format(new Date(invitation.expiresAt), "PPpp")}{" "}
+																{format(new Date(invitation.expiresAt), "PPpp", {
+																	locale,
+																})}{" "}
 																{isExpired ? (
 																	<span className="text-muted-foreground">
 																		{t("settings.invitations.status.expired")}

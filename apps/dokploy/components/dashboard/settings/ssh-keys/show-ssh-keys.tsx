@@ -1,4 +1,5 @@
 import { formatDistanceToNow } from "date-fns";
+import { enUS, zhCN, zhTW } from "date-fns/locale";
 import { KeyRound, Loader2, Trash2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
@@ -15,10 +16,17 @@ import { api } from "@/utils/api";
 import { HandleSSHKeys } from "./handle-ssh-keys";
 
 export const ShowDestinations = () => {
-	const { t } = useTranslation("settings");
+	const { t, i18n } = useTranslation("settings");
 	const { data, isLoading, refetch } = api.sshKey.all.useQuery();
 	const { mutateAsync, isLoading: isRemoving } =
 		api.sshKey.remove.useMutation();
+
+	const locale =
+		i18n?.language === "zh-Hans"
+			? zhCN
+			: i18n?.language === "zh-Hant"
+				? zhTW
+				: enUS;
 
 	return (
 		<div className="w-full">
@@ -69,11 +77,12 @@ export const ShowDestinations = () => {
 																			{sshKey.description}
 																		</span>
 																		<div className="text-xs  text-muted-foreground">
-																			{t("settings.sshKeys.page.createdLabel")} {" "}
+																			{t("settings.sshKeys.page.createdLabel")}{" "}
 																			{formatDistanceToNow(
 																				new Date(sshKey.createdAt),
 																				{
 																					addSuffix: true,
+																					locale,
 																				},
 																			)}
 																		</div>
@@ -87,7 +96,9 @@ export const ShowDestinations = () => {
 
 															<DialogAction
 																title={t("settings.sshKeys.delete.title")}
-																description={t("settings.sshKeys.delete.description")}
+																description={t(
+																	"settings.sshKeys.delete.description",
+																)}
 																type="destructive"
 																onClick={async () => {
 																	await mutateAsync({
@@ -100,7 +111,9 @@ export const ShowDestinations = () => {
 																			refetch();
 																		})
 																		.catch(() => {
-																			toast.error(t("settings.sshKeys.delete.error"));
+																			toast.error(
+																				t("settings.sshKeys.delete.error"),
+																			);
 																		});
 																}}
 															>
