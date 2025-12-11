@@ -606,6 +606,11 @@ function SidebarLogo() {
 								</DropdownMenuLabel>
 								{organizations?.map((org) => {
 									const isDefault = org.members?.[0]?.isDefault ?? false;
+									const displayName =
+										org.name &&
+										org.name.trim().toLowerCase() !== "my organization"
+											? org.name
+											: t("organization.defaultName");
 									return (
 										<div
 											className="flex flex-row justify-between"
@@ -622,7 +627,7 @@ function SidebarLogo() {
 											>
 												<div className="flex flex-col gap-1">
 													<div className="flex items-center gap-2">
-														{org.name}
+														{displayName}
 													</div>
 												</div>
 												<div className="flex size-6 items-center justify-center rounded-sm border">
