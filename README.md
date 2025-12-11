@@ -110,9 +110,9 @@ The current version comes with a built-in multi-language interface (i18n) and su
 - Türkçe（tr）| Nederlands（nl）| Norsk（no）| Português (Brasil)（pt-br）| فارسی‎ (Farsi)（fa）
 - Bahasa Indonesia（id）| Українська（uk）| Қазақша（kz）| Azərbaycanca（az）| മലയാളം（ml）| Polski（pl）
 
-你可以从 Dokploy 仪表板的右上角切换语言。
+你可以从 Dokploy 仪表板的左下角切换语言。
 
-You can switch the language from the top-right corner of the Dokploy dashboard.
+You can switch the language from the bottom-left corner of the Dokploy dashboard.
 
 ## ♥️ Sponsors
 
