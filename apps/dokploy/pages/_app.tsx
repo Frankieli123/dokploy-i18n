@@ -70,7 +70,7 @@ const MyApp = ({
 export default api.withTRPC(
 	appWithTranslation(MyApp, {
 		i18n: {
-			defaultLocale: "zh-Hans",
+			defaultLocale: "en",
 			locales: Object.values(Languages).map((language) => language.code),
 			localeDetection: false,
 		},

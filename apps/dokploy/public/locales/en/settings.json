@@ -299,6 +299,8 @@
     "settings.invitations.add.button": "Add Invitation",
     "settings.invitations.add.dialog.title": "Add Invitation",
     "settings.invitations.add.dialog.description": "Invite a new user to your organization.",
+    "settings.invitations.create.success": "Invitation created successfully",
+    "settings.invitations.create.withEmailSuccess": "Invitation created and email sent",
     "settings.invitations.add.form.email.label": "Email",
     "settings.invitations.add.form.email.placeholder": "email@dokploy.com",
     "settings.invitations.add.form.email.description": "This will be the email of the new user.",

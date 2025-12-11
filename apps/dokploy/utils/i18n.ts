@@ -1,7 +1,7 @@
 import type { NextApiRequestCookies } from "next/dist/server/api-utils";
 
 export function getLocale(cookies: NextApiRequestCookies) {
-	const locale = cookies.DOKPLOY_LOCALE ?? "zh-Hans";
+	const locale = cookies.DOKPLOY_LOCALE ?? "en";
 	return locale;
 }
 
@@ -23,7 +23,7 @@ export const serverSideTranslations = (
 			fallbackLng: "en",
 			keySeparator: false,
 			i18n: {
-				defaultLocale: "zh-Hans",
+				defaultLocale: "en",
 				locales: Object.values(Languages).map((language) => language.code),
 				localeDetection: false,
 			},
