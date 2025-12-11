@@ -1139,6 +1139,7 @@
     "application.domains.dns.status.valid": "DNS معتبر است",
     "application.domains.dns.status.behindCdn": "پشت {{provider}}",
     "application.domains.dns.status.validate": "اعتبارسنجی DNS",
+    "application.domains.dns.error.mismatch": "دامنه به {{resolvedIp}} اشاره می‌کند اما باید به {{expectedIp}} اشاره کند",
     "application.domains.dns.tooltip.errorTitle": "خطا:",
     "application.domains.dns.tooltip.validate": "برای اعتبارسنجی پیکربندی DNS کلیک کنید",
     "application.domains.dns.toast.clipboard": "در کلیپ‌بورد کپی شد!",

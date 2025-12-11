@@ -1139,6 +1139,7 @@
     "application.domains.dns.status.valid": "DNS дійсний",
     "application.domains.dns.status.behindCdn": "За {{provider}}",
     "application.domains.dns.status.validate": "Перевірити DNS",
+    "application.domains.dns.error.mismatch": "Домен розв'язується на {{resolvedIp}}, але має вказувати на {{expectedIp}}",
     "application.domains.dns.tooltip.errorTitle": "Помилка:",
     "application.domains.dns.tooltip.validate": "Натисніть для перевірки конфігурації DNS",
     "application.domains.dns.toast.clipboard": "Скопійовано в буфер обміну!",

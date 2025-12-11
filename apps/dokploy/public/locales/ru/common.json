@@ -1139,6 +1139,7 @@
     "application.domains.dns.status.valid": "DNS корректен",
     "application.domains.dns.status.behindCdn": "За CDN {{provider}}",
     "application.domains.dns.status.validate": "Проверить DNS",
+    "application.domains.dns.error.mismatch": "Домен разрешается в {{resolvedIp}}, но должен указывать на {{expectedIp}}",
     "application.domains.dns.tooltip.errorTitle": "Ошибка:",
     "application.domains.dns.tooltip.validate": "Нажмите, чтобы проверить конфигурацию DNS",
     "application.domains.dns.toast.clipboard": "Скопировано в буфер обмена!",

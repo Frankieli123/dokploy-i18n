@@ -109,18 +109,28 @@ export const ShowDomains = ({ id, type }: Props) => {
 		}));
 
 		try {
+			const serverIpToValidate =
+				application?.server?.ipAddress?.toString() || ip?.toString() || "";
+
 			const result = await validateDomain({
 				domain: host,
-				serverIp:
-					application?.server?.ipAddress?.toString() || ip?.toString() || "",
+				serverIp: serverIpToValidate,
 			});
+
+			const errorMessage =
+				result.error && !result.isValid && serverIpToValidate
+					? t("application.domains.dns.error.mismatch", {
+							resolvedIp: result.resolvedIp,
+							expectedIp: serverIpToValidate,
+						})
+					: result.error;
 
 			setValidationStates((prev) => ({
 				...prev,
 				[host]: {
 					isLoading: false,
 					isValid: result.isValid,
-					error: result.error,
+					error: errorMessage,
 					resolvedIp: result.resolvedIp,
 					cdnProvider: result.cdnProvider,
 					message: result.error && result.isValid ? result.error : undefined,

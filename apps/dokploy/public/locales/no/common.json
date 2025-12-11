@@ -1139,6 +1139,7 @@
     "application.domains.dns.status.valid": "DNS gyldig",
     "application.domains.dns.status.behindCdn": "Bak {{provider}}",
     "application.domains.dns.status.validate": "Valider DNS",
+    "application.domains.dns.error.mismatch": "Domenet peker til {{resolvedIp}}, men skal peke til {{expectedIp}}",
     "application.domains.dns.tooltip.errorTitle": "Feil:",
     "application.domains.dns.tooltip.validate": "Klikk for å validere DNS-konfigurasjon",
     "application.domains.dns.toast.clipboard": "Kopiert til utklippstavle!",

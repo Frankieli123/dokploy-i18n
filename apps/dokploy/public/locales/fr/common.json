@@ -1139,6 +1139,7 @@
     "application.domains.dns.status.valid": "DNS valide",
     "application.domains.dns.status.behindCdn": "Derrière {{provider}}",
     "application.domains.dns.status.validate": "Valider le DNS",
+    "application.domains.dns.error.mismatch": "Le domaine se résout vers {{resolvedIp}} mais devrait pointer vers {{expectedIp}}",
     "application.domains.dns.tooltip.errorTitle": "Erreur :",
     "application.domains.dns.tooltip.validate": "Cliquez pour valider la configuration DNS",
     "application.domains.dns.toast.clipboard": "Copié dans le presse-papiers !",

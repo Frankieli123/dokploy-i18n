@@ -1139,6 +1139,7 @@
     "application.domains.dns.status.valid": "DNS സാധുവാണ്",
     "application.domains.dns.status.behindCdn": "{{provider}} പിന്നിൽ",
     "application.domains.dns.status.validate": "DNS സ്ഥിരീകരിക്കുക",
+    "application.domains.dns.error.mismatch": "ഡൊമെയിൻ {{resolvedIp}} ആയി പരിഭാഷയാകുന്നു, പക്ഷെ {{expectedIp}} ആയിരിക്കണം",
     "application.domains.dns.tooltip.errorTitle": "പിശക്:",
     "application.domains.dns.tooltip.validate": "DNS കോൺഫിഗറേഷൻ സ്ഥിരീകരിക്കാൻ ക്ലിക്ക് ചെയ്യുക",
     "application.domains.dns.toast.clipboard": "ക്ലിപ്പ്ബോർഡിലേക്ക് കോപ്പി ചെയ്തു!",

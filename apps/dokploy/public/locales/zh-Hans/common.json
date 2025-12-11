@@ -1233,6 +1233,7 @@
 	"application.domains.dns.status.valid": "DNS 配置有效",
 	"application.domains.dns.status.behindCdn": "位于 {{provider}} CDN 之后",
 	"application.domains.dns.status.validate": "校验 DNS",
+	"application.domains.dns.error.mismatch": "域名解析到了 {{resolvedIp}}，应指向 {{expectedIp}}",
 	"application.domains.dns.tooltip.errorTitle": "错误：",
 	"application.domains.dns.tooltip.validate": "点击以校验 DNS 配置。",
 	"application.domains.dns.toast.clipboard": "已复制到剪贴板",

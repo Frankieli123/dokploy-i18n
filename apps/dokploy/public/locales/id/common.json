@@ -1139,6 +1139,7 @@
     "application.domains.dns.status.valid": "DNS Valid",
     "application.domains.dns.status.behindCdn": "Di belakang {{provider}}",
     "application.domains.dns.status.validate": "Validasi DNS",
+    "application.domains.dns.error.mismatch": "Domain mengarah ke {{resolvedIp}} tetapi seharusnya ke {{expectedIp}}",
     "application.domains.dns.tooltip.errorTitle": "Kesalahan:",
     "application.domains.dns.tooltip.validate": "Klik untuk memvalidasi konfigurasi DNS",
     "application.domains.dns.toast.clipboard": "Disalin ke clipboard!",

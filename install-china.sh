@@ -79,6 +79,7 @@ install_dokploy() {
   "registry-mirrors": [
     "https://docker.amingg.com",
     "https://hub.amingg.com",
+    "https://hub.lvli.de",
     "https://docker.mirrors.sjtug.sjtu.edu.cn",
     "https://docker.m.daocloud.io",
     "https://docker.itelyou.cf",
@@ -102,6 +103,7 @@ EOF
           jq '."registry-mirrors" = [
             "https://docker.amingg.com",
             "https://hub.amingg.com",
+            "https://hub.lvli.de",
             "https://docker.mirrors.sjtug.sjtu.edu.cn",
             "https://docker.m.daocloud.io",
             "https://docker.itelyou.cf",
@@ -123,6 +125,7 @@ EOF
   "registry-mirrors": [
     "https://docker.amingg.com",
     "https://hub.amingg.com",
+    "https://hub.lvli.de",
     "https://docker.mirrors.sjtug.sjtu.edu.cn",
     "https://docker.m.daocloud.io",
     "https://docker.itelyou.cf",

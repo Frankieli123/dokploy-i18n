@@ -1135,6 +1135,7 @@
     "application.domains.dns.status.valid": "DNS有効",
     "application.domains.dns.status.behindCdn": "{{provider}}の背後にあります",
     "application.domains.dns.status.validate": "DNSを検証",
+    "application.domains.dns.error.mismatch": "ドメインは {{resolvedIp}} を指していますが、{{expectedIp}} を指す必要があります",
     "application.domains.dns.tooltip.errorTitle": "エラー:",
     "application.domains.dns.tooltip.validate": "クリックしてDNS設定を検証",
     "application.domains.dns.toast.clipboard": "クリップボードにコピーしました！",

@@ -1228,6 +1228,7 @@
     "application.domains.dns.status.valid": "DNS 有效",
     "application.domains.dns.status.behindCdn": "位於 {{provider}} 後方",
     "application.domains.dns.status.validate": "驗證 DNS",
+    "application.domains.dns.error.mismatch": "網域解析到了 {{resolvedIp}}，應指向 {{expectedIp}}",
     "application.domains.dns.tooltip.errorTitle": "錯誤：",
     "application.domains.dns.tooltip.validate": "點擊以驗證 DNS 設定",
     "application.domains.dns.toast.clipboard": "已複製到剪貼簿！",

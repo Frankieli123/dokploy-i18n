@@ -1139,6 +1139,7 @@
 	"application.domains.dns.status.valid": "DNS Valid",
 	"application.domains.dns.status.behindCdn": "Behind {{provider}}",
 	"application.domains.dns.status.validate": "Validate DNS",
+	"application.domains.dns.error.mismatch": "Domen {{resolvedIp}} ünvanına yönlənir, amma {{expectedIp}} ünvanına yönəlməlidir",
 	"application.domains.dns.tooltip.errorTitle": "Error:",
 	"application.domains.dns.tooltip.validate": "Click to validate DNS configuration",
 	"application.domains.dns.toast.clipboard": "Copied to clipboard!",

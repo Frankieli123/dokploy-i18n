@@ -1139,6 +1139,7 @@
     "application.domains.dns.status.valid": "DNS 유효함",
     "application.domains.dns.status.behindCdn": "{{provider}} 뒤",
     "application.domains.dns.status.validate": "DNS 확인",
+    "application.domains.dns.error.mismatch": "도메인이 {{resolvedIp}}(으)로 해석되었지만 {{expectedIp}}(으)로 지정되어야 합니다",
     "application.domains.dns.tooltip.errorTitle": "오류:",
     "application.domains.dns.tooltip.validate": "클릭하여 DNS 구성을 확인하세요",
     "application.domains.dns.toast.clipboard": "클립보드에 복사됨!",
