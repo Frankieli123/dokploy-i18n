@@ -56,23 +56,23 @@ export const domain = (t: (key: string, opts?: Record<string, unknown>) => strin
 					),
 				})
 				.transform((val) => val.trim()),
-		path: z.string().min(1).optional(),
-		internalPath: z.string().optional(),
-		stripPath: z.boolean().optional(),
-		port: z
-			.number()
-			.min(1, {
-				message: t("application.domains.validation.portMin"),
-			})
-			.max(65535, {
-				message: t("application.domains.validation.portMax"),
-			})
-			.optional(),
-		https: z.boolean().optional(),
-		certificateType: z.enum(["letsencrypt", "none", "custom"]).optional(),
-		customCertResolver: z.string().optional(),
-		serviceName: z.string().optional(),
-		domainType: z.enum(["application", "compose", "preview"]).optional(),
+			path: z.string().min(1).optional(),
+			internalPath: z.string().optional(),
+			stripPath: z.boolean().optional(),
+			port: z
+				.number()
+				.min(1, {
+					message: t("application.domains.validation.portMin"),
+				})
+				.max(65535, {
+					message: t("application.domains.validation.portMax"),
+				})
+				.optional(),
+			https: z.boolean().optional(),
+			certificateType: z.enum(["letsencrypt", "none", "custom"]).optional(),
+			customCertResolver: z.string().optional(),
+			serviceName: z.string().optional(),
+			domainType: z.enum(["application", "compose", "preview"]).optional(),
 		})
 		.superRefine((input, ctx) => {
 			if (input.https && !input.certificateType) {
@@ -126,7 +126,7 @@ export const domain = (t: (key: string, opts?: Record<string, unknown>) => strin
 			}
 		});
 
-type Domain = z.infer<typeof domain>;
+type Domain = z.infer<ReturnType<typeof domain>>;
 
 interface Props {
 	id: string;
@@ -140,6 +140,8 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 	const [isOpen, setIsOpen] = useState(false);
 	const [cacheType, setCacheType] = useState<CacheType>("cache");
 	const [isManualInput, setIsManualInput] = useState(false);
+
+	const domainSchema = domain(t);
 
 	const utils = api.useUtils();
 	const { data, refetch } = api.domain.one.useQuery(
@@ -200,7 +202,7 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 	);
 
 	const form = useForm<Domain>({
-		resolver: zodResolver(domain),
+		resolver: zodResolver(domainSchema),
 		defaultValues: {
 			host: "",
 			path: undefined,
@@ -542,7 +544,7 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 											</FormLabel>
 											<Select
 												onValueChange={field.onChange}
-												defaultValue={field.value || ""}
+												value={field.value}
 											>
 												<FormControl>
 													<SelectTrigger>
