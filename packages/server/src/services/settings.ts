@@ -21,6 +21,47 @@ export const DEFAULT_UPDATE_DATA: IUpdateData = {
 	updateAvailable: false,
 };
 
+const DEFAULT_UPDATE_TAGS_URL =
+	"https://hub.docker.com/v2/repositories/a3180623/dokploy-i18n/tags";
+
+const getUpdateFetchTimeoutMs = () => {
+	const raw = process.env.DOKPLOY_UPDATE_FETCH_TIMEOUT_MS;
+	const parsed = raw ? Number.parseInt(raw, 10) : 8000;
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : 8000;
+};
+
+const fetchJsonWithTimeout = async <T>(url: string): Promise<T> => {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), getUpdateFetchTimeoutMs());
+	try {
+		const response = await fetch(url, {
+			method: "GET",
+			headers: { "Content-Type": "application/json" },
+			signal: controller.signal,
+		});
+
+		if (!response.ok) {
+			throw new Error(`Update check failed (${response.status})`);
+		}
+
+		return (await response.json()) as T;
+	} finally {
+		clearTimeout(timeout);
+	}
+};
+
+const normalizeUpdateTagsUrl = (tagsUrl?: string | null) => {
+	const raw = tagsUrl?.trim();
+	if (!raw) return DEFAULT_UPDATE_TAGS_URL;
+	try {
+		const u = new URL(raw);
+		if (u.protocol !== "https:") return DEFAULT_UPDATE_TAGS_URL;
+		return u.toString().replace(/\?$/, "");
+	} catch {
+		return DEFAULT_UPDATE_TAGS_URL;
+	}
+};
+
 /** Returns current Dokploy docker image tag or `latest` by default. */
 export const getDokployImageTag = () => {
 	return process.env.RELEASE_TAG || "latest";
@@ -55,7 +96,7 @@ export const getServiceImageDigest = async () => {
 };
 
 /** Returns latest version number and information whether server update is available by comparing current image's digest against digest for provided image tag via Docker hub API. */
-export const getUpdateData = async (): Promise<IUpdateData> => {
+export const getUpdateData = async (tagsUrl?: string | null): Promise<IUpdateData> => {
 	let currentDigest: string;
 	try {
 		currentDigest = await getServiceImageDigest();
@@ -64,23 +105,42 @@ export const getUpdateData = async (): Promise<IUpdateData> => {
 		return DEFAULT_UPDATE_DATA;
 	}
 
-	const baseUrl =
-		"https://hub.docker.com/v2/repositories/a3180623/dokploy-i18n/tags";
-	let url: string | null = `${baseUrl}?page_size=100`;
+	const baseUrl = normalizeUpdateTagsUrl(tagsUrl);
+	const base = new URL(baseUrl);
+	const defaultBase = new URL(DEFAULT_UPDATE_TAGS_URL);
+
+	const firstPageUrl = new URL(baseUrl);
+	firstPageUrl.searchParams.set("page_size", "100");
+
+	let url: string | null = firstPageUrl.toString();
 	let allResults: { digest: string; name: string }[] = [];
-	while (url) {
-		const response = await fetch(url, {
-			method: "GET",
-			headers: { "Content-Type": "application/json" },
-		});
+	try {
+		while (url) {
+			const data: {
+				next: string | null;
+				results: { digest: string; name: string }[];
+			} = await fetchJsonWithTimeout(url);
 
-		const data = (await response.json()) as {
-			next: string | null;
-			results: { digest: string; name: string }[];
-		};
+			allResults = allResults.concat(data.results);
+			url = data?.next;
 
-		allResults = allResults.concat(data.results);
-		url = data?.next;
+			if (url && base.origin !== defaultBase.origin) {
+				try {
+					const nextUrl: URL = new URL(url);
+					if (nextUrl.origin === defaultBase.origin) {
+						nextUrl.protocol = base.protocol;
+						nextUrl.username = base.username;
+						nextUrl.password = base.password;
+						nextUrl.host = base.host;
+						url = nextUrl.toString();
+					}
+				} catch {
+					// ignore URL rewrite errors
+				}
+			}
+		}
+	} catch {
+		return DEFAULT_UPDATE_DATA;
 	}
 
 	const imageTag = getDokployImageTag();

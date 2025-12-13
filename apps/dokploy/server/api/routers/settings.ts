@@ -377,13 +377,15 @@ export const settingsRouter = createTRPCRouter({
 			writeConfig("middlewares", input.traefikConfig);
 			return true;
 		}),
-	getUpdateData: protectedProcedure.mutation(async () => {
-		if (IS_CLOUD) {
-			return DEFAULT_UPDATE_DATA;
-		}
+	getUpdateData: protectedProcedure
+		.input(z.object({ tagsUrl: z.string().nullish() }).optional())
+		.mutation(async ({ input }) => {
+			if (IS_CLOUD) {
+				return DEFAULT_UPDATE_DATA;
+			}
 
-		return await getUpdateData();
-	}),
+			return await getUpdateData(input?.tagsUrl);
+		}),
 	updateServer: adminProcedure.mutation(async () => {
 		if (IS_CLOUD) {
 			return true;

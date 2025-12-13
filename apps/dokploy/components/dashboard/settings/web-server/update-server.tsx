@@ -27,6 +27,10 @@ import {
 } from "@/components/ui/tooltip";
 import { api } from "@/utils/api";
 import { ToggleAutoCheckUpdates } from "./toggle-auto-check-updates";
+import {
+	readUpdateTagsUrlFromStorage,
+	UpdateSourceConfig,
+} from "./update-source-config";
 import { UpdateWebServer } from "./update-webserver";
 
 interface Props {
@@ -58,7 +62,8 @@ export const UpdateServer = ({
 
 	const handleCheckUpdates = async () => {
 		try {
-			const updateData = await getUpdateData();
+			const tagsUrl = readUpdateTagsUrlFromStorage();
+			const updateData = await getUpdateData({ tagsUrl });
 			const versionToUpdate = updateData.latestVersion || "";
 			setHasCheckedUpdate(true);
 			setIsUpdateAvailable(updateData.updateAvailable);
@@ -283,7 +288,8 @@ export const UpdateServer = ({
 					</div>
 				)}
 
-				<div className="flex items-center justify-between pt-2">
+				<div className="flex items-center justify-between pt-2 gap-2">
+					<UpdateSourceConfig disabled={isLoading} />
 					<ToggleAutoCheckUpdates disabled={isLoading} />
 				</div>
 

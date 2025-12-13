@@ -4,6 +4,7 @@ import { useTranslation } from "next-i18next";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/utils/api";
 import UpdateServer from "../dashboard/settings/web-server/update-server";
+import { readUpdateTagsUrlFromStorage } from "../dashboard/settings/web-server/update-source-config";
 import { Button } from "../ui/button";
 import {
 	Tooltip,
@@ -50,7 +51,8 @@ export const UpdateServerButton = () => {
 					return;
 				}
 
-				const fetchedUpdateData = await getUpdateData();
+				const tagsUrl = readUpdateTagsUrlFromStorage();
+				const fetchedUpdateData = await getUpdateData({ tagsUrl });
 
 				if (fetchedUpdateData?.updateAvailable) {
 					// 一旦发现有更新，停止轮询并在侧边栏显示按钮
