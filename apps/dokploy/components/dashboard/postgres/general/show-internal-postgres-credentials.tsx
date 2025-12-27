@@ -24,7 +24,7 @@ export const ShowInternalPostgresCredentials = ({ postgresId }: Props) => {
 						<div className="grid w-full md:grid-cols-2 gap-4 md:gap-8">
 							<div className="flex flex-col gap-2">
 								<Label>
-									{t("database.redis.internalCredentials.userLabel")}
+									{t("database.postgres.internalCredentials.userLabel")}
 								</Label>
 								<Input disabled value={data?.databaseUser} />
 							</div>
@@ -43,14 +43,14 @@ export const ShowInternalPostgresCredentials = ({ postgresId }: Props) => {
 							</div>
 							<div className="flex flex-col gap-2">
 								<Label>
-									{t("database.redis.internalCredentials.internalPortLabel")}
+									{t("database.postgres.internalCredentials.internalPortLabel")}
 								</Label>
 								<Input disabled value="5432" />
 							</div>
 
 							<div className="flex flex-col gap-2">
 								<Label>
-									{t("database.redis.internalCredentials.internalHostLabel")}
+									{t("database.postgres.internalCredentials.internalHostLabel")}
 								</Label>
 								<Input disabled value={data?.appName} />
 							</div>
@@ -58,7 +58,7 @@ export const ShowInternalPostgresCredentials = ({ postgresId }: Props) => {
 							<div className="flex flex-col gap-2">
 								<Label>
 									{t(
-										"database.redis.internalCredentials.internalConnectionUrlLabel",
+										"database.postgres.internalCredentials.internalConnectionUrlLabel",
 									)}
 								</Label>
 								<ToggleVisibilityInput
