@@ -5,10 +5,33 @@ import {
 	findRedisById,
 	removeRedisById,
 } from "@dokploy/server/services/redis";
+import { findEnvironmentById } from "@dokploy/server/services/environment";
 import { generatePassword } from "@dokploy/server/templates";
 import { z } from "zod";
 import { toolRegistry } from "../registry";
 import type { Tool } from "../types";
+
+const ensureRedisAccess = async (
+	redisId: string,
+	ctx: { organizationId: string },
+) => {
+	const redis = await findRedisById(redisId);
+	if (redis.environment?.project?.organizationId !== ctx.organizationId) {
+		return null;
+	}
+	return redis;
+};
+
+const ensureEnvironmentAccess = async (
+	environmentId: string,
+	ctx: { organizationId: string },
+) => {
+	const env = await findEnvironmentById(environmentId);
+	if (env.project?.organizationId !== ctx.organizationId) {
+		return null;
+	}
+	return env;
+};
 
 const listRedisDatabases: Tool<
 	{ projectId?: string },
@@ -23,7 +46,7 @@ const listRedisDatabases: Tool<
 	}),
 	riskLevel: "low",
 	requiresApproval: false,
-	execute: async (params) => {
+	execute: async (params, ctx) => {
 		const databases = await db.query.redis.findMany({
 			with: {
 				environment: {
@@ -32,11 +55,12 @@ const listRedisDatabases: Tool<
 			},
 		});
 
-		const filtered = params.projectId
+		const filtered = (params.projectId
 			? databases.filter(
 					(d) => d.environment?.project?.projectId === params.projectId,
 				)
-			: databases;
+			: databases
+		).filter((d) => d.environment?.project?.organizationId === ctx.organizationId);
 
 		return {
 			success: true,
@@ -62,8 +86,14 @@ const getRedisDetails: Tool<
 	}),
 	riskLevel: "low",
 	requiresApproval: false,
-	execute: async (params) => {
-		const redis = await findRedisById(params.redisId);
+	execute: async (params, ctx) => {
+		const redis = await ensureRedisAccess(params.redisId, ctx);
+		if (!redis) {
+			return {
+				success: false,
+				message: "Redis access denied",
+			};
+		}
 		return {
 			success: true,
 			message: `Redis "${redis.name}" details retrieved`,
@@ -111,6 +141,14 @@ const createRedisDatabase: Tool<
 	riskLevel: "medium",
 	requiresApproval: true,
 	execute: async (params, ctx) => {
+		const env = await ensureEnvironmentAccess(params.environmentId, ctx);
+		if (!env) {
+			return {
+				success: false,
+				message: "Environment access denied",
+			};
+		}
+
 		const newDb = await createRedis({
 			name: params.name,
 			appName: params.appName,
@@ -144,7 +182,14 @@ const deployRedisDatabase: Tool<
 	}),
 	riskLevel: "medium",
 	requiresApproval: true,
-	execute: async (params) => {
+	execute: async (params, ctx) => {
+		const redisAccess = await ensureRedisAccess(params.redisId, ctx);
+		if (!redisAccess) {
+			return {
+				success: false,
+				message: "Redis access denied",
+			};
+		}
 		const redis = await deployRedis(params.redisId);
 		return {
 			success: true,
@@ -166,7 +211,14 @@ const deleteRedisDatabase: Tool<{ redisId: string }, { deleted: boolean }> = {
 	}),
 	riskLevel: "high",
 	requiresApproval: true,
-	execute: async (params) => {
+	execute: async (params, ctx) => {
+		const redis = await ensureRedisAccess(params.redisId, ctx);
+		if (!redis) {
+			return {
+				success: false,
+				message: "Redis access denied",
+			};
+		}
 		await removeRedisById(params.redisId);
 		return {
 			success: true,

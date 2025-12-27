@@ -305,8 +305,8 @@ export function ToolCallBlock({
 							<span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
 								Arguments
 							</span>
-							<div className="rounded bg-muted/50 p-2 font-mono text-[10px] border border-border/50 max-h-[300px] overflow-y-auto">
-								<pre className="whitespace-pre-wrap break-words">
+							<div className="rounded bg-muted/50 p-2 font-mono text-[10px] border border-border/50 max-h-[300px] overflow-y-auto overflow-x-auto">
+								<pre className="whitespace-pre min-w-max">
 									{JSON.stringify(parsedArgs, null, 2)}
 								</pre>
 							</div>
@@ -319,7 +319,7 @@ export function ToolCallBlock({
 								</span>
 								<div
 									className={cn(
-										"rounded p-2 border text-[10px] max-h-[300px] overflow-y-auto",
+										"rounded p-2 border text-[10px] max-h-[300px] overflow-y-auto overflow-x-auto",
 										result.success
 											? "bg-emerald-500/5 border-emerald-500/20 text-emerald-900 dark:text-emerald-200"
 											: "bg-destructive/5 border-destructive/20 text-destructive-foreground",
@@ -331,7 +331,7 @@ export function ToolCallBlock({
 										</p>
 									)}
 									{result.data != null && (
-										<pre className="font-mono opacity-90 whitespace-pre-wrap break-words">
+										<pre className="font-mono opacity-90 whitespace-pre min-w-max">
 											{JSON.stringify(result.data, null, 2)}
 										</pre>
 									)}
@@ -393,9 +393,11 @@ export function ToolCallBlock({
 							<h4 className="text-sm font-medium mb-2">
 								{t("ai.toolCall.parameters")}
 							</h4>
-							<pre className="text-xs font-mono bg-muted p-2 rounded overflow-x-auto">
-								{JSON.stringify(parsedArgs, null, 2)}
-							</pre>
+							<div className="text-xs font-mono bg-muted p-2 rounded overflow-x-auto">
+								<pre className="min-w-max">
+									{JSON.stringify(parsedArgs, null, 2)}
+								</pre>
+							</div>
 						</div>
 						{confirmHint.length > 0 && (
 							<div className="rounded-lg border border-amber-500/50 bg-amber-500/5 p-3 text-sm text-amber-900 dark:text-amber-200">
@@ -425,9 +427,11 @@ export function ToolCallBlock({
 						{exampleParamsFromResult != null && (
 							<div className="rounded-lg border p-3">
 								<h4 className="text-sm font-medium mb-2">Example params</h4>
-								<pre className="text-xs font-mono bg-muted p-2 rounded overflow-x-auto">
-									{JSON.stringify(exampleParamsFromResult, null, 2)}
-								</pre>
+								<div className="text-xs font-mono bg-muted p-2 rounded overflow-x-auto">
+									<pre className="min-w-max">
+										{JSON.stringify(exampleParamsFromResult, null, 2)}
+									</pre>
+								</div>
 							</div>
 						)}
 						{isDestructive && (

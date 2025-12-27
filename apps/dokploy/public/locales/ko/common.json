@@ -2048,5 +2048,8 @@
     "ai.agent.step": "Step",
     "ai.agent.result": "Result",
     "ai.agent.finished": "Finished",
-    "ai.agent.summary": "Summary"
+    "ai.agent.summary": "요약",
+    "ai.agent.goalPlaceholder": "에이전트 목표",
+    "ai.agent.goalLabel": "에이전트 목표",
+    "ai.chat.messagesAriaLabel": "채팅 메시지"
 }

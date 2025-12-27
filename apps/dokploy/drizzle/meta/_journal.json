@@ -918,6 +918,13 @@
       "when": 1766330000000,
       "tag": "0130_ai_tool_execution_conversation_id",
       "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1766340000000,
+      "tag": "0131_enable_auto_check_updates",
+      "breakpoints": true
     }
   ]
 }

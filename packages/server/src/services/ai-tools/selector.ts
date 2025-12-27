@@ -16,6 +16,7 @@ export type ToolSelectionContext = {
 };
 
 const DB_PREFIXES = [
+	"database_",
 	"postgres_",
 	"mysql_",
 	"mariadb_",
@@ -170,6 +171,7 @@ export function selectRelevantTools(
 		if (/(environment|env\b|环境)/i.test(messageLower))
 			prefixes.add("environment_");
 		if (/(server|servers|服务器)/i.test(messageLower)) prefixes.add("server_");
+		if (/(database|db\b|数据库)/i.test(messageLower)) prefixes.add("database_");
 		if (wantsTraefik) prefixes.add("traefik_");
 	}
 
@@ -195,6 +197,7 @@ export function selectRelevantTools(
 		intent === "database" &&
 		wantsDatabaseDeleteOperation(messageLower, userMessage);
 	if (intent === "database") {
+		prefixes.add("database_");
 		const dbPrefixes = detectDatabasePrefixes(messageLower);
 		if (dbPrefixes.length > 0) {
 			for (const p of dbPrefixes) prefixes.add(p);

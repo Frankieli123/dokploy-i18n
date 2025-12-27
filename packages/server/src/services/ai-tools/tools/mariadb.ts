@@ -5,10 +5,33 @@ import {
 	findMariadbById,
 	removeMariadbById,
 } from "@dokploy/server/services/mariadb";
+import { findEnvironmentById } from "@dokploy/server/services/environment";
 import { generatePassword } from "@dokploy/server/templates";
 import { z } from "zod";
 import { toolRegistry } from "../registry";
 import type { Tool } from "../types";
+
+const ensureMariadbAccess = async (
+	mariadbId: string,
+	ctx: { organizationId: string },
+) => {
+	const mdb = await findMariadbById(mariadbId);
+	if (mdb.environment?.project?.organizationId !== ctx.organizationId) {
+		return null;
+	}
+	return mdb;
+};
+
+const ensureEnvironmentAccess = async (
+	environmentId: string,
+	ctx: { organizationId: string },
+) => {
+	const env = await findEnvironmentById(environmentId);
+	if (env.project?.organizationId !== ctx.organizationId) {
+		return null;
+	}
+	return env;
+};
 
 const listMariadbDatabases: Tool<
 	{ projectId?: string },
@@ -28,7 +51,7 @@ const listMariadbDatabases: Tool<
 	}),
 	riskLevel: "low",
 	requiresApproval: false,
-	execute: async (params) => {
+	execute: async (params, ctx) => {
 		const databases = await db.query.mariadb.findMany({
 			with: {
 				environment: {
@@ -37,11 +60,12 @@ const listMariadbDatabases: Tool<
 			},
 		});
 
-		const filtered = params.projectId
+		const filtered = (params.projectId
 			? databases.filter(
 					(d) => d.environment?.project?.projectId === params.projectId,
 				)
-			: databases;
+			: databases
+		).filter((d) => d.environment?.project?.organizationId === ctx.organizationId);
 
 		return {
 			success: true,
@@ -75,8 +99,14 @@ const getMariadbDetails: Tool<
 	}),
 	riskLevel: "low",
 	requiresApproval: false,
-	execute: async (params) => {
-		const mdb = await findMariadbById(params.mariadbId);
+	execute: async (params, ctx) => {
+		const mdb = await ensureMariadbAccess(params.mariadbId, ctx);
+		if (!mdb) {
+			return {
+				success: false,
+				message: "MariaDB access denied",
+			};
+		}
 		return {
 			success: true,
 			message: `MariaDB "${mdb.name}" details retrieved`,
@@ -135,6 +165,14 @@ const createMariadbDatabase: Tool<
 	riskLevel: "medium",
 	requiresApproval: true,
 	execute: async (params, ctx) => {
+		const env = await ensureEnvironmentAccess(params.environmentId, ctx);
+		if (!env) {
+			return {
+				success: false,
+				message: "Environment access denied",
+			};
+		}
+
 		const newDb = await createMariadb({
 			name: params.name,
 			appName: params.appName,
@@ -171,7 +209,14 @@ const deployMariadbDatabase: Tool<
 	}),
 	riskLevel: "medium",
 	requiresApproval: true,
-	execute: async (params) => {
+	execute: async (params, ctx) => {
+		const mdbAccess = await ensureMariadbAccess(params.mariadbId, ctx);
+		if (!mdbAccess) {
+			return {
+				success: false,
+				message: "MariaDB access denied",
+			};
+		}
 		const mdb = await deployMariadb(params.mariadbId);
 		return {
 			success: true,
@@ -194,7 +239,14 @@ const deleteMariadbDatabase: Tool<{ mariadbId: string }, { deleted: boolean }> =
 		}),
 		riskLevel: "high",
 		requiresApproval: true,
-		execute: async (params) => {
+		execute: async (params, ctx) => {
+			const mdb = await ensureMariadbAccess(params.mariadbId, ctx);
+			if (!mdb) {
+				return {
+					success: false,
+					message: "MariaDB access denied",
+				};
+			}
 			await removeMariadbById(params.mariadbId);
 			return {
 				success: true,

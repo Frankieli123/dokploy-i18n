@@ -2048,5 +2048,8 @@
     "ai.agent.step": "Step",
     "ai.agent.result": "Result",
     "ai.agent.finished": "Finished",
-    "ai.agent.summary": "Summary"
+    "ai.agent.summary": "Özet",
+    "ai.agent.goalPlaceholder": "Ajan hedefi",
+    "ai.agent.goalLabel": "Ajan Hedefi",
+    "ai.chat.messagesAriaLabel": "Sohbet mesajları"
 }

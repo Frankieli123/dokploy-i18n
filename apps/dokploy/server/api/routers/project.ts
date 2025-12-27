@@ -17,7 +17,7 @@ import {
 	createRedirect,
 	createRedis,
 	createSecurity,
-	deleteProject,
+	deleteProjectWithCleanup,
 	findApplicationById,
 	findComposeById,
 	findEnvironmentById,
@@ -297,7 +297,12 @@ export const projectRouter = createTRPCRouter({
 						message: "You are not authorized to delete this project",
 					});
 				}
-				const deletedProject = await deleteProject(input.projectId);
+				const deletedProject = await deleteProjectWithCleanup({
+					projectId: input.projectId,
+					deleteComposeVolumes: true,
+					deleteDatabaseVolumes: true,
+					deleteApplicationVolumes: true,
+				});
 
 				return deletedProject;
 			} catch (error) {

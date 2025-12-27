@@ -55,6 +55,35 @@ import { api } from "@/utils/api";
 
 type DbType = "postgres" | "mongo" | "redis" | "mysql" | "mariadb";
 
+const databasesMap: Record<
+	DbType,
+	{
+		icon: JSX.Element;
+		label: string;
+	}
+> = {
+	postgres: {
+		icon: <PostgresqlIcon />,
+		label: "PostgreSQL",
+	},
+	mongo: {
+		icon: <MongodbIcon />,
+		label: "MongoDB",
+	},
+	redis: {
+		icon: <RedisIcon />,
+		label: "Redis",
+	},
+	mysql: {
+		icon: <MysqlIcon />,
+		label: "MySQL",
+	},
+	mariadb: {
+		icon: <MariadbIcon />,
+		label: "MariaDB",
+	},
+};
+
 const dockerImageDefaultPlaceholder: Record<DbType, string> = {
 	mongo: "mongo:7",
 	mariadb: "mariadb:11",

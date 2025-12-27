@@ -49,6 +49,7 @@ const baseAdmin: User = {
 	host: null,
 	letsEncryptEmail: null,
 	sshPrivateKey: null,
+	enableAutoCheckUpdates: true,
 	enableDockerCleanup: false,
 	logCleanupCron: null,
 	serversQuantity: 0,

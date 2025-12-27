@@ -2048,5 +2048,8 @@
     "ai.agent.step": "Step",
     "ai.agent.result": "Result",
     "ai.agent.finished": "Finished",
-    "ai.agent.summary": "Summary"
+    "ai.agent.summary": "خلاصه",
+    "ai.agent.goalPlaceholder": "هدف عامل",
+    "ai.agent.goalLabel": "هدف عامل",
+    "ai.chat.messagesAriaLabel": "پیام‌های چت"
 }

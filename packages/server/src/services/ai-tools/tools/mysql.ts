@@ -5,10 +5,33 @@ import {
 	findMySqlById,
 	removeMySqlById,
 } from "@dokploy/server/services/mysql";
+import { findEnvironmentById } from "@dokploy/server/services/environment";
 import { generatePassword } from "@dokploy/server/templates";
 import { z } from "zod";
 import { toolRegistry } from "../registry";
 import type { Tool } from "../types";
+
+const ensureMysqlAccess = async (
+	mysqlId: string,
+	ctx: { organizationId: string },
+) => {
+	const mysql = await findMySqlById(mysqlId);
+	if (mysql.environment?.project?.organizationId !== ctx.organizationId) {
+		return null;
+	}
+	return mysql;
+};
+
+const ensureEnvironmentAccess = async (
+	environmentId: string,
+	ctx: { organizationId: string },
+) => {
+	const env = await findEnvironmentById(environmentId);
+	if (env.project?.organizationId !== ctx.organizationId) {
+		return null;
+	}
+	return env;
+};
 
 const listMysqlDatabases: Tool<
 	{ projectId?: string },
@@ -23,7 +46,7 @@ const listMysqlDatabases: Tool<
 	}),
 	riskLevel: "low",
 	requiresApproval: false,
-	execute: async (params) => {
+	execute: async (params, ctx) => {
 		const databases = await db.query.mysql.findMany({
 			with: {
 				environment: {
@@ -32,11 +55,12 @@ const listMysqlDatabases: Tool<
 			},
 		});
 
-		const filtered = params.projectId
+		const filtered = (params.projectId
 			? databases.filter(
 					(d) => d.environment?.project?.projectId === params.projectId,
 				)
-			: databases;
+			: databases
+		).filter((d) => d.environment?.project?.organizationId === ctx.organizationId);
 
 		return {
 			success: true,
@@ -70,8 +94,14 @@ const getMysqlDetails: Tool<
 	}),
 	riskLevel: "low",
 	requiresApproval: false,
-	execute: async (params) => {
-		const mysql = await findMySqlById(params.mysqlId);
+	execute: async (params, ctx) => {
+		const mysql = await ensureMysqlAccess(params.mysqlId, ctx);
+		if (!mysql) {
+			return {
+				success: false,
+				message: "MySQL access denied",
+			};
+		}
 		return {
 			success: true,
 			message: `MySQL "${mysql.name}" details retrieved`,
@@ -130,6 +160,14 @@ const createMysqlDatabase: Tool<
 	riskLevel: "medium",
 	requiresApproval: true,
 	execute: async (params, ctx) => {
+		const env = await ensureEnvironmentAccess(params.environmentId, ctx);
+		if (!env) {
+			return {
+				success: false,
+				message: "Environment access denied",
+			};
+		}
+
 		const newDb = await createMysql({
 			name: params.name,
 			appName: params.appName,
@@ -166,7 +204,14 @@ const deployMysqlDatabase: Tool<
 	}),
 	riskLevel: "medium",
 	requiresApproval: true,
-	execute: async (params) => {
+	execute: async (params, ctx) => {
+		const mysqlAccess = await ensureMysqlAccess(params.mysqlId, ctx);
+		if (!mysqlAccess) {
+			return {
+				success: false,
+				message: "MySQL access denied",
+			};
+		}
 		const mysql = await deployMySql(params.mysqlId);
 		return {
 			success: true,
@@ -188,7 +233,14 @@ const deleteMysqlDatabase: Tool<{ mysqlId: string }, { deleted: boolean }> = {
 	}),
 	riskLevel: "high",
 	requiresApproval: true,
-	execute: async (params) => {
+	execute: async (params, ctx) => {
+		const mysql = await ensureMysqlAccess(params.mysqlId, ctx);
+		if (!mysql) {
+			return {
+				success: false,
+				message: "MySQL access denied",
+			};
+		}
 		await removeMySqlById(params.mysqlId);
 		return {
 			success: true,

@@ -21,6 +21,14 @@ export const UpdateServerButton = () => {
 		updateAvailable: false,
 	});
 	const { data: isCloud } = api.settings.isCloud.useQuery();
+	const { data: autoCheckEnabled } = api.settings.getAutoCheckUpdates.useQuery(
+		undefined,
+		{
+			enabled: !isCloud,
+		},
+	);
+	const { mutateAsync: setAutoCheckUpdates } =
+		api.settings.setAutoCheckUpdates.useMutation();
 	const { mutateAsync: getUpdateData } =
 		api.settings.getUpdateData.useMutation();
 	const [isOpen, setIsOpen] = useState(false);
@@ -33,9 +41,21 @@ export const UpdateServerButton = () => {
 			return;
 		}
 
-		// 首次使用时默认开启自动检查
-		if (!localStorage.getItem("enableAutoCheckUpdates")) {
-			localStorage.setItem("enableAutoCheckUpdates", "true");
+		const enabledFromDb = autoCheckEnabled ?? true;
+		const legacy = localStorage.getItem("enableAutoCheckUpdates");
+		if (legacy === "true" || legacy === "false") {
+			const legacyValue = legacy === "true";
+			if (legacyValue !== enabledFromDb) {
+				void setAutoCheckUpdates({ enabled: legacyValue })
+					.then(() => {
+						localStorage.removeItem("enableAutoCheckUpdates");
+					})
+					.catch(() => {
+						// ignore migration errors
+					});
+			} else {
+				localStorage.removeItem("enableAutoCheckUpdates");
+			}
 		}
 
 		const clearUpdatesInterval = () => {
@@ -46,7 +66,7 @@ export const UpdateServerButton = () => {
 
 		const checkUpdates = async () => {
 			try {
-				if (localStorage.getItem("enableAutoCheckUpdates") !== "true") {
+				if (!enabledFromDb) {
 					return;
 				}
 
@@ -73,7 +93,7 @@ export const UpdateServerButton = () => {
 		return () => {
 			clearUpdatesInterval();
 		};
-	}, [getUpdateData, isCloud]);
+	}, [autoCheckEnabled, getUpdateData, isCloud, setAutoCheckUpdates]);
 
 	if (isCloud || !updateData.updateAvailable) {
 		return null;

@@ -2043,10 +2043,13 @@
     "ai.tools.historyDescription": "View the history of all tools executed by the AI in this conversation.",
     "ai.tools.searchPlaceholder": "Search tools...",
     "ai.tools.noExecutions": "No tool executions found.",
-    "ai.agent.start": "Start Agent",
-    "ai.agent.plan": "Plan",
-    "ai.agent.step": "Step",
-    "ai.agent.result": "Result",
-    "ai.agent.finished": "Finished",
-    "ai.agent.summary": "Summary"
+    "ai.agent.start": "啟動代理",
+    "ai.agent.plan": "計劃",
+    "ai.agent.step": "步驟",
+    "ai.agent.result": "結果",
+    "ai.agent.finished": "完成",
+    "ai.agent.summary": "摘要",
+    "ai.agent.goalPlaceholder": "代理目標",
+    "ai.agent.goalLabel": "代理目標",
+    "ai.chat.messagesAriaLabel": "聊天訊息"
 }

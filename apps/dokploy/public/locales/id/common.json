@@ -2048,5 +2048,8 @@
     "ai.agent.step": "Step",
     "ai.agent.result": "Result",
     "ai.agent.finished": "Finished",
-    "ai.agent.summary": "Summary"
+    "ai.agent.summary": "Ringkasan",
+    "ai.agent.goalPlaceholder": "Tujuan agen",
+    "ai.agent.goalLabel": "Tujuan Agen",
+    "ai.chat.messagesAriaLabel": "Pesan obrolan"
 }

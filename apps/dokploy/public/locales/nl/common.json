@@ -2048,5 +2048,8 @@
     "ai.agent.step": "Step",
     "ai.agent.result": "Result",
     "ai.agent.finished": "Finished",
-    "ai.agent.summary": "Summary"
+    "ai.agent.summary": "Samenvatting",
+    "ai.agent.goalPlaceholder": "Agentdoel",
+    "ai.agent.goalLabel": "Agentdoel",
+    "ai.chat.messagesAriaLabel": "Chatberichten"
 }

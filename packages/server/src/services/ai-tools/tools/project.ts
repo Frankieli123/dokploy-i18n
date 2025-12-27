@@ -2,7 +2,7 @@ import { db } from "@dokploy/server/db";
 import { projects } from "@dokploy/server/db/schema";
 import {
 	createProject,
-	deleteProject,
+	deleteProjectWithCleanup,
 	findProjectById,
 } from "@dokploy/server/services/project";
 import { eq } from "drizzle-orm";
@@ -55,23 +55,31 @@ const listProjects: Tool<
 };
 
 const findProjects: Tool<
-	{ query: string; limit?: number },
+	{ query?: string; name?: string; limit?: number },
 	Array<{ projectId: string; name: string; description: string | null }>
 > = {
 	name: "project_find",
 	description: "Find projects by keyword in name or description",
 	category: "project",
-	parameters: z.object({
-		query: z.string().min(1).describe("Search keyword"),
-		limit: z
-			.number()
-			.optional()
-			.describe("Maximum number of results to return (default 20)"),
-	}),
+	parameters: z
+		.object({
+			query: z.string().min(1).optional().describe("Search keyword"),
+			name: z.string().min(1).optional().describe("Search keyword (alias)"),
+			limit: z
+				.number()
+				.optional()
+				.describe("Maximum number of results to return (default 20)"),
+		})
+		.refine((v) => Boolean(v.query || v.name), {
+			message: "Either 'query' or 'name' is required",
+		}),
 	riskLevel: "low",
 	requiresApproval: false,
 	execute: async (params, ctx) => {
-		const q = params.query.trim().toLowerCase();
+		const rawQuery = (params as unknown as { query?: string; name?: string })
+			.query;
+		const rawName = (params as unknown as { query?: string; name?: string }).name;
+		const q = (rawQuery ?? rawName ?? "").trim().toLowerCase();
 		const limit = params.limit ?? 20;
 
 		const allProjects = await db.query.projects.findMany({
@@ -220,7 +228,12 @@ const deleteProjectTool: Tool<
 				data: { projectId: "", deleted: false },
 			};
 		}
-		await deleteProject(params.projectId);
+		await deleteProjectWithCleanup({
+			projectId: params.projectId,
+			deleteComposeVolumes: true,
+			deleteDatabaseVolumes: true,
+			deleteApplicationVolumes: true,
+		});
 
 		return {
 			success: true,

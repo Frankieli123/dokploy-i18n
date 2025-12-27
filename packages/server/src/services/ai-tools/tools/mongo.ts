@@ -5,10 +5,33 @@ import {
 	findMongoById,
 	removeMongoById,
 } from "@dokploy/server/services/mongo";
+import { findEnvironmentById } from "@dokploy/server/services/environment";
 import { generatePassword } from "@dokploy/server/templates";
 import { z } from "zod";
 import { toolRegistry } from "../registry";
 import type { Tool } from "../types";
+
+const ensureMongoAccess = async (
+	mongoId: string,
+	ctx: { organizationId: string },
+) => {
+	const mdb = await findMongoById(mongoId);
+	if (mdb.environment?.project?.organizationId !== ctx.organizationId) {
+		return null;
+	}
+	return mdb;
+};
+
+const ensureEnvironmentAccess = async (
+	environmentId: string,
+	ctx: { organizationId: string },
+) => {
+	const env = await findEnvironmentById(environmentId);
+	if (env.project?.organizationId !== ctx.organizationId) {
+		return null;
+	}
+	return env;
+};
 
 const listMongoDatabases: Tool<
 	{ projectId?: string },
@@ -29,7 +52,7 @@ const listMongoDatabases: Tool<
 	}),
 	riskLevel: "low",
 	requiresApproval: false,
-	execute: async (params) => {
+	execute: async (params, ctx) => {
 		const databases = await db.query.mongo.findMany({
 			with: {
 				environment: {
@@ -38,11 +61,12 @@ const listMongoDatabases: Tool<
 			},
 		});
 
-		const filtered = params.projectId
+		const filtered = (params.projectId
 			? databases.filter(
 					(d) => d.environment?.project?.projectId === params.projectId,
 				)
-			: databases;
+			: databases
+		).filter((d) => d.environment?.project?.organizationId === ctx.organizationId);
 
 		return {
 			success: true,
@@ -77,8 +101,14 @@ const getMongoDetails: Tool<
 	}),
 	riskLevel: "low",
 	requiresApproval: false,
-	execute: async (params) => {
-		const mdb = await findMongoById(params.mongoId);
+	execute: async (params, ctx) => {
+		const mdb = await ensureMongoAccess(params.mongoId, ctx);
+		if (!mdb) {
+			return {
+				success: false,
+				message: "MongoDB access denied",
+			};
+		}
 		return {
 			success: true,
 			message: `MongoDB "${mdb.name}" details retrieved`,
@@ -136,6 +166,14 @@ const createMongoDatabase: Tool<
 	riskLevel: "medium",
 	requiresApproval: true,
 	execute: async (params, ctx) => {
+		const env = await ensureEnvironmentAccess(params.environmentId, ctx);
+		if (!env) {
+			return {
+				success: false,
+				message: "Environment access denied",
+			};
+		}
+
 		const newDb = await createMongo({
 			name: params.name,
 			appName: params.appName,
@@ -171,7 +209,14 @@ const deployMongoDatabase: Tool<
 	}),
 	riskLevel: "medium",
 	requiresApproval: true,
-	execute: async (params) => {
+	execute: async (params, ctx) => {
+		const mdbAccess = await ensureMongoAccess(params.mongoId, ctx);
+		if (!mdbAccess) {
+			return {
+				success: false,
+				message: "MongoDB access denied",
+			};
+		}
 		const mdb = await deployMongo(params.mongoId);
 		return {
 			success: true,
@@ -193,7 +238,14 @@ const deleteMongoDatabase: Tool<{ mongoId: string }, { deleted: boolean }> = {
 	}),
 	riskLevel: "high",
 	requiresApproval: true,
-	execute: async (params) => {
+	execute: async (params, ctx) => {
+		const mdb = await ensureMongoAccess(params.mongoId, ctx);
+		if (!mdb) {
+			return {
+				success: false,
+				message: "MongoDB access denied",
+			};
+		}
 		await removeMongoById(params.mongoId);
 		return {
 			success: true,

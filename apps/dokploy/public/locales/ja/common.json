@@ -2048,5 +2048,8 @@
     "ai.agent.step": "Step",
     "ai.agent.result": "Result",
     "ai.agent.finished": "Finished",
-    "ai.agent.summary": "Summary"
+    "ai.agent.summary": "要約",
+    "ai.agent.goalPlaceholder": "エージェントの目標",
+    "ai.agent.goalLabel": "エージェントの目標",
+    "ai.chat.messagesAriaLabel": "チャットメッセージ"
 }

@@ -88,6 +88,13 @@ export const settingsRouter = createTRPCRouter({
 		const user = await findUserById(ctx.user.id);
 		return user.updateTagsUrl ?? null;
 	}),
+	getAutoCheckUpdates: protectedProcedure.query(async ({ ctx }) => {
+		if (IS_CLOUD) {
+			return null;
+		}
+		const user = await findUserById(ctx.user.id);
+		return user.enableAutoCheckUpdates ?? true;
+	}),
 	setUpdateTagsUrl: protectedProcedure
 		.input(
 			z.object({
@@ -100,6 +107,21 @@ export const settingsRouter = createTRPCRouter({
 			}
 			await updateUser(ctx.user.id, {
 				updateTagsUrl: input.tagsUrl,
+			});
+			return true;
+		}),
+	setAutoCheckUpdates: protectedProcedure
+		.input(
+			z.object({
+				enabled: z.boolean(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			if (IS_CLOUD) {
+				return true;
+			}
+			await updateUser(ctx.user.id, {
+				enableAutoCheckUpdates: input.enabled,
 			});
 			return true;
 		}),

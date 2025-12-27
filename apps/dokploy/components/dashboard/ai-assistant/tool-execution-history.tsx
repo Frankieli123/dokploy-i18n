@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, History, Search } from "lucide-react";
+import { CheckCircle2, Search, Wrench } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -49,10 +49,27 @@ export function ToolExecutionHistory({ messages }: ToolExecutionHistoryProps) {
 			}
 		});
 
-		return executions.sort(
-			(a, b) =>
-				new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-		);
+		const withIndex = executions.map((e, idx) => ({ ...e, idx }));
+		return withIndex
+			.sort((a, b) => {
+				const aStatus =
+					a.toolCall.status ?? (a.toolCall.executionId ? "pending" : "completed");
+				const bStatus =
+					b.toolCall.status ?? (b.toolCall.executionId ? "pending" : "completed");
+
+				const aNeedsApproval = aStatus === "pending" && !!a.toolCall.executionId;
+				const bNeedsApproval = bStatus === "pending" && !!b.toolCall.executionId;
+
+				if (aNeedsApproval && !bNeedsApproval) return -1;
+				if (!aNeedsApproval && bNeedsApproval) return 1;
+
+				const timeDiff =
+					new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+				if (timeDiff !== 0) return timeDiff;
+
+				return a.idx - b.idx;
+			})
+			.map(({ idx, ...rest }) => rest);
 	}, [messages]);
 
 	const filteredExecutions = useMemo(() => {
@@ -73,14 +90,15 @@ export function ToolExecutionHistory({ messages }: ToolExecutionHistoryProps) {
 					size="icon"
 					className="h-8 w-8"
 					title={t("ai.tools.history")}
+					aria-label={t("ai.tools.history")}
 				>
-					<History className="h-4 w-4" />
+					<Wrench className="h-4 w-4" />
 				</Button>
 			</DialogTrigger>
 			<DialogContent className="max-w-2xl max-h-[80vh] flex flex-col p-0 gap-0">
 				<DialogHeader className="p-6 pb-2">
 					<DialogTitle className="flex items-center gap-2">
-						<History className="h-5 w-5" />
+						<Wrench className="h-5 w-5" />
 						{t("ai.tools.historyTitle")}
 					</DialogTitle>
 					<DialogDescription>
@@ -101,7 +119,7 @@ export function ToolExecutionHistory({ messages }: ToolExecutionHistoryProps) {
 					<div className="space-y-4">
 						{filteredExecutions.length === 0 ? (
 							<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-								<History className="h-10 w-10 opacity-20 mb-2" />
+								<Wrench className="h-10 w-10 opacity-20 mb-2" />
 								<p>{t("ai.tools.noExecutions")}</p>
 							</div>
 						) : (

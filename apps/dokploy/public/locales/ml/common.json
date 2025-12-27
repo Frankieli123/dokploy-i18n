@@ -2048,5 +2048,8 @@
     "ai.agent.step": "Step",
     "ai.agent.result": "Result",
     "ai.agent.finished": "Finished",
-    "ai.agent.summary": "Summary"
+    "ai.agent.summary": "സംഗ്രഹം",
+    "ai.agent.goalPlaceholder": "ഏജന്റ് ലക്ഷ്യം",
+    "ai.agent.goalLabel": "ഏജന്റ് ലക്ഷ്യം",
+    "ai.chat.messagesAriaLabel": "ചാറ്റ് സന്ദേശങ്ങൾ"
 }

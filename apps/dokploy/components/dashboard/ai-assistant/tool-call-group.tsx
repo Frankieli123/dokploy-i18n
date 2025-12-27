@@ -46,6 +46,25 @@ export function ToolGroup({
 		return { executing, pending, failed, completed };
 	}, [toolCalls]);
 
+	const orderedToolCalls = useMemo(() => {
+		return toolCalls
+			.map((tc, idx) => {
+				const status = tc.status ?? (tc.executionId ? "pending" : "completed");
+				const canApprove =
+					status === "pending" &&
+					!!tc.executionId &&
+					!!onApproveToolCall &&
+					!!onRejectToolCall;
+				return { tc, idx, canApprove };
+			})
+			.sort((a, b) => {
+				if (a.canApprove && !b.canApprove) return -1;
+				if (!a.canApprove && b.canApprove) return 1;
+				return a.idx - b.idx;
+			})
+			.map((x) => x.tc);
+	}, [toolCalls, onApproveToolCall, onRejectToolCall]);
+
 	const isExecuting = summary.executing > 0;
 	const isPending = summary.pending > 0;
 	const hasFailed = summary.failed > 0;
@@ -114,7 +133,7 @@ export function ToolGroup({
 
 			{isOpen && (
 				<div className="border-t bg-muted/10 divide-y divide-border/50">
-					{toolCalls.map((tc) => {
+					{orderedToolCalls.map((tc) => {
 						const status =
 							tc.status ?? (tc.executionId ? "pending" : "completed");
 						const canApprove =

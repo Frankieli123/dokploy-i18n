@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import { findEnvironmentById } from "@dokploy/server/services/environment";
 import { findDestinationById } from "@dokploy/server/services/destination";
 import {
 	createPostgres,
@@ -53,6 +54,17 @@ const ensurePostgresAccess = async (
 		return null;
 	}
 	return pg;
+};
+
+const ensureEnvironmentAccess = async (
+	environmentId: string,
+	ctx: { organizationId: string },
+) => {
+	const env = await findEnvironmentById(environmentId);
+	if (env.project?.organizationId !== ctx.organizationId) {
+		return null;
+	}
+	return env;
 };
 
 const buildDockerExecPsqlCommand = (opts: {
@@ -840,6 +852,14 @@ const createPostgresDatabase: Tool<
 	riskLevel: "medium",
 	requiresApproval: true,
 	execute: async (params, ctx) => {
+		const env = await ensureEnvironmentAccess(params.environmentId, ctx);
+		if (!env) {
+			return {
+				success: false,
+				message: "Environment access denied",
+			};
+		}
+
 		const newPg = await createPostgres({
 			name: params.name,
 			appName: params.appName,
@@ -875,7 +895,14 @@ const deployPostgresDatabase: Tool<
 	}),
 	riskLevel: "medium",
 	requiresApproval: true,
-	execute: async (params) => {
+	execute: async (params, ctx) => {
+		const pgAccess = await ensurePostgresAccess(params.postgresId, ctx);
+		if (!pgAccess) {
+			return {
+				success: false,
+				message: "Postgres access denied",
+			};
+		}
 		const pg = await deployPostgres(params.postgresId);
 		return {
 			success: true,
@@ -900,7 +927,14 @@ const deletePostgresDatabase: Tool<
 	}),
 	riskLevel: "high",
 	requiresApproval: true,
-	execute: async (params) => {
+	execute: async (params, ctx) => {
+		const pg = await ensurePostgresAccess(params.postgresId, ctx);
+		if (!pg) {
+			return {
+				success: false,
+				message: "Postgres access denied",
+			};
+		}
 		await removePostgresById(params.postgresId);
 		return {
 			success: true,

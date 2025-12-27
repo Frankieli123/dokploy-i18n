@@ -9,6 +9,7 @@ import { registerBitbucketTools } from "./tools/bitbucket";
 import { registerCertificateTools } from "./tools/certificate";
 import { registerClusterTools } from "./tools/cluster";
 import { registerComposeTools } from "./tools/compose";
+import { registerDatabaseTools } from "./tools/database";
 import { registerDeploymentTools } from "./tools/deployment";
 import { registerDestinationTools } from "./tools/destination";
 import { registerDockerTools } from "./tools/docker";
@@ -51,6 +52,7 @@ export function initializeTools() {
 
 	registerAdminTools();
 	registerDockerTools();
+	registerDatabaseTools();
 	registerProjectTools();
 	registerEnvironmentTools();
 	registerPostgresTools();

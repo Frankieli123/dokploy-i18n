@@ -1,11 +1,27 @@
 "use client";
 
-import { Bot, Loader2, MessageSquare, Send, Square } from "lucide-react";
+import {
+	Bot,
+	History,
+	Loader2,
+	MessageSquarePlus,
+	Search,
+	Send,
+	Square,
+} from "lucide-react";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+	DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -40,11 +56,18 @@ export function AIChatDrawer({
 	const router = useRouter();
 	const { t } = useTranslation("common");
 	const [isOpen, setIsOpen] = useState(false);
+	const [autoLoadHistory, setAutoLoadHistory] = useState(true);
 	const [input, setInput] = useState("");
 	const [selectedAiId, setSelectedAiId] = useState<string>("");
 	const [agentGoal, setAgentGoal] = useState("");
 	const viewportRef = useRef<HTMLDivElement>(null);
 	const isNearBottomRef = useRef(true);
+
+	useEffect(() => {
+		if (!isOpen) {
+			setAutoLoadHistory(true);
+		}
+	}, [isOpen]);
 
 	const routeProjectId =
 		typeof router.query.projectId === "string"
@@ -71,6 +94,7 @@ export function AIChatDrawer({
 	const {
 		messages,
 		isLoading,
+		conversationId,
 		send,
 		reset,
 		retryMessage,
@@ -78,6 +102,7 @@ export function AIChatDrawer({
 		rejectToolCall,
 		ensureConversation,
 		stopGeneration,
+		openConversation,
 		startAgent,
 		isAgentRunning,
 		agentRunId,
@@ -89,6 +114,8 @@ export function AIChatDrawer({
 		},
 		projectId,
 		serverId,
+		enabled: isOpen,
+		autoLoad: autoLoadHistory,
 	});
 
 	const cancelAgent = api.ai.agent.cancel.useMutation();
@@ -170,24 +197,39 @@ export function AIChatDrawer({
 					<Bot className="h-6 w-6" />
 				</Button>
 			</SheetTrigger>
-			<SheetContent className="w-full sm:w-[440px] p-0 flex flex-col gap-0">
-				<SheetHeader className="px-4 py-3 border-b pr-12">
+			<SheetContent
+				hideClose
+				className="w-full sm:w-[440px] p-0 flex flex-col gap-0"
+			>
+				<SheetHeader className="px-4 py-3 border-b">
 					<div className="flex items-center justify-between">
 						<SheetTitle className="flex items-center gap-2">
 							<Bot className="h-5 w-5" />
 							{t("ai.chat.title")}
 						</SheetTitle>
 						<div className="flex items-center gap-1">
+							<ConversationHistoryDialog
+								projectId={projectId}
+								serverId={serverId}
+								currentConversationId={conversationId}
+								onSelect={(nextId) => {
+									setAutoLoadHistory(false);
+									openConversation(nextId);
+								}}
+							/>
 							<ToolExecutionHistory messages={messages} />
 							<Button
 								variant="ghost"
 								size="icon"
-								onClick={() => reset()}
+								onClick={() => {
+									setAutoLoadHistory(false);
+									reset();
+								}}
 								className="h-8 w-8"
 								title={t("ai.chat.newConversation")}
 								aria-label={t("ai.chat.newConversation")}
 							>
-								<MessageSquare className="h-4 w-4" />
+								<MessageSquarePlus className="h-4 w-4" />
 							</Button>
 						</div>
 					</div>
@@ -217,9 +259,10 @@ export function AIChatDrawer({
 						<Input
 							value={agentGoal}
 							onChange={(e) => setAgentGoal(e.target.value)}
-							placeholder={t("ai.agent.goalPlaceholder", "Agent goal")}
+							placeholder={t("ai.agent.goalPlaceholder")}
 							disabled={!hasAiConfigs || isLoading || isAgentRunning}
 							className="flex-1"
+							aria-label={t("ai.agent.goalLabel")}
 						/>
 						{isAgentRunning ? (
 							<Button
@@ -252,7 +295,7 @@ export function AIChatDrawer({
 					onViewportScroll={handleViewportScroll}
 					role="log"
 					aria-live="polite"
-					aria-label="Chat messages"
+					aria-label={t("ai.chat.messagesAriaLabel")}
 				>
 					{!hasAiConfigs && !isLoadingConfigs ? (
 						<div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground gap-4 py-20">
@@ -342,5 +385,139 @@ export function AIChatDrawer({
 				</div>
 			</SheetContent>
 		</Sheet>
+	);
+}
+
+function ConversationHistoryDialog(props: {
+	projectId?: string;
+	serverId?: string;
+	currentConversationId?: string;
+	onSelect: (conversationId: string) => void;
+}) {
+	const { t } = useTranslation("common");
+	const [open, setOpen] = useState(false);
+	const [search, setSearch] = useState("");
+
+	const { data: conversations, isLoading } = api.ai.conversations.list.useQuery(
+		{
+			projectId: props.projectId,
+			serverId: props.serverId,
+			status: "active",
+			limit: 20,
+			offset: 0,
+		},
+		{
+			enabled: open,
+			refetchOnWindowFocus: false,
+		},
+	);
+
+	useEffect(() => {
+		if (!open) {
+			setSearch("");
+		}
+	}, [open]);
+
+	const filteredConversations = useMemo(() => {
+		if (!conversations) return [];
+		const s = search.trim().toLowerCase();
+		if (s.length === 0) return conversations;
+		return conversations.filter((c) => {
+			const title =
+				typeof c.title === "string" && c.title.trim().length > 0
+					? c.title
+					: t("ai.chat.untitled", "未命名对话");
+			return title.toLowerCase().includes(s);
+		});
+	}, [conversations, search, t]);
+
+	return (
+		<Dialog open={open} onOpenChange={setOpen}>
+			<DialogTrigger asChild>
+				<Button
+					variant="ghost"
+					size="icon"
+					className="h-8 w-8"
+					title={t("ai.chat.history", "历史对话")}
+					aria-label={t("ai.chat.history", "历史对话")}
+				>
+					<History className="h-4 w-4" />
+				</Button>
+			</DialogTrigger>
+			<DialogContent className="max-w-md max-h-[80vh] flex flex-col p-0 gap-0">
+				<DialogHeader className="p-6 pb-2">
+					<DialogTitle className="flex items-center gap-2">
+						<History className="h-5 w-5" />
+						{t("ai.chat.historyTitle", "历史对话")}
+					</DialogTitle>
+					<DialogDescription>
+						{t(
+							"ai.chat.historyDescription",
+							"选择一条历史对话以继续。",
+						)}
+					</DialogDescription>
+					<div className="relative mt-4">
+						<Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+						<Input
+							placeholder={t("search.placeholder")}
+							className="pl-8"
+							value={search}
+							onChange={(e) => setSearch(e.target.value)}
+						/>
+					</div>
+				</DialogHeader>
+
+				<ScrollArea className="flex-1 p-6 pt-2">
+					<div className="space-y-2">
+						{isLoading ? (
+							<div className="flex items-center justify-center py-10 text-muted-foreground">
+								<Loader2 className="h-6 w-6 animate-spin" />
+							</div>
+						) : !conversations || conversations.length === 0 ? (
+							<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+								<History className="h-10 w-10 opacity-20 mb-2" />
+								<p>{t("ai.chat.noHistory", "暂无历史对话")}</p>
+							</div>
+						) : filteredConversations.length === 0 ? (
+							<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+								<History className="h-10 w-10 opacity-20 mb-2" />
+								<p>{t("search.noResults")}</p>
+							</div>
+						) : (
+							filteredConversations.map((c) => {
+								const isCurrent =
+									c.conversationId === props.currentConversationId;
+								const title =
+									typeof c.title === "string" && c.title.trim().length > 0
+										? c.title
+										: t("ai.chat.untitled", "未命名对话");
+								const ts =
+									typeof c.updatedAt === "string" && c.updatedAt.length > 0
+										? c.updatedAt
+										: c.createdAt;
+								return (
+									<Button
+										key={c.conversationId}
+										variant={isCurrent ? "secondary" : "ghost"}
+										className="w-full justify-start h-auto px-3 py-2 flex-col items-start gap-1"
+										onClick={() => {
+											props.onSelect(c.conversationId);
+											setOpen(false);
+										}}
+									>
+										<span className="font-medium text-sm w-full text-left truncate">
+											{title}
+										</span>
+										<span className="text-xs text-muted-foreground tabular-nums">
+											{new Date(ts).toLocaleString()}
+										</span>
+									</Button>
+								);
+							})
+						)}
+					</div>
+				</ScrollArea>
+			</DialogContent>
+		</Dialog>
 	);
 }

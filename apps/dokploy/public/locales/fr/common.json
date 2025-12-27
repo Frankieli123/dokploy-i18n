@@ -2048,5 +2048,8 @@
     "ai.agent.step": "Step",
     "ai.agent.result": "Result",
     "ai.agent.finished": "Finished",
-    "ai.agent.summary": "Summary"
+    "ai.agent.summary": "Résumé",
+    "ai.agent.goalPlaceholder": "Objectif de l'agent",
+    "ai.agent.goalLabel": "Objectif de l'Agent",
+    "ai.chat.messagesAriaLabel": "Messages du chat"
 }

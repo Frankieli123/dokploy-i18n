@@ -57,6 +57,9 @@ export const user = pgTable("user", {
 	letsEncryptEmail: text("letsEncryptEmail"),
 	sshPrivateKey: text("sshPrivateKey"),
 	updateTagsUrl: text("updateTagsUrl"),
+	enableAutoCheckUpdates: boolean("enableAutoCheckUpdates")
+		.notNull()
+		.default(true),
 	enableDockerCleanup: boolean("enableDockerCleanup").notNull().default(false),
 	logCleanupCron: text("logCleanupCron").default("0 0 * * *"),
 	role: text("role").notNull().default("user"),
