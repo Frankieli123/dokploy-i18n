@@ -1,10 +1,27 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/utils/api";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getExecutionIdFromResultPayload(
+	payloadResult: Record<string, unknown>,
+): string | undefined {
+	const direct = payloadResult.executionId;
+	if (typeof direct === "string" && direct.trim().length > 0) {
+		return direct.trim();
+	}
+	const nested = payloadResult.data;
+	if (isRecord(nested)) {
+		const v = nested.executionId;
+		if (typeof v === "string" && v.trim().length > 0) {
+			return v.trim();
+		}
+	}
+	return undefined;
 }
 
 async function* readSseStream(stream: ReadableStream<Uint8Array>) {
@@ -97,6 +114,11 @@ export function useChat(options: UseChatOptions = {}) {
 	const [toolCallMeta, setToolCallMeta] = useState<
 		Record<string, Pick<ToolCall, "status" | "executionId" | "result">>
 	>({});
+	const [isConversationAutoApproved, setIsConversationAutoApproved] =
+		useState(false);
+	const autoApprovedToolCallIdsRef = useRef<Set<string>>(new Set());
+	const autoApprovedAgentExecutionIdsRef = useRef<Set<string>>(new Set());
+	const isAutoApprovingRef = useRef(false);
 	const [isLoading, setIsLoading] = useState(false);
 	const [abortController, setAbortController] =
 		useState<AbortController | null>(null);
@@ -293,6 +315,7 @@ export function useChat(options: UseChatOptions = {}) {
 
 	const approveToolCall = useCallback(
 		async (toolCallId: string) => {
+			setIsConversationAutoApproved(true);
 			const meta = toolCallMeta[toolCallId];
 			let executionId = meta?.executionId;
 			if (!executionId) {
@@ -300,6 +323,15 @@ export function useChat(options: UseChatOptions = {}) {
 					.flatMap((m) => m.toolCalls || [])
 					.find((tc) => tc.id === toolCallId);
 				executionId = fallback?.executionId;
+				if (!executionId) {
+					const nested = fallback?.result?.data;
+					if (isRecord(nested)) {
+						const v = nested.executionId;
+						if (typeof v === "string" && v.trim().length > 0) {
+							executionId = v.trim();
+						}
+					}
+				}
 			}
 			if (!executionId) return;
 
@@ -370,6 +402,93 @@ export function useChat(options: UseChatOptions = {}) {
 		],
 	);
 
+	const enableConversationAutoApprove = useCallback(() => {
+		setIsConversationAutoApproved(true);
+	}, []);
+
+	useEffect(() => {
+		if (!conversationId) return;
+		if (!isConversationAutoApproved) return;
+		if (isAutoApprovingRef.current) return;
+
+		const pendingToolCallId = (() => {
+			for (const msg of messages) {
+				for (const tc of msg.toolCalls || []) {
+					const effectiveStatus =
+						tc.status ?? (tc.executionId ? "pending" : "completed");
+					if (effectiveStatus !== "pending") continue;
+					if (!tc.executionId) continue;
+					if (autoApprovedToolCallIdsRef.current.has(tc.id)) continue;
+					return tc.id;
+				}
+			}
+			return "";
+		})();
+
+		if (!pendingToolCallId) return;
+		autoApprovedToolCallIdsRef.current.add(pendingToolCallId);
+		isAutoApprovingRef.current = true;
+		(async () => {
+			try {
+				await approveToolCall(pendingToolCallId);
+			} finally {
+				isAutoApprovingRef.current = false;
+			}
+		})().catch(() => {});
+	}, [approveToolCall, conversationId, isConversationAutoApproved, messages]);
+
+	useEffect(() => {
+		if (!conversationId) return;
+		if (!isConversationAutoApproved) return;
+		if (isAutoApprovingRef.current) return;
+
+		const pendingExecutionId = (() => {
+			for (const msg of messages) {
+				if (msg.role !== "system") continue;
+				if (typeof msg.content !== "string" || msg.content.length === 0)
+					continue;
+				let payload: unknown;
+				try {
+					payload = JSON.parse(msg.content);
+				} catch {
+					continue;
+				}
+				if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+					continue;
+				}
+				const type = (payload as { type?: unknown }).type;
+				if (type !== "agent.step.wait_approval") continue;
+				const executionId = (payload as { executionId?: unknown }).executionId;
+				if (typeof executionId !== "string" || executionId.length === 0)
+					continue;
+				if (autoApprovedAgentExecutionIdsRef.current.has(executionId)) continue;
+				return executionId;
+			}
+			return "";
+		})();
+
+		if (!pendingExecutionId) return;
+		autoApprovedAgentExecutionIdsRef.current.add(pendingExecutionId);
+		isAutoApprovingRef.current = true;
+		(async () => {
+			try {
+				await approveExecution.mutateAsync({
+					executionId: pendingExecutionId,
+					approved: true,
+				});
+				await refetchMessages().catch(() => {});
+			} finally {
+				isAutoApprovingRef.current = false;
+			}
+		})().catch(() => {});
+	}, [
+		approveExecution,
+		conversationId,
+		isConversationAutoApproved,
+		messages,
+		refetchMessages,
+	]);
+
 	const rejectToolCall = useCallback(
 		async (toolCallId: string) => {
 			const meta = toolCallMeta[toolCallId];
@@ -379,6 +498,15 @@ export function useChat(options: UseChatOptions = {}) {
 					.flatMap((m) => m.toolCalls || [])
 					.find((tc) => tc.id === toolCallId);
 				executionId = fallback?.executionId;
+				if (!executionId) {
+					const nested = fallback?.result?.data;
+					if (isRecord(nested)) {
+						const v = nested.executionId;
+						if (typeof v === "string" && v.trim().length > 0) {
+							executionId = v.trim();
+						}
+					}
+				}
 			}
 			if (!executionId) return;
 
@@ -635,10 +763,10 @@ export function useChat(options: UseChatOptions = {}) {
 								if (
 									payloadResult &&
 									payloadResult.status === "pending_approval" &&
-									typeof payloadResult.executionId === "string"
+									getExecutionIdFromResultPayload(payloadResult)
 								) {
 									status = "pending";
-									executionId = payloadResult.executionId;
+									executionId = getExecutionIdFromResultPayload(payloadResult);
 									result = {
 										success: true,
 										message:
@@ -652,10 +780,7 @@ export function useChat(options: UseChatOptions = {}) {
 									typeof payloadResult.success === "boolean"
 								) {
 									status = payloadResult.success ? "completed" : "failed";
-									executionId =
-										typeof payloadResult.executionId === "string"
-											? payloadResult.executionId
-											: undefined;
+									executionId = getExecutionIdFromResultPayload(payloadResult);
 									result = {
 										success: payloadResult.success,
 										message: payloadResult.message as string | undefined,
@@ -716,7 +841,9 @@ export function useChat(options: UseChatOptions = {}) {
 							error?: string;
 						};
 						throw new Error(
-							payload.message || payload.error || "settings.ai.errors.streamingError",
+							payload.message ||
+								payload.error ||
+								"settings.ai.errors.streamingError",
 						);
 					}
 				}
@@ -748,7 +875,9 @@ export function useChat(options: UseChatOptions = {}) {
 					);
 				} else {
 					const errorMsg =
-						error instanceof Error ? error.message : "settings.ai.errors.unknownError";
+						error instanceof Error
+							? error.message
+							: "settings.ai.errors.unknownError";
 					finalizeExecutingToolCalls(errorMsg);
 					setPendingMessages((prev) =>
 						prev.map((m) =>
@@ -840,7 +969,9 @@ export function useChat(options: UseChatOptions = {}) {
 
 					if (evt.event === "error") {
 						const payload = JSON.parse(evt.data) as { message?: string };
-						throw new Error(payload.message || "settings.ai.errors.agentStreamError");
+						throw new Error(
+							payload.message || "settings.ai.errors.agentStreamError",
+						);
 					}
 
 					if (!evt.event.startsWith("agent.")) continue;
@@ -909,6 +1040,10 @@ export function useChat(options: UseChatOptions = {}) {
 		setConversationId(undefined);
 		setPendingMessages([]);
 		setToolCallMeta({});
+		setIsConversationAutoApproved(false);
+		autoApprovedToolCallIdsRef.current.clear();
+		autoApprovedAgentExecutionIdsRef.current.clear();
+		isAutoApprovingRef.current = false;
 	}, [abortController, agentAbortController]);
 
 	const retryMessage = useCallback(
@@ -934,6 +1069,10 @@ export function useChat(options: UseChatOptions = {}) {
 			stopAgentStream();
 			setPendingMessages([]);
 			setToolCallMeta({});
+			setIsConversationAutoApproved(false);
+			autoApprovedToolCallIdsRef.current.clear();
+			autoApprovedAgentExecutionIdsRef.current.clear();
+			isAutoApprovingRef.current = false;
 			setConversationId(normalized);
 		},
 		[stopAgentStream, stopGeneration],
@@ -944,6 +1083,8 @@ export function useChat(options: UseChatOptions = {}) {
 		conversationId,
 		messages,
 		isLoading,
+		isConversationAutoApproved,
+		enableConversationAutoApprove,
 		isAgentRunning,
 		agentRunId,
 		send,

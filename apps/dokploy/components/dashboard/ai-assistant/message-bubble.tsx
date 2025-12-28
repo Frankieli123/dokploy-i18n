@@ -12,10 +12,10 @@ import {
 	User,
 } from "lucide-react";
 import { useTranslation } from "next-i18next";
-import { translateErrorMessage } from "@/utils/error-translation";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { translateErrorMessage } from "@/utils/error-translation";
 import { ToolCallBlock } from "./tool-call-block";
 import { ToolGroup } from "./tool-call-group";
 import type { Message, ToolCall } from "./use-chat";
@@ -417,7 +417,10 @@ export function MessageBubble({
 				)}
 			</div>
 			<div
-				className={cn("flex max-w-[85%] flex-col gap-1", isUser && "items-end")}
+				className={cn(
+					"flex w-full max-w-[85%] min-w-0 flex-col gap-1",
+					isUser && "items-end",
+				)}
 			>
 				{shouldRenderBubble && (
 					<div
@@ -468,12 +471,30 @@ export function MessageBubble({
 							/>
 						) : (
 							message.toolCalls!.map((toolCall) => {
+								const effectiveExecutionId = (() => {
+									if (
+										typeof toolCall.executionId === "string" &&
+										toolCall.executionId.length > 0
+									) {
+										return toolCall.executionId;
+									}
+									const data = toolCall.result?.data;
+									if (
+										!data ||
+										typeof data !== "object" ||
+										Array.isArray(data)
+									) {
+										return "";
+									}
+									const v = (data as { executionId?: unknown }).executionId;
+									return typeof v === "string" && v.length > 0 ? v : "";
+								})();
 								const status =
 									toolCall.status ??
-									(toolCall.executionId ? "pending" : "completed");
+									(effectiveExecutionId.length > 0 ? "pending" : "completed");
 								const canApprove =
 									status === "pending" &&
-									!!toolCall.executionId &&
+									effectiveExecutionId.length > 0 &&
 									!!onApproveToolCall &&
 									!!onRejectToolCall;
 
@@ -483,7 +504,11 @@ export function MessageBubble({
 										toolCall={toolCall}
 										status={status}
 										result={toolCall.result}
-										executionId={toolCall.executionId}
+										executionId={
+											effectiveExecutionId.length > 0
+												? effectiveExecutionId
+												: undefined
+										}
 										onApprove={
 											canApprove
 												? () => onApproveToolCall?.(toolCall.id)

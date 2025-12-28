@@ -201,6 +201,100 @@ const traefikAcmeLogTail: Tool<
 	},
 };
 
+const readTraefikMiddlewares: Tool<
+	{ serverId?: string; maxOutputChars?: number },
+	{
+		filePath: string;
+		content: string;
+		middlewares: string[];
+		truncated: boolean;
+	}
+> = {
+	name: "traefik_read_middlewares",
+	description:
+		"Read Traefik dynamic middlewares configuration (middlewares.yml) and list middleware names (read-only, truncated)",
+	category: "server",
+	aliases: [
+		"traefik middlewares",
+		"list traefik middlewares",
+		"read middlewares.yml",
+		"Traefik中间件",
+		"读取Traefik中间件",
+	],
+	tags: ["traefik", "middleware", "middlewares", "config", "read", "中间件"],
+	parameters: z.object({
+		serverId: z
+			.string()
+			.optional()
+			.describe("Server ID (defaults to current context)"),
+		maxOutputChars: z
+			.number()
+			.int()
+			.min(1000)
+			.max(200000)
+			.optional()
+			.default(20000)
+			.describe("Maximum output characters (truncates if exceeded)"),
+	}),
+	riskLevel: "low",
+	requiresApproval: false,
+	execute: async (params, ctx) => {
+		const serverId = params.serverId ?? ctx.serverId;
+		const hasAccess = await canAccessToTraefikFiles(
+			ctx.userId,
+			ctx.organizationId,
+		);
+		if (!hasAccess) {
+			return { success: false, message: "Permission denied" };
+		}
+
+		if (serverId) {
+			const server = await findServerById(serverId);
+			if (server.organizationId !== ctx.organizationId) {
+				return { success: false, message: "Server access denied" };
+			}
+		}
+
+		const traefikDynamic = paths(!!serverId).DYNAMIC_TRAEFIK_PATH;
+		const configPath = path.join(traefikDynamic, "middlewares.yml");
+
+		const raw = await readConfigInPath(configPath, serverId);
+		if (!raw) {
+			return { success: false, message: "middlewares.yml not found or empty" };
+		}
+
+		let middlewares: string[] = [];
+		try {
+			const parsed = parseYaml(raw) as unknown;
+			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+				const http = (parsed as { http?: unknown }).http;
+				if (http && typeof http === "object" && !Array.isArray(http)) {
+					const mws = (http as { middlewares?: unknown }).middlewares;
+					if (mws && typeof mws === "object" && !Array.isArray(mws)) {
+						middlewares = Object.keys(mws as Record<string, unknown>).sort();
+					}
+				}
+			}
+		} catch {
+			middlewares = [];
+		}
+
+		const maxOutputChars = params.maxOutputChars ?? 20000;
+		const { text, truncated } = truncateOutput(raw, maxOutputChars);
+
+		return {
+			success: true,
+			message: `Read Traefik middlewares (${middlewares.length} found)`,
+			data: {
+				filePath: "middlewares.yml",
+				content: text,
+				middlewares,
+				truncated,
+			},
+		};
+	},
+};
+
 const listTraefikFiles: Tool<
 	{ serverId?: string; subPath?: string },
 	{ root: string; items: TraefikTreeItem[] }
@@ -765,6 +859,7 @@ const traefikAcmeRetry: Tool<
 export function registerTraefikTools() {
 	toolRegistry.register(listTraefikFiles);
 	toolRegistry.register(readTraefikConfig);
+	toolRegistry.register(readTraefikMiddlewares);
 	toolRegistry.register(traefikAcmeStatus);
 	toolRegistry.register(writeMainTraefikConfig);
 	toolRegistry.register(reloadTraefik);

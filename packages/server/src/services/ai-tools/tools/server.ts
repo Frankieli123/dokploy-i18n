@@ -31,8 +31,8 @@ const DANGEROUS_PATTERNS: RegExp[] = [
 	/\bpoweroff\b/i,
 	/\bhalt\b/i,
 	/\bkill\b\s+-9\s+-1\b/i,
-	/\bcurl\b[^\n]*\|\s*(bash|sh)\b/i,
-	/\bwget\b[^\n]*\|\s*(bash|sh)\b/i,
+	/\bcurl\b[\s\S]*\|\s*(bash|sh)\b/i,
+	/\bwget\b[\s\S]*\|\s*(bash|sh)\b/i,
 ];
 
 const NETWORK_PATTERNS: RegExp[] = [
@@ -86,6 +86,40 @@ const buildWrappedCommand = (
 	return `timeout ${timeoutSeconds}s ${wrapped}`;
 };
 
+type ServerExecResultData = {
+	stdout: string;
+	stderr: string;
+	exitHint?: string;
+	servers?: Array<{ serverId: string; name: string; ipAddress: string }>;
+};
+
+async function resolveDefaultServerId(organizationId: string): Promise<
+	| {
+			pickedServerId: string;
+			candidates: Array<{ serverId: string; name: string; ipAddress: string }>;
+	  }
+	| {
+			pickedServerId: null;
+			candidates: Array<{ serverId: string; name: string; ipAddress: string }>;
+	  }
+> {
+	const servers = await getAllServers();
+	const orgServers = servers.filter((s) => s.organizationId === organizationId);
+	const activeServers = orgServers.filter((s) => s.serverStatus === "active");
+	const deployServers = activeServers.filter((s) => s.serverType === "deploy");
+	const candidatesRaw =
+		deployServers.length > 0 ? deployServers : activeServers;
+	const candidates = candidatesRaw.map((s) => ({
+		serverId: s.serverId,
+		name: s.name,
+		ipAddress: s.ipAddress,
+	}));
+	if (candidates.length === 1) {
+		return { pickedServerId: candidates[0]!.serverId, candidates };
+	}
+	return { pickedServerId: null, candidates };
+}
+
 const serverExec: Tool<
 	{
 		serverId?: string;
@@ -98,7 +132,7 @@ const serverExec: Tool<
 		allowUnsafe?: boolean;
 		confirm: "EXECUTE" | "EXECUTE_UNSAFE";
 	},
-	{ stdout: string; stderr: string; exitHint?: string }
+	ServerExecResultData
 > = {
 	name: "server_exec",
 	description:
@@ -152,15 +186,20 @@ const serverExec: Tool<
 	riskLevel: "high",
 	requiresApproval: true,
 	execute: async (params, ctx) => {
-		const serverId = params.serverId ?? ctx.serverId;
+		let serverId = params.serverId ?? ctx.serverId;
 		if (!serverId) {
-			return {
-				success: false,
-				message:
-					"serverId is required (either pass serverId or set a conversation serverId)",
-				error: "MISSING_SERVER_ID",
-				data: { stdout: "", stderr: "" },
-			};
+			const resolved = await resolveDefaultServerId(ctx.organizationId);
+			if (resolved.pickedServerId) {
+				serverId = resolved.pickedServerId;
+			} else {
+				return {
+					success: false,
+					message:
+						"serverId is required (either pass serverId or set a conversation serverId)",
+					error: "MISSING_SERVER_ID",
+					data: { stdout: "", stderr: "", servers: resolved.candidates },
+				};
+			}
 		}
 		const server = await findServerById(serverId);
 		if (server.organizationId !== ctx.organizationId) {
@@ -173,19 +212,11 @@ const serverExec: Tool<
 		}
 
 		const command = normalizeCommand(params.command);
-		if (command.length > 2000) {
+		if (command.length > 20000) {
 			return {
 				success: false,
 				message: "Command too long",
 				error: "COMMAND_TOO_LONG",
-				data: { stdout: "", stderr: "" },
-			};
-		}
-		if (/\n|\r/.test(command)) {
-			return {
-				success: false,
-				message: "Multiline commands are not allowed",
-				error: "MULTILINE_NOT_ALLOWED",
 				data: { stdout: "", stderr: "" },
 			};
 		}

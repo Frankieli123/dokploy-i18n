@@ -29,6 +29,18 @@ export function ToolGroup({
 	const { t } = useTranslation("common");
 	const [isOpen, setIsOpen] = useState(false);
 
+	const getEffectiveExecutionId = (tc: ToolCall) => {
+		if (typeof tc.executionId === "string" && tc.executionId.length > 0) {
+			return tc.executionId;
+		}
+		const data = tc.result?.data;
+		if (!data || typeof data !== "object" || Array.isArray(data)) {
+			return "";
+		}
+		const v = (data as { executionId?: unknown }).executionId;
+		return typeof v === "string" && v.length > 0 ? v : "";
+	};
+
 	const summary = useMemo(() => {
 		let executing = 0;
 		let pending = 0;
@@ -36,7 +48,10 @@ export function ToolGroup({
 		let completed = 0;
 
 		for (const tc of toolCalls) {
-			const status = tc.status ?? (tc.executionId ? "pending" : "completed");
+			const effectiveExecutionId = getEffectiveExecutionId(tc);
+			const status =
+				tc.status ??
+				(effectiveExecutionId.length > 0 ? "pending" : "completed");
 			if (status === "executing") executing++;
 			else if (status === "pending") pending++;
 			else if (status === "failed" || status === "rejected") failed++;
@@ -49,10 +64,13 @@ export function ToolGroup({
 	const orderedToolCalls = useMemo(() => {
 		return toolCalls
 			.map((tc, idx) => {
-				const status = tc.status ?? (tc.executionId ? "pending" : "completed");
+				const effectiveExecutionId = getEffectiveExecutionId(tc);
+				const status =
+					tc.status ??
+					(effectiveExecutionId.length > 0 ? "pending" : "completed");
 				const canApprove =
 					status === "pending" &&
-					!!tc.executionId &&
+					effectiveExecutionId.length > 0 &&
 					!!onApproveToolCall &&
 					!!onRejectToolCall;
 				return { tc, idx, canApprove };
@@ -134,11 +152,13 @@ export function ToolGroup({
 			{isOpen && (
 				<div className="border-t bg-muted/10 divide-y divide-border/50">
 					{orderedToolCalls.map((tc) => {
+						const effectiveExecutionId = getEffectiveExecutionId(tc);
 						const status =
-							tc.status ?? (tc.executionId ? "pending" : "completed");
+							tc.status ??
+							(effectiveExecutionId.length > 0 ? "pending" : "completed");
 						const canApprove =
 							status === "pending" &&
-							!!tc.executionId &&
+							effectiveExecutionId.length > 0 &&
 							!!onApproveToolCall &&
 							!!onRejectToolCall;
 
@@ -148,16 +168,16 @@ export function ToolGroup({
 									toolCall={tc}
 									status={status}
 									result={tc.result}
-									executionId={tc.executionId}
-									onApprove={
-										canApprove
-											? () => onApproveToolCall?.(tc.id)
+									executionId={
+										effectiveExecutionId.length > 0
+											? effectiveExecutionId
 											: undefined
 									}
+									onApprove={
+										canApprove ? () => onApproveToolCall?.(tc.id) : undefined
+									}
 									onReject={
-										canApprove
-											? () => onRejectToolCall?.(tc.id)
-											: undefined
+										canApprove ? () => onRejectToolCall?.(tc.id) : undefined
 									}
 									className="my-0 shadow-none border-none bg-transparent"
 								/>

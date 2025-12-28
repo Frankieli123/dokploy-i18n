@@ -38,6 +38,7 @@ import {
 	SheetTitle,
 	SheetTrigger,
 } from "@/components/ui/sheet";
+import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/utils/api";
 import { translateErrorMessage } from "@/utils/error-translation";
 import { MessageBubble } from "./message-bubble";
@@ -62,6 +63,7 @@ export function AIChatDrawer({
 	const [agentGoal, setAgentGoal] = useState("");
 	const viewportRef = useRef<HTMLDivElement>(null);
 	const isNearBottomRef = useRef(true);
+	const inputRef = useRef<HTMLTextAreaElement>(null);
 
 	useEffect(() => {
 		if (!isOpen) {
@@ -101,6 +103,8 @@ export function AIChatDrawer({
 		approveToolCall,
 		rejectToolCall,
 		ensureConversation,
+		refetchMessages,
+		enableConversationAutoApprove,
 		stopGeneration,
 		openConversation,
 		startAgent,
@@ -171,11 +175,22 @@ export function AIChatDrawer({
 	};
 
 	const handleKeyPress = (e: React.KeyboardEvent) => {
+		if ((e.nativeEvent as { isComposing?: boolean }).isComposing) {
+			return;
+		}
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault();
 			handleSend();
 		}
 	};
+
+	useEffect(() => {
+		const el = inputRef.current;
+		if (!el) return;
+		el.style.height = "auto";
+		const maxHeight = 180;
+		el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+	}, [input]);
 
 	const handleRetry = async (messageId: string) => {
 		if (selectedAiId) {
@@ -332,12 +347,37 @@ export function AIChatDrawer({
 										message={message}
 										onApproveToolCall={approveToolCall}
 										onRejectToolCall={rejectToolCall}
-										onApproveExecution={(executionId) =>
-											approveExecution.mutate({ executionId, approved: true })
-										}
-										onRejectExecution={(executionId) =>
-											approveExecution.mutate({ executionId, approved: false })
-										}
+										onApproveExecution={async (executionId) => {
+											try {
+												enableConversationAutoApprove();
+												await approveExecution.mutateAsync({
+													executionId,
+													approved: true,
+												});
+												await refetchMessages().catch(() => {});
+											} catch (error) {
+												const errorMessage =
+													error instanceof Error
+														? error.message
+														: t("ai.chat.sendError");
+												toast.error(translateErrorMessage(errorMessage, t));
+											}
+										}}
+										onRejectExecution={async (executionId) => {
+											try {
+												await approveExecution.mutateAsync({
+													executionId,
+													approved: false,
+												});
+												await refetchMessages().catch(() => {});
+											} catch (error) {
+												const errorMessage =
+													error instanceof Error
+														? error.message
+														: t("ai.chat.sendError");
+												toast.error(translateErrorMessage(errorMessage, t));
+											}
+										}}
 										isLast={index === messages.length - 1}
 										onRetry={() => handleRetry(message.messageId)}
 									/>
@@ -349,17 +389,19 @@ export function AIChatDrawer({
 
 				<div className="border-t p-4">
 					<div className="flex gap-2">
-						<Input
+						<Textarea
+							ref={inputRef}
 							value={input}
 							onChange={(e) => setInput(e.target.value)}
 							onKeyDown={handleKeyPress}
+							rows={1}
 							placeholder={
 								hasAiConfigs
 									? t("ai.chat.inputPlaceholder")
 									: t("ai.chat.configureFirst")
 							}
 							disabled={!hasAiConfigs || isAgentRunning || isLoading}
-							className="flex-1"
+							className="flex-1 min-h-[40px] max-h-[180px] resize-none overflow-y-auto"
 							aria-label={t("ai.chat.inputLabel")}
 						/>
 						{isLoading ? (
@@ -451,10 +493,7 @@ function ConversationHistoryDialog(props: {
 						{t("ai.chat.historyTitle", "历史对话")}
 					</DialogTitle>
 					<DialogDescription>
-						{t(
-							"ai.chat.historyDescription",
-							"选择一条历史对话以继续。",
-						)}
+						{t("ai.chat.historyDescription", "选择一条历史对话以继续。")}
 					</DialogDescription>
 					<div className="relative mt-4">
 						<Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />

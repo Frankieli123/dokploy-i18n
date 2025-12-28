@@ -29,14 +29,6 @@ import {
 import { useTranslation } from "next-i18next";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { ToolCall } from "./use-chat";
 
@@ -163,7 +155,6 @@ export function ToolCallBlock({
 }: ToolCallBlockProps) {
 	const { t } = useTranslation("common");
 	const [expanded, setExpanded] = useState(false);
-	const [showApprovalDialog, setShowApprovalDialog] = useState(false);
 
 	const Icon = getToolIcon(toolCall.function.name);
 	const riskColor = getRiskColor(toolCall.function.name);
@@ -248,12 +239,46 @@ export function ToolCallBlock({
 		return v;
 	})();
 	const confirmHint = confirmLiteral || confirmLiteralsFromResult[0] || "";
+	const resultPreview = (() => {
+		if (
+			status === "pending" ||
+			status === "approved" ||
+			status === "executing"
+		) {
+			return "";
+		}
+		if (!result) return "";
+		if (!result.success) {
+			return result.message || result.error || "";
+		}
+		if (
+			typeof result.message === "string" &&
+			result.message.trim().length > 0
+		) {
+			return result.message.trim();
+		}
+		const data = result.data;
+		if (data && typeof data === "object" && !Array.isArray(data)) {
+			const stdout = (data as { stdout?: unknown }).stdout;
+			const stderr = (data as { stderr?: unknown }).stderr;
+			const picked =
+				typeof stdout === "string" && stdout.trim().length > 0
+					? stdout.trim()
+					: typeof stderr === "string" && stderr.trim().length > 0
+						? stderr.trim()
+						: "";
+			if (picked.length > 0) {
+				return picked.split(/\r?\n/)[0] ?? picked;
+			}
+		}
+		return "";
+	})();
 
 	return (
 		<>
 			<div
 				className={cn(
-					"rounded border p-2 my-1 text-xs transition-colors shadow-sm",
+					"w-full max-w-full min-w-0 overflow-hidden rounded border p-2 my-1 text-xs transition-colors shadow-sm",
 					riskColor,
 					className,
 				)}
@@ -262,17 +287,17 @@ export function ToolCallBlock({
 					className="flex items-center justify-between cursor-pointer select-none group"
 					onClick={() => setExpanded(!expanded)}
 				>
-					<div className="flex items-center gap-2">
+					<div className="flex items-center gap-2 min-w-0">
 						<div className="p-1 rounded bg-background border shadow-sm">
 							<Icon className="h-3 w-3 text-foreground" />
 						</div>
-						<div className="flex items-center gap-2">
-							<span className="font-semibold text-foreground text-[11px]">
+						<div className="flex items-center gap-2 min-w-0">
+							<span className="font-semibold text-foreground text-[11px] min-w-0 truncate">
 								{toolCall.function.name}
 							</span>
 							<span
 								className={cn(
-									"flex items-center gap-1 font-medium text-[10px]",
+									"flex items-center gap-1 font-medium text-[10px] shrink-0",
 									statusConfig[status].color,
 								)}
 							>
@@ -299,13 +324,19 @@ export function ToolCallBlock({
 					</Button>
 				</div>
 
+				{!expanded && resultPreview.length > 0 && (
+					<div className="mt-1 text-[10px] text-muted-foreground font-mono break-words [overflow-wrap:anywhere]">
+						{resultPreview}
+					</div>
+				)}
+
 				{expanded && (
 					<div className="mt-2 space-y-2 pt-2 border-t border-border/50">
 						<div className="space-y-1">
 							<span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
 								Arguments
 							</span>
-							<div className="rounded bg-muted/50 p-2 font-mono text-[10px] border border-border/50 max-h-[300px] overflow-y-auto overflow-x-auto">
+							<div className="max-w-full rounded bg-muted/50 p-2 font-mono text-[10px] border border-border/50 max-h-[300px] overflow-y-auto overflow-x-auto">
 								<pre className="whitespace-pre min-w-max">
 									{JSON.stringify(parsedArgs, null, 2)}
 								</pre>
@@ -319,7 +350,7 @@ export function ToolCallBlock({
 								</span>
 								<div
 									className={cn(
-										"rounded p-2 border text-[10px] max-h-[300px] overflow-y-auto overflow-x-auto",
+										"max-w-full rounded p-2 border text-[10px] max-h-[300px] overflow-y-auto overflow-x-auto",
 										result.success
 											? "bg-emerald-500/5 border-emerald-500/20 text-emerald-900 dark:text-emerald-200"
 											: "bg-destructive/5 border-destructive/20 text-destructive-foreground",
@@ -347,65 +378,14 @@ export function ToolCallBlock({
 				)}
 
 				{status === "pending" && onApprove && onReject && (
-					<div className="mt-2 pt-2 border-t border-border/50 flex gap-2">
-						<Button
-							size="sm"
-							className="h-6 px-2 text-[10px] flex-1"
-							variant={isDestructive ? "destructive" : "default"}
-							onClick={(e) => {
-								e.stopPropagation();
-								setShowApprovalDialog(true);
-							}}
-						>
-							{t("ai.toolCall.reviewApprove")}
-						</Button>
-						<Button
-							size="sm"
-							variant="outline"
-							className="h-6 px-2 text-[10px] flex-1 hover:bg-destructive/10 hover:text-destructive hover:border-destructive/50"
-							onClick={(e) => {
-								e.stopPropagation();
-								onReject();
-							}}
-						>
-							{t("ai.toolCall.reject")}
-						</Button>
-					</div>
-				)}
-			</div>
-
-			<Dialog open={showApprovalDialog} onOpenChange={setShowApprovalDialog}>
-				<DialogContent>
-					<DialogHeader>
-						<DialogTitle className="flex items-center gap-2">
-							{isDestructive && (
-								<AlertCircle className="h-5 w-5 text-destructive" />
-							)}
-							{t("ai.toolCall.confirmAction")}
-						</DialogTitle>
-						<DialogDescription>
-							{t("ai.toolCall.aiRequestExecute")}{" "}
-							<strong>{toolCall.function.name}</strong>
-						</DialogDescription>
-					</DialogHeader>
-					<div className="space-y-4">
-						<div className="rounded-lg border p-3">
-							<h4 className="text-sm font-medium mb-2">
-								{t("ai.toolCall.parameters")}
-							</h4>
-							<div className="text-xs font-mono bg-muted p-2 rounded overflow-x-auto">
-								<pre className="min-w-max">
-									{JSON.stringify(parsedArgs, null, 2)}
-								</pre>
-							</div>
-						</div>
+					<div className="mt-2 pt-2 border-t border-border/50 space-y-2">
 						{confirmHint.length > 0 && (
-							<div className="rounded-lg border border-amber-500/50 bg-amber-500/5 p-3 text-sm text-amber-900 dark:text-amber-200">
+							<div className="rounded-lg border border-amber-500/50 bg-amber-500/5 p-3 text-[11px] text-amber-900 dark:text-amber-200">
 								<div className="flex items-start gap-2">
 									<ShieldAlert className="h-4 w-4 text-amber-500 mt-0.5" />
 									<div className="min-w-0">
 										<p className="font-medium">Confirm required</p>
-										<p className="text-xs opacity-90">
+										<p className="text-[10px] opacity-90">
 											Set <span className="font-mono">confirm</span> to{" "}
 											<span className="font-mono font-semibold select-all">
 												{confirmHint}
@@ -413,7 +393,7 @@ export function ToolCallBlock({
 											(must match exactly).
 										</p>
 										{confirmLiteralsFromResult.length > 1 && (
-											<p className="text-xs opacity-90 mt-1">
+											<p className="text-[10px] opacity-90 mt-1">
 												Allowed:{" "}
 												<span className="font-mono">
 													{confirmLiteralsFromResult.join(", ")}
@@ -426,8 +406,8 @@ export function ToolCallBlock({
 						)}
 						{exampleParamsFromResult != null && (
 							<div className="rounded-lg border p-3">
-								<h4 className="text-sm font-medium mb-2">Example params</h4>
-								<div className="text-xs font-mono bg-muted p-2 rounded overflow-x-auto">
+								<h4 className="text-[11px] font-medium mb-2">Example params</h4>
+								<div className="text-[10px] font-mono bg-muted p-2 rounded overflow-x-auto">
 									<pre className="min-w-max">
 										{JSON.stringify(exampleParamsFromResult, null, 2)}
 									</pre>
@@ -435,33 +415,37 @@ export function ToolCallBlock({
 							</div>
 						)}
 						{isDestructive && (
-							<div className="rounded-lg border border-destructive/50 bg-destructive/5 p-3 text-sm text-destructive">
+							<div className="rounded-lg border border-destructive/50 bg-destructive/5 p-3 text-[11px] text-destructive">
 								{t("ai.toolCall.cannotUndo")}
 							</div>
 						)}
+						<div className="flex gap-2">
+							<Button
+								size="sm"
+								className="h-6 px-2 text-[10px] flex-1"
+								variant={isDestructive ? "destructive" : "default"}
+								onClick={(e) => {
+									e.stopPropagation();
+									onApprove();
+								}}
+							>
+								{t("ai.toolCall.reviewApprove")}
+							</Button>
+							<Button
+								size="sm"
+								variant="outline"
+								className="h-6 px-2 text-[10px] flex-1 hover:bg-destructive/10 hover:text-destructive hover:border-destructive/50"
+								onClick={(e) => {
+									e.stopPropagation();
+									onReject();
+								}}
+							>
+								{t("ai.toolCall.reject")}
+							</Button>
+						</div>
 					</div>
-					<DialogFooter>
-						<Button
-							variant="outline"
-							onClick={() => {
-								setShowApprovalDialog(false);
-								onReject?.();
-							}}
-						>
-							{t("common.cancel")}
-						</Button>
-						<Button
-							variant={isDestructive ? "destructive" : "default"}
-							onClick={() => {
-								setShowApprovalDialog(false);
-								onApprove?.();
-							}}
-						>
-							{t("common.confirm")}
-						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
+				)}
+			</div>
 		</>
 	);
 }
