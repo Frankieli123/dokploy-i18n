@@ -76,7 +76,14 @@ const TOOL_SEARCH_DOMAIN_CATEGORY_HINTS: Record<string, string[]> = {
 	application: ["application", "compose"],
 	domain: ["domain"],
 	certificate: ["certificate", "server"],
-	proxy: ["server", "settings"],
+	proxy: [
+		"server",
+		"domain",
+		"certificate",
+		"application",
+		"compose",
+		"settings",
+	],
 	backup: ["backup"],
 	mount: ["server"],
 	registry: ["deployment"],
@@ -250,7 +257,7 @@ function tokenizeToolSearchQuery(query: string): string[] {
 	if (/(域名|domain|dns)/i.test(q)) add(["domain", "dns"]);
 	if (/(证书|certificate|ssl|https|tls)/i.test(q))
 		add(["certificate", "ssl", "https", "tls"]);
-	if (/(traefik|特雷菲克|反向代理|网关|代理|转发|路由|ingress)/i.test(q))
+	if (/(traefik|特雷菲克|反向代理|反代|网关|代理|转发|路由|ingress)/i.test(q))
 		add(["traefik", "proxy", "router", "ingress"]);
 	if (/(acme|let'?s\s*encrypt|续签|自动续期|证书续期|challenge)/i.test(q))
 		add(["acme", "letsencrypt", "challenge"]);
@@ -710,22 +717,34 @@ function searchToolCatalog(params: {
 	scored.sort((a, b) => b.score - a.score || a.t.name.localeCompare(b.t.name));
 
 	const limit = params.limit ?? 12;
-	const picked =
-		scored.length > 0
-			? scored.slice(0, limit).map((x) => x.t)
-			: all
-					.filter((t) => t.riskLevel === "low" && !t.requiresApproval)
-					.filter((t) => {
-						if (hintedCategorySet.size === 0) return true;
-						return hintedCategorySet.has(t.category);
-					})
-					.sort((a, b) => a.name.localeCompare(b.name))
-					.slice(0, limit);
+	const picked = (() => {
+		if (scored.length > 0) return scored.slice(0, limit).map((x) => x.t);
+
+		const pool =
+			hintedCategorySet.size === 0
+				? all
+				: all.filter((t) => hintedCategorySet.has(t.category));
+
+		const safe = pool
+			.filter((t) => t.riskLevel === "low" && !t.requiresApproval)
+			.sort((a, b) => a.name.localeCompare(b.name));
+
+		const isDestructive = (name: string) =>
+			/(delete|remove|destroy|purge|uninstall|reset|rotate|revoke|restore)/i.test(
+				name,
+			);
+		const writeCapable = pool
+			.filter((t) => t.requiresApproval || t.riskLevel !== "low")
+			.filter((t) => !isDestructive(t.name))
+			.sort((a, b) => a.name.localeCompare(b.name));
+
+		return safe.concat(writeCapable).slice(0, limit);
+	})();
 
 	const message =
 		scored.length > 0
 			? `Found ${picked.length} tool(s) matching "${params.query}"`
-			: `No direct matches for "${params.query}". Returning ${picked.length} safe tool(s) to help you explore.`;
+			: `No direct matches for "${params.query}". Returning ${picked.length} suggested tool(s) (some may require approval).`;
 
 	const bestTool = scored.length > 0 ? scored[0]?.t : undefined;
 	const nextCall = bestTool

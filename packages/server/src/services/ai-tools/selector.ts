@@ -33,7 +33,12 @@ function classifyIntent(messageLower: string): ToolIntent {
 		return "database";
 	}
 	if (
-		/(traefik|proxy|gateway|routing|router|reverse\s*proxy)/i.test(messageLower)
+		/(traefik|proxy|gateway|routing|router|reverse\s*proxy)/i.test(
+			messageLower,
+		) ||
+		/(\u53cd\u4ee3|\u53cd\u5411\u4ee3\u7406|\u4ee3\u7406|\u8f6c\u53d1|\u7f51\u5173|\u8def\u7531)/i.test(
+			messageLower,
+		)
 	) {
 		return "server";
 	}
@@ -158,8 +163,11 @@ export function selectRelevantTools(
 	const wantsTraefik =
 		/(traefik|proxy|gateway|routing|router|reverse\s*proxy)/i.test(
 			messageLower,
-		) || /(网关|路由|反向代理|代理)/i.test(userMessage);
-
+		) ||
+		/(\u7f51\u5173|\u8def\u7531|\u53cd\u5411\u4ee3\u7406|\u53cd\u4ee3|\u4ee3\u7406|\u8f6c\u53d1|\u52a0\u901f)/i.test(
+			userMessage,
+		);
+	const wantsReverseProxySetup = wantsTraefik;
 	const prefixes = new Set<string>();
 	if (intent !== "query") {
 		prefixes.add("project_");
@@ -187,6 +195,13 @@ export function selectRelevantTools(
 	if (intent === "server") {
 		prefixes.add("server_");
 		if (wantsTraefik) prefixes.add("traefik_");
+	}
+
+	if (wantsReverseProxySetup) {
+		prefixes.add("domain_");
+		prefixes.add("certificate_");
+		prefixes.add("compose_");
+		prefixes.add("application_");
 	}
 
 	let restrictDbToLowRisk = false;
