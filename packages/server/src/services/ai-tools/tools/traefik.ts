@@ -517,13 +517,31 @@ const readTraefikConfig: Tool<
 		"查看Traefik文件",
 	],
 	tags: ["traefik", "config", "read", "file", "log", "读取", "配置", "文件"],
-	parameters: z.object({
-		serverId: z
-			.string()
-			.optional()
-			.describe("Server ID (defaults to current context)"),
-		filePath: z.string().min(1).describe("File path relative to Traefik root"),
-	}),
+	parameters: z.preprocess(
+		(input) => {
+			if (!input || typeof input !== "object" || Array.isArray(input)) {
+				return input;
+			}
+			const record = input as Record<string, unknown>;
+			if (record.filePath == null && typeof record.path === "string") {
+				return {
+					...record,
+					filePath: record.path,
+				};
+			}
+			return input;
+		},
+		z.object({
+			serverId: z
+				.string()
+				.optional()
+				.describe("Server ID (defaults to current context)"),
+			filePath: z
+				.string()
+				.min(1)
+				.describe("File path relative to Traefik root"),
+		}),
+	),
 	riskLevel: "low",
 	requiresApproval: false,
 	execute: async (params, ctx) => {

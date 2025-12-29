@@ -57,6 +57,7 @@ export function AIChatDrawer({
 	const router = useRouter();
 	const { t } = useTranslation("common");
 	const [isOpen, setIsOpen] = useState(false);
+	const LAST_SERVER_ID_STORAGE_KEY = "dokploy.ai.lastServerId";
 	const [autoLoadHistory, setAutoLoadHistory] = useState(true);
 	const [input, setInput] = useState("");
 	const [selectedAiId, setSelectedAiId] = useState<string>("");
@@ -85,7 +86,57 @@ export function AIChatDrawer({
 				: undefined;
 
 	const projectId = _projectId ?? routeProjectId;
-	const serverId = _serverId ?? routeServerId;
+	const routeBoundServerId = _serverId ?? routeServerId;
+	const [pinnedServerId, setPinnedServerId] = useState<string>(() => {
+		if (typeof window === "undefined") return "";
+		try {
+			return localStorage.getItem(LAST_SERVER_ID_STORAGE_KEY) ?? "";
+		} catch {
+			return "";
+		}
+	});
+	const effectiveServerId =
+		pinnedServerId.trim().length > 0
+			? pinnedServerId.trim()
+			: routeBoundServerId;
+	const isServerContextReady = !!effectiveServerId;
+
+	useEffect(() => {
+		if (pinnedServerId.trim().length > 0) return;
+		if (!routeBoundServerId || routeBoundServerId.trim().length === 0) return;
+		setPinnedServerId(routeBoundServerId);
+		try {
+			localStorage.setItem(LAST_SERVER_ID_STORAGE_KEY, routeBoundServerId);
+		} catch {}
+	}, [pinnedServerId, routeBoundServerId]);
+
+	const shouldPickDefaultServer =
+		isOpen &&
+		(!routeBoundServerId || routeBoundServerId.trim().length === 0) &&
+		pinnedServerId.trim().length === 0;
+	const { data: serversForDefaultPick } = api.server.all.useQuery(undefined, {
+		enabled: shouldPickDefaultServer,
+	});
+
+	useEffect(() => {
+		if (!shouldPickDefaultServer) return;
+		if (!serversForDefaultPick || serversForDefaultPick.length === 0) return;
+
+		const activeDeployServers = serversForDefaultPick.filter(
+			(s) => s.serverStatus === "active" && s.serverType === "deploy",
+		);
+		const activeServers = serversForDefaultPick.filter(
+			(s) => s.serverStatus === "active",
+		);
+		const picked =
+			activeDeployServers[0]?.serverId || activeServers[0]?.serverId || "";
+		if (!picked) return;
+
+		setPinnedServerId(picked);
+		try {
+			localStorage.setItem(LAST_SERVER_ID_STORAGE_KEY, picked);
+		} catch {}
+	}, [serversForDefaultPick, shouldPickDefaultServer]);
 
 	// Lazy load AI configs only when drawer is open
 	const { data: aiConfigs, isLoading: isLoadingConfigs } =
@@ -117,7 +168,7 @@ export function AIChatDrawer({
 			toast.error(translateErrorMessage(errorMessage, t));
 		},
 		projectId,
-		serverId,
+		serverId: effectiveServerId,
 		enabled: isOpen,
 		autoLoad: autoLoadHistory,
 	});
@@ -126,6 +177,7 @@ export function AIChatDrawer({
 	const approveExecution = api.ai.agent.approve.useMutation();
 
 	const handleStartAgent = async () => {
+		if (!isServerContextReady) return;
 		if (!selectedAiId || !agentGoal.trim() || isLoading || isAgentRunning)
 			return;
 		await startAgent(agentGoal.trim(), selectedAiId);
@@ -167,6 +219,7 @@ export function AIChatDrawer({
 	}, [isOpen]);
 
 	const handleSend = async () => {
+		if (!isServerContextReady) return;
 		if (!input.trim() || !selectedAiId || isLoading || isAgentRunning) return;
 
 		const message = input;
@@ -225,7 +278,7 @@ export function AIChatDrawer({
 						<div className="flex items-center gap-1">
 							<ConversationHistoryDialog
 								projectId={projectId}
-								serverId={serverId}
+								serverId={effectiveServerId}
 								currentConversationId={conversationId}
 								onSelect={(nextId) => {
 									setAutoLoadHistory(false);
@@ -275,7 +328,12 @@ export function AIChatDrawer({
 							value={agentGoal}
 							onChange={(e) => setAgentGoal(e.target.value)}
 							placeholder={t("ai.agent.goalPlaceholder")}
-							disabled={!hasAiConfigs || isLoading || isAgentRunning}
+							disabled={
+								!hasAiConfigs ||
+								!isServerContextReady ||
+								isLoading ||
+								isAgentRunning
+							}
 							className="flex-1"
 							aria-label={t("ai.agent.goalLabel")}
 						/>
@@ -400,7 +458,12 @@ export function AIChatDrawer({
 									? t("ai.chat.inputPlaceholder")
 									: t("ai.chat.configureFirst")
 							}
-							disabled={!hasAiConfigs || isAgentRunning || isLoading}
+							disabled={
+								!hasAiConfigs ||
+								!isServerContextReady ||
+								isAgentRunning ||
+								isLoading
+							}
 							className="flex-1 min-h-[40px] max-h-[180px] resize-none overflow-y-auto"
 							aria-label={t("ai.chat.inputLabel")}
 						/>
@@ -416,7 +479,9 @@ export function AIChatDrawer({
 						) : (
 							<Button
 								onClick={handleSend}
-								disabled={!hasAiConfigs || !input.trim()}
+								disabled={
+									!hasAiConfigs || !isServerContextReady || !input.trim()
+								}
 								size="icon"
 								aria-label={t("ai.chat.sendMessage")}
 							>

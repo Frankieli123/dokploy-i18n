@@ -1078,6 +1078,18 @@ export function useChat(options: UseChatOptions = {}) {
 		[stopAgentStream, stopGeneration],
 	);
 
+	const contextKeyRef = useRef<string>(
+		`${options.projectId ?? ""}::${options.serverId ?? ""}`,
+	);
+
+	useEffect(() => {
+		const nextKey = `${options.projectId ?? ""}::${options.serverId ?? ""}`;
+		if (contextKeyRef.current === nextKey) return;
+		contextKeyRef.current = nextKey;
+		if (!isEnabled) return;
+		reset();
+	}, [isEnabled, options.projectId, options.serverId, reset]);
+
 	return {
 		ensureConversation,
 		conversationId,

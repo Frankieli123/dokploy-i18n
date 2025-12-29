@@ -288,6 +288,7 @@ const listServers: Tool<
 	Array<{
 		serverId: string;
 		name: string;
+		username: string;
 		ipAddress: string;
 		serverStatus: string;
 	}>
@@ -309,6 +310,7 @@ const listServers: Tool<
 			data: filtered.map((s) => ({
 				serverId: s.serverId,
 				name: s.name,
+				username: s.username ?? "root",
 				ipAddress: s.ipAddress,
 				serverStatus: s.serverStatus || "active",
 			})),
@@ -321,6 +323,7 @@ const findServers: Tool<
 	Array<{
 		serverId: string;
 		name: string;
+		username: string;
 		ipAddress: string;
 		serverStatus: string;
 	}>
@@ -357,6 +360,7 @@ const findServers: Tool<
 			data: matches.map((s) => ({
 				serverId: s.serverId,
 				name: s.name,
+				username: s.username ?? "root",
 				ipAddress: s.ipAddress,
 				serverStatus: s.serverStatus || "active",
 			})),
