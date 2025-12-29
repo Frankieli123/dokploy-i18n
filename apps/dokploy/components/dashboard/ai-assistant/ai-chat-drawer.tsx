@@ -115,8 +115,21 @@ export function AIChatDrawer({
 		(!routeBoundServerId || routeBoundServerId.trim().length === 0) &&
 		pinnedServerId.trim().length === 0;
 	const { data: serversForDefaultPick } = api.server.all.useQuery(undefined, {
-		enabled: shouldPickDefaultServer,
+		enabled: isOpen,
 	});
+
+	useEffect(() => {
+		if (!isOpen) return;
+		if (!serversForDefaultPick) return;
+		const pinned = pinnedServerId.trim();
+		if (pinned.length === 0) return;
+		const exists = serversForDefaultPick.some((s) => s.serverId === pinned);
+		if (exists) return;
+		setPinnedServerId("");
+		try {
+			localStorage.removeItem(LAST_SERVER_ID_STORAGE_KEY);
+		} catch {}
+	}, [isOpen, serversForDefaultPick, pinnedServerId]);
 
 	useEffect(() => {
 		if (!shouldPickDefaultServer) return;
@@ -129,7 +142,10 @@ export function AIChatDrawer({
 			(s) => s.serverStatus === "active",
 		);
 		const picked =
-			activeDeployServers[0]?.serverId || activeServers[0]?.serverId || "";
+			activeDeployServers[0]?.serverId ||
+			activeServers[0]?.serverId ||
+			serversForDefaultPick[0]?.serverId ||
+			"";
 		if (!picked) return;
 
 		setPinnedServerId(picked);
@@ -328,12 +344,7 @@ export function AIChatDrawer({
 							value={agentGoal}
 							onChange={(e) => setAgentGoal(e.target.value)}
 							placeholder={t("ai.agent.goalPlaceholder")}
-							disabled={
-								!hasAiConfigs ||
-								!isServerContextReady ||
-								isLoading ||
-								isAgentRunning
-							}
+							disabled={!hasAiConfigs || isLoading || isAgentRunning}
 							className="flex-1"
 							aria-label={t("ai.agent.goalLabel")}
 						/>
@@ -353,7 +364,12 @@ export function AIChatDrawer({
 						) : (
 							<Button
 								onClick={handleStartAgent}
-								disabled={!hasAiConfigs || !agentGoal.trim() || isLoading}
+								disabled={
+									!hasAiConfigs ||
+									!isServerContextReady ||
+									!agentGoal.trim() ||
+									isLoading
+								}
 							>
 								{t("ai.agent.start", "Start Agent")}
 							</Button>
@@ -458,12 +474,7 @@ export function AIChatDrawer({
 									? t("ai.chat.inputPlaceholder")
 									: t("ai.chat.configureFirst")
 							}
-							disabled={
-								!hasAiConfigs ||
-								!isServerContextReady ||
-								isAgentRunning ||
-								isLoading
-							}
+							disabled={!hasAiConfigs || isAgentRunning || isLoading}
 							className="flex-1 min-h-[40px] max-h-[180px] resize-none overflow-y-auto"
 							aria-label={t("ai.chat.inputLabel")}
 						/>

@@ -1033,6 +1033,7 @@ export function useChat(options: UseChatOptions = {}) {
 	const reset = useCallback(() => {
 		abortController?.abort();
 		setAbortController(null);
+		setIsLoading(false);
 		agentAbortController?.abort();
 		setAgentAbortController(null);
 		setIsAgentRunning(false);
