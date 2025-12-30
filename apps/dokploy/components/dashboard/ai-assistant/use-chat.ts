@@ -109,20 +109,15 @@ export function useChat(options: UseChatOptions = {}) {
 		options.conversationId,
 	);
 	const [pendingMessages, setPendingMessages] = useState<Message[]>([]);
-	const [isAgentRunning, setIsAgentRunning] = useState(false);
-	const [agentRunId, setAgentRunId] = useState<string>("");
 	const [toolCallMeta, setToolCallMeta] = useState<
 		Record<string, Pick<ToolCall, "status" | "executionId" | "result">>
 	>({});
 	const [isConversationAutoApproved, setIsConversationAutoApproved] =
 		useState(false);
 	const autoApprovedToolCallIdsRef = useRef<Set<string>>(new Set());
-	const autoApprovedAgentExecutionIdsRef = useRef<Set<string>>(new Set());
 	const isAutoApprovingRef = useRef(false);
 	const [isLoading, setIsLoading] = useState(false);
 	const [abortController, setAbortController] =
-		useState<AbortController | null>(null);
-	const [agentAbortController, setAgentAbortController] =
 		useState<AbortController | null>(null);
 	const approveExecution = api.ai.agent.approve.useMutation();
 	const executeExecution = api.ai.agent.execute.useMutation();
@@ -130,9 +125,8 @@ export function useChat(options: UseChatOptions = {}) {
 	useEffect(() => {
 		return () => {
 			abortController?.abort();
-			agentAbortController?.abort();
 		};
-	}, [abortController, agentAbortController]);
+	}, [abortController]);
 
 	const isEnabled = options.enabled !== false;
 	const shouldAutoLoadConversation =
@@ -437,58 +431,6 @@ export function useChat(options: UseChatOptions = {}) {
 		})().catch(() => {});
 	}, [approveToolCall, conversationId, isConversationAutoApproved, messages]);
 
-	useEffect(() => {
-		if (!conversationId) return;
-		if (!isConversationAutoApproved) return;
-		if (isAutoApprovingRef.current) return;
-
-		const pendingExecutionId = (() => {
-			for (const msg of messages) {
-				if (msg.role !== "system") continue;
-				if (typeof msg.content !== "string" || msg.content.length === 0)
-					continue;
-				let payload: unknown;
-				try {
-					payload = JSON.parse(msg.content);
-				} catch {
-					continue;
-				}
-				if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-					continue;
-				}
-				const type = (payload as { type?: unknown }).type;
-				if (type !== "agent.step.wait_approval") continue;
-				const executionId = (payload as { executionId?: unknown }).executionId;
-				if (typeof executionId !== "string" || executionId.length === 0)
-					continue;
-				if (autoApprovedAgentExecutionIdsRef.current.has(executionId)) continue;
-				return executionId;
-			}
-			return "";
-		})();
-
-		if (!pendingExecutionId) return;
-		autoApprovedAgentExecutionIdsRef.current.add(pendingExecutionId);
-		isAutoApprovingRef.current = true;
-		(async () => {
-			try {
-				await approveExecution.mutateAsync({
-					executionId: pendingExecutionId,
-					approved: true,
-				});
-				await refetchMessages().catch(() => {});
-			} finally {
-				isAutoApprovingRef.current = false;
-			}
-		})().catch(() => {});
-	}, [
-		approveExecution,
-		conversationId,
-		isConversationAutoApproved,
-		messages,
-		refetchMessages,
-	]);
-
 	const rejectToolCall = useCallback(
 		async (toolCallId: string) => {
 			const meta = toolCallMeta[toolCallId];
@@ -534,17 +476,9 @@ export function useChat(options: UseChatOptions = {}) {
 		setIsLoading(false);
 	}, [abortController]);
 
-	const stopAgentStream = useCallback(() => {
-		agentAbortController?.abort();
-		setAgentAbortController(null);
-		setIsAgentRunning(false);
-		setAgentRunId("");
-	}, [agentAbortController]);
-
 	const send = useCallback(
 		async (content: string, aiId: string) => {
 			if (!content.trim()) return;
-			if (isAgentRunning) return;
 
 			setIsLoading(true);
 
@@ -911,122 +845,6 @@ export function useChat(options: UseChatOptions = {}) {
 			options.projectId,
 			options.serverId,
 			options,
-			isAgentRunning,
-		],
-	);
-
-	const startAgent = useCallback(
-		async (goal: string, aiId: string) => {
-			if (!goal.trim()) return;
-			if (!aiId.trim()) return;
-			if (isLoading) return;
-			if (isAgentRunning) return;
-
-			stopGeneration();
-			stopAgentStream();
-			setIsAgentRunning(true);
-			setAgentRunId("");
-
-			let currentConversationId = conversationId;
-			if (!currentConversationId) {
-				currentConversationId = await ensureConversation(aiId);
-			}
-
-			const controller = new AbortController();
-			setAgentAbortController(controller);
-
-			try {
-				const response = await fetch("/api/ai/agent/stream", {
-					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-						Accept: "text/event-stream",
-					},
-					body: JSON.stringify({
-						conversationId: currentConversationId,
-						aiId,
-						goal: goal.trim(),
-					}),
-					signal: controller.signal,
-				});
-
-				if (!response.ok) {
-					const errorText = await response.text().catch(() => "");
-					throw new Error(errorText || `Request failed (${response.status})`);
-				}
-
-				if (!response.body) {
-					throw new Error("settings.ai.errors.streamingResponseNotAvailable");
-				}
-
-				for await (const evt of readSseStream(response.body)) {
-					if (controller.signal.aborted) break;
-					if (evt.event === "ping") continue;
-
-					if (evt.event === "done") {
-						break;
-					}
-
-					if (evt.event === "error") {
-						const payload = JSON.parse(evt.data) as { message?: string };
-						throw new Error(
-							payload.message || "settings.ai.errors.agentStreamError",
-						);
-					}
-
-					if (!evt.event.startsWith("agent.")) continue;
-					const envelope = JSON.parse(evt.data) as {
-						messageId?: string;
-						createdAt?: string;
-						payload?: unknown;
-					};
-					const payload = envelope.payload;
-					if (!payload || typeof payload !== "object") continue;
-
-					const payloadRunId = (payload as { runId?: unknown }).runId;
-					if (
-						evt.event === "agent.run.start" &&
-						typeof payloadRunId === "string"
-					) {
-						setAgentRunId(payloadRunId);
-					}
-
-					const msg: Message = {
-						messageId:
-							typeof envelope.messageId === "string"
-								? envelope.messageId
-								: `temp-agent-${Date.now()}`,
-						role: "system",
-						content: JSON.stringify(payload),
-						createdAt:
-							typeof envelope.createdAt === "string"
-								? envelope.createdAt
-								: new Date().toISOString(),
-						status: "sent",
-					};
-					setPendingMessages((prev) => [...prev, msg]);
-				}
-			} catch (error) {
-				if ((error as Error).name !== "AbortError") {
-					options.onError?.(error as Error);
-				}
-			} finally {
-				setIsAgentRunning(false);
-				setAgentAbortController(null);
-				try {
-					await refetchMessages();
-				} catch {}
-			}
-		},
-		[
-			conversationId,
-			ensureConversation,
-			isAgentRunning,
-			isLoading,
-			options,
-			refetchMessages,
-			stopAgentStream,
-			stopGeneration,
 		],
 	);
 
@@ -1034,18 +852,13 @@ export function useChat(options: UseChatOptions = {}) {
 		abortController?.abort();
 		setAbortController(null);
 		setIsLoading(false);
-		agentAbortController?.abort();
-		setAgentAbortController(null);
-		setIsAgentRunning(false);
-		setAgentRunId("");
 		setConversationId(undefined);
 		setPendingMessages([]);
 		setToolCallMeta({});
 		setIsConversationAutoApproved(false);
 		autoApprovedToolCallIdsRef.current.clear();
-		autoApprovedAgentExecutionIdsRef.current.clear();
 		isAutoApprovingRef.current = false;
-	}, [abortController, agentAbortController]);
+	}, [abortController]);
 
 	const retryMessage = useCallback(
 		async (messageId: string, aiId: string) => {
@@ -1067,16 +880,14 @@ export function useChat(options: UseChatOptions = {}) {
 			if (normalized.length === 0) return;
 
 			stopGeneration();
-			stopAgentStream();
 			setPendingMessages([]);
 			setToolCallMeta({});
 			setIsConversationAutoApproved(false);
 			autoApprovedToolCallIdsRef.current.clear();
-			autoApprovedAgentExecutionIdsRef.current.clear();
 			isAutoApprovingRef.current = false;
 			setConversationId(normalized);
 		},
-		[stopAgentStream, stopGeneration],
+		[stopGeneration],
 	);
 
 	const contextKeyRef = useRef<string>(
@@ -1098,10 +909,7 @@ export function useChat(options: UseChatOptions = {}) {
 		isLoading,
 		isConversationAutoApproved,
 		enableConversationAutoApprove,
-		isAgentRunning,
-		agentRunId,
 		send,
-		startAgent,
 		approveToolCall,
 		rejectToolCall,
 		reset,
@@ -1109,6 +917,5 @@ export function useChat(options: UseChatOptions = {}) {
 		retryMessage,
 		refetchMessages,
 		stopGeneration,
-		stopAgentStream,
 	};
 }

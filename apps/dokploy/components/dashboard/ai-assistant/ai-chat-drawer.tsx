@@ -61,7 +61,6 @@ export function AIChatDrawer({
 	const [autoLoadHistory, setAutoLoadHistory] = useState(true);
 	const [input, setInput] = useState("");
 	const [selectedAiId, setSelectedAiId] = useState<string>("");
-	const [agentGoal, setAgentGoal] = useState("");
 	const viewportRef = useRef<HTMLDivElement>(null);
 	const isNearBottomRef = useRef(true);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -169,15 +168,8 @@ export function AIChatDrawer({
 		retryMessage,
 		approveToolCall,
 		rejectToolCall,
-		ensureConversation,
-		refetchMessages,
-		enableConversationAutoApprove,
 		stopGeneration,
 		openConversation,
-		startAgent,
-		isAgentRunning,
-		agentRunId,
-		stopAgentStream,
 	} = useChat({
 		onError: (error) => {
 			const errorMessage = error.message || t("ai.chat.sendError");
@@ -189,15 +181,25 @@ export function AIChatDrawer({
 		autoLoad: autoLoadHistory,
 	});
 
-	const cancelAgent = api.ai.agent.cancel.useMutation();
-	const approveExecution = api.ai.agent.approve.useMutation();
+	const serversForPicker = useMemo(() => {
+		const servers = serversForDefaultPick ?? [];
+		const score = (s: (typeof servers)[number]) => {
+			const status = String((s as any).serverStatus ?? "").toLowerCase();
+			const type = String((s as any).serverType ?? "").toLowerCase();
+			const statusScore = status === "active" ? 0 : 10;
+			const typeScore = type === "deploy" ? 0 : 5;
+			return statusScore + typeScore;
+		};
+		return [...servers].sort((a, b) => score(a) - score(b));
+	}, [serversForDefaultPick]);
 
-	const handleStartAgent = async () => {
-		if (!isServerContextReady) return;
-		if (!selectedAiId || !agentGoal.trim() || isLoading || isAgentRunning)
-			return;
-		await startAgent(agentGoal.trim(), selectedAiId);
-	};
+	const currentServerLabel = useMemo(() => {
+		const id = effectiveServerId ?? "";
+		if (!id) return "";
+		const match = (serversForDefaultPick ?? []).find((s) => s.serverId === id);
+		const name = (match as any)?.name;
+		return typeof name === "string" && name.trim().length > 0 ? name : id;
+	}, [effectiveServerId, serversForDefaultPick]);
 
 	// Auto-select first AI config
 	useEffect(() => {
@@ -236,7 +238,62 @@ export function AIChatDrawer({
 
 	const handleSend = async () => {
 		if (!isServerContextReady) return;
-		if (!input.trim() || !selectedAiId || isLoading || isAgentRunning) return;
+		if (!input.trim()) return;
+
+		const normalized = input.trim().toLowerCase();
+		const isApproveCommand =
+			normalized === "批准" ||
+			normalized === "同意" ||
+			normalized === "approve" ||
+			normalized === "approved";
+		const isRejectCommand =
+			normalized === "拒绝" ||
+			normalized === "不同意" ||
+			normalized === "reject" ||
+			normalized === "rejected";
+
+		if (isApproveCommand || isRejectCommand) {
+			const pendingToolCallId = (() => {
+				for (const msg of messages) {
+					for (const tc of msg.toolCalls || []) {
+						const status =
+							tc.status ?? (tc.executionId ? "pending" : "completed");
+						if (status !== "pending") continue;
+						const executionId = (() => {
+							if (
+								typeof tc.executionId === "string" &&
+								tc.executionId.trim().length > 0
+							) {
+								return tc.executionId.trim();
+							}
+							const data = tc.result?.data;
+							if (!data || typeof data !== "object" || Array.isArray(data)) {
+								return "";
+							}
+							const v = (data as { executionId?: unknown }).executionId;
+							return typeof v === "string" && v.trim().length > 0
+								? v.trim()
+								: "";
+						})();
+						if (!executionId) continue;
+						return tc.id;
+					}
+				}
+				return "";
+			})();
+
+			if (pendingToolCallId) {
+				setInput("");
+				if (isApproveCommand) {
+					await approveToolCall(pendingToolCallId);
+				} else {
+					await rejectToolCall(pendingToolCallId);
+				}
+				return;
+			}
+		}
+
+		if (!selectedAiId || isLoading) return;
 
 		const message = input;
 		setInput("");
@@ -283,38 +340,67 @@ export function AIChatDrawer({
 			</SheetTrigger>
 			<SheetContent
 				hideClose
-				className="w-full sm:w-[440px] p-0 flex flex-col gap-0"
+				className="w-full sm:w-[440px] p-0 flex flex-col gap-0 overflow-x-hidden"
 			>
 				<SheetHeader className="px-4 py-3 border-b">
-					<div className="flex items-center justify-between">
-						<SheetTitle className="flex items-center gap-2">
+					<div className="flex items-center justify-between gap-2 min-w-0">
+						<SheetTitle className="flex items-center gap-2 min-w-0 flex-1">
 							<Bot className="h-5 w-5" />
-							{t("ai.chat.title")}
+							<span className="truncate whitespace-nowrap">
+								{t("ai.chat.title")}
+							</span>
 						</SheetTitle>
-						<div className="flex items-center gap-1">
-							<ConversationHistoryDialog
-								projectId={projectId}
-								serverId={effectiveServerId}
-								currentConversationId={conversationId}
-								onSelect={(nextId) => {
-									setAutoLoadHistory(false);
-									openConversation(nextId);
+						<div className="flex items-center shrink-0">
+							<Select
+								value={effectiveServerId || ""}
+								onValueChange={(next) => {
+									setPinnedServerId(next);
+									try {
+										localStorage.setItem(LAST_SERVER_ID_STORAGE_KEY, next);
+									} catch {}
 								}}
-							/>
-							<ToolExecutionHistory messages={messages} />
-							<Button
-								variant="ghost"
-								size="icon"
-								onClick={() => {
-									setAutoLoadHistory(false);
-									reset();
-								}}
-								className="h-8 w-8"
-								title={t("ai.chat.newConversation")}
-								aria-label={t("ai.chat.newConversation")}
 							>
-								<MessageSquarePlus className="h-4 w-4" />
-							</Button>
+								<SelectTrigger
+									className="h-8 w-[120px] sm:w-[140px] mr-0.5"
+									aria-label={t("server.select", "选择服务器")}
+								>
+									<SelectValue placeholder={t("server.select", "选择服务器")}>
+										<span className="truncate">{currentServerLabel}</span>
+									</SelectValue>
+								</SelectTrigger>
+								<SelectContent>
+									{serversForPicker.map((s) => (
+										<SelectItem key={s.serverId} value={s.serverId}>
+											{(s as any).name || s.serverId}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+							<div className="flex items-center gap-0">
+								<ConversationHistoryDialog
+									projectId={projectId}
+									serverId={effectiveServerId}
+									currentConversationId={conversationId}
+									onSelect={(nextId) => {
+										setAutoLoadHistory(false);
+										openConversation(nextId);
+									}}
+								/>
+								<ToolExecutionHistory messages={messages} />
+								<Button
+									variant="ghost"
+									size="icon"
+									onClick={() => {
+										setAutoLoadHistory(false);
+										reset();
+									}}
+									className="h-8 w-8 p-0 -ml-1"
+									title={t("ai.chat.newConversation")}
+									aria-label={t("ai.chat.newConversation")}
+								>
+									<MessageSquarePlus className="h-4 w-4" />
+								</Button>
+							</div>
 						</div>
 					</div>
 					{hasAiConfigs && (
@@ -338,48 +424,9 @@ export function AIChatDrawer({
 					)}
 				</SheetHeader>
 
-				<div className="px-4 pt-4">
-					<div className="flex gap-2">
-						<Input
-							value={agentGoal}
-							onChange={(e) => setAgentGoal(e.target.value)}
-							placeholder={t("ai.agent.goalPlaceholder")}
-							disabled={!hasAiConfigs || isLoading || isAgentRunning}
-							className="flex-1"
-							aria-label={t("ai.agent.goalLabel")}
-						/>
-						{isAgentRunning ? (
-							<Button
-								variant="destructive"
-								onClick={async () => {
-									if (agentRunId) {
-										await cancelAgent.mutateAsync({ runId: agentRunId });
-										return;
-									}
-									stopAgentStream();
-								}}
-							>
-								{t("common.cancel", "Cancel")}
-							</Button>
-						) : (
-							<Button
-								onClick={handleStartAgent}
-								disabled={
-									!hasAiConfigs ||
-									!isServerContextReady ||
-									!agentGoal.trim() ||
-									isLoading
-								}
-							>
-								{t("ai.agent.start", "Start Agent")}
-							</Button>
-						)}
-					</div>
-				</div>
-
 				<ScrollArea
 					className="flex-1 min-h-0"
-					viewPortClassName="p-4"
+					viewPortClassName="p-4 overflow-x-hidden min-w-0 max-w-full [&>div]:!block [&>div]:!w-full [&>div]:!min-w-0 [&>div]:!max-w-full"
 					viewportRef={viewportRef}
 					onViewportScroll={handleViewportScroll}
 					role="log"
@@ -421,37 +468,6 @@ export function AIChatDrawer({
 										message={message}
 										onApproveToolCall={approveToolCall}
 										onRejectToolCall={rejectToolCall}
-										onApproveExecution={async (executionId) => {
-											try {
-												enableConversationAutoApprove();
-												await approveExecution.mutateAsync({
-													executionId,
-													approved: true,
-												});
-												await refetchMessages().catch(() => {});
-											} catch (error) {
-												const errorMessage =
-													error instanceof Error
-														? error.message
-														: t("ai.chat.sendError");
-												toast.error(translateErrorMessage(errorMessage, t));
-											}
-										}}
-										onRejectExecution={async (executionId) => {
-											try {
-												await approveExecution.mutateAsync({
-													executionId,
-													approved: false,
-												});
-												await refetchMessages().catch(() => {});
-											} catch (error) {
-												const errorMessage =
-													error instanceof Error
-														? error.message
-														: t("ai.chat.sendError");
-												toast.error(translateErrorMessage(errorMessage, t));
-											}
-										}}
 										isLast={index === messages.length - 1}
 										onRetry={() => handleRetry(message.messageId)}
 									/>
@@ -474,7 +490,7 @@ export function AIChatDrawer({
 									? t("ai.chat.inputPlaceholder")
 									: t("ai.chat.configureFirst")
 							}
-							disabled={!hasAiConfigs || isAgentRunning || isLoading}
+							disabled={!hasAiConfigs || isLoading}
 							className="flex-1 min-h-[40px] max-h-[180px] resize-none overflow-y-auto"
 							aria-label={t("ai.chat.inputLabel")}
 						/>
@@ -555,7 +571,7 @@ function ConversationHistoryDialog(props: {
 				<Button
 					variant="ghost"
 					size="icon"
-					className="h-8 w-8"
+					className="h-8 w-8 p-0"
 					title={t("ai.chat.history", "历史对话")}
 					aria-label={t("ai.chat.history", "历史对话")}
 				>

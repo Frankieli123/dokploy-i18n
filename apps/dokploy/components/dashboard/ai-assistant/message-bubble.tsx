@@ -4,8 +4,6 @@ import {
 	AlertCircle,
 	AlertTriangle,
 	Bot,
-	CheckCircle2,
-	ListChecks,
 	Loader2,
 	RotateCcw,
 	Sparkles,
@@ -18,14 +16,12 @@ import { cn } from "@/lib/utils";
 import { translateErrorMessage } from "@/utils/error-translation";
 import { ToolCallBlock } from "./tool-call-block";
 import { ToolGroup } from "./tool-call-group";
-import type { Message, ToolCall } from "./use-chat";
+import type { Message } from "./use-chat";
 
 interface MessageBubbleProps {
 	message: Message;
 	onApproveToolCall?: (toolCallId: string) => void;
 	onRejectToolCall?: (toolCallId: string) => void;
-	onApproveExecution?: (executionId: string) => void;
-	onRejectExecution?: (executionId: string) => void;
 	isLast?: boolean;
 	onRetry?: () => void;
 }
@@ -34,40 +30,14 @@ export function MessageBubble({
 	message,
 	onApproveToolCall,
 	onRejectToolCall,
-	onApproveExecution,
-	onRejectExecution,
 	isLast,
 	onRetry,
 }: MessageBubbleProps) {
 	const { t } = useTranslation("common");
 
-	const agentEvent = (() => {
-		if (message.role !== "system") return null;
-		const raw = message.content ?? "";
-		if (!raw || raw.trim().length === 0) return null;
-		try {
-			const parsed = JSON.parse(raw) as {
-				type?: unknown;
-				runId?: unknown;
-				goal?: unknown;
-				steps?: unknown;
-				stepId?: unknown;
-				executionId?: unknown;
-				toolName?: unknown;
-				description?: unknown;
-				requiresApproval?: unknown;
-				success?: unknown;
-				summary?: unknown;
-				status?: unknown;
-				parametersPreview?: unknown;
-			};
-			if (typeof parsed?.type !== "string") return null;
-			if (!parsed.type.startsWith("agent.")) return null;
-			return parsed;
-		} catch {
-			return null;
-		}
-	})();
+	if (message.role === "system") {
+		return null;
+	}
 	const [displayedContent, setDisplayedContent] = useState(() => {
 		const initialContent = message.content ?? "";
 		return message.role === "user" ||
@@ -84,276 +54,8 @@ export function MessageBubble({
 	const hasToolCalls = message.toolCalls && message.toolCalls.length > 0;
 	const bubbleText = (() => {
 		if (isUser) return message.content ?? "";
-		if (!agentEvent) return displayedContent;
-		const type = agentEvent.type as string;
-		if (type === "agent.run.start") {
-			const goal = typeof agentEvent.goal === "string" ? agentEvent.goal : "";
-			return goal
-				? `${t("ai.agent.start", "Start Agent")}: ${goal}`
-				: "Agent started";
-		}
-		if (type === "agent.plan") {
-			const steps = Array.isArray(agentEvent.steps) ? agentEvent.steps : [];
-			const lines = steps
-				.map((s, idx) => {
-					if (s && typeof s === "object" && "description" in (s as any)) {
-						const d = (s as any).description;
-						return `${idx + 1}. ${typeof d === "string" ? d : ""}`.trim();
-					}
-					return `${idx + 1}.`;
-				})
-				.filter((x) => x.trim().length > 0)
-				.join("\n");
-			return lines.length > 0
-				? `${t("ai.agent.plan", "Plan")}:\n${lines}`
-				: t("ai.agent.plan", "Plan");
-		}
-		if (type === "agent.step.start") {
-			const d =
-				typeof agentEvent.description === "string"
-					? agentEvent.description
-					: "";
-			const toolName =
-				typeof agentEvent.toolName === "string" ? agentEvent.toolName : "";
-			return d
-				? `${t("ai.agent.step", "Step")}: ${d}${toolName ? ` (${toolName})` : ""}`
-				: `${t("ai.agent.step", "Step")}${toolName ? `: ${toolName}` : ""}`;
-		}
-		if (type === "agent.step.wait_approval") {
-			const toolName =
-				typeof agentEvent.toolName === "string" ? agentEvent.toolName : "";
-			return toolName
-				? `${t("ai.toolCall.pendingApproval")}: ${toolName}`
-				: t("ai.toolCall.pendingApproval");
-		}
-		if (type === "agent.step.result") {
-			const summary =
-				typeof agentEvent.summary === "string" ? agentEvent.summary : "";
-			const success =
-				typeof agentEvent.success === "boolean"
-					? agentEvent.success
-					: undefined;
-			if (typeof success === "boolean") {
-				return summary
-					? `${success ? t("status.success", "Success") : t("status.failed", "Failed")}: ${summary}`
-					: success
-						? t("status.success", "Success")
-						: t("status.failed", "Failed");
-			}
-			return summary || t("ai.agent.result", "Result");
-		}
-		if (type === "agent.run.finish") {
-			const status =
-				typeof agentEvent.status === "string" ? agentEvent.status : "";
-			return status
-				? `${t("ai.agent.finished", "Finished")}: ${status}`
-				: t("ai.agent.finished", "Finished");
-		}
-		if (type === "agent.run.summary") {
-			const summary =
-				typeof agentEvent.summary === "string" ? agentEvent.summary : "";
-			return summary || t("ai.agent.summary", "Summary");
-		}
 		return displayedContent;
 	})();
-
-	const agentStructuredContent = (() => {
-		if (!agentEvent) return null;
-		const type = agentEvent.type as string;
-
-		if (type === "agent.plan") {
-			const steps = Array.isArray(agentEvent.steps) ? agentEvent.steps : [];
-			const normalized = steps
-				.map((s) => {
-					if (!s || typeof s !== "object") {
-						return { description: "", toolName: "" };
-					}
-					const anyStep = s as Record<string, unknown>;
-					return {
-						description:
-							typeof anyStep.description === "string"
-								? anyStep.description
-								: "",
-						toolName:
-							typeof anyStep.toolName === "string" ? anyStep.toolName : "",
-					};
-				})
-				.filter((x) => x.description.trim().length > 0);
-
-			return (
-				<div className="w-full rounded-md border bg-card overflow-hidden shadow-sm">
-					<div className="flex items-center gap-2 px-3 py-2 border-b bg-muted/10">
-						<ListChecks className="h-4 w-4 text-muted-foreground" />
-						<span className="text-xs font-medium text-foreground">
-							{t("ai.agent.plan", "Plan")}
-						</span>
-					</div>
-					<div className="px-3 py-2 space-y-2">
-						{normalized.map((step, idx) => (
-							<div key={idx} className="flex items-start gap-2">
-								<span className="mt-0.5 w-5 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
-									{idx + 1}.
-								</span>
-								<span className="flex-1 min-w-0 text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-									{step.description}
-								</span>
-								{step.toolName && (
-									<span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-										{step.toolName}
-									</span>
-								)}
-							</div>
-						))}
-						{normalized.length === 0 && (
-							<span className="text-xs text-muted-foreground">
-								{t("ai.agent.plan", "Plan")}
-							</span>
-						)}
-					</div>
-				</div>
-			);
-		}
-
-		if (type === "agent.step.start") {
-			const description =
-				typeof agentEvent.description === "string"
-					? agentEvent.description
-					: "";
-			const toolName =
-				typeof agentEvent.toolName === "string" ? agentEvent.toolName : "";
-			const title = t("ai.agent.step", "Step");
-
-			return (
-				<div className="w-full rounded-md border bg-card overflow-hidden shadow-sm">
-					<div className="flex items-center gap-2 px-3 py-2 border-b bg-blue-50/50 dark:bg-blue-900/10">
-						<Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
-						<span className="text-xs font-medium text-foreground">{title}</span>
-						{toolName && (
-							<span className="ml-auto shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-								{toolName}
-							</span>
-						)}
-					</div>
-					{description && (
-						<div className="px-3 py-2 text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-							{description}
-						</div>
-					)}
-					{!description && toolName && (
-						<div className="px-3 py-2 text-sm text-muted-foreground">
-							{toolName}
-						</div>
-					)}
-				</div>
-			);
-		}
-
-		if (type === "agent.step.result") {
-			const summary =
-				typeof agentEvent.summary === "string" ? agentEvent.summary : "";
-			const success =
-				typeof agentEvent.success === "boolean"
-					? agentEvent.success
-					: undefined;
-			const statusLabel =
-				success === true
-					? t("status.success", "Success")
-					: success === false
-						? t("status.failed", "Failed")
-						: t("ai.agent.result", "Result");
-			const containerClass =
-				success === true
-					? "bg-emerald-500/5 border-emerald-500/20"
-					: success === false
-						? "bg-destructive/5 border-destructive/20"
-						: "bg-card border-border";
-			const iconClass =
-				success === true
-					? "text-emerald-500"
-					: success === false
-						? "text-destructive"
-						: "text-muted-foreground";
-
-			return (
-				<div
-					className={cn(
-						"w-full rounded-md border overflow-hidden shadow-sm",
-						containerClass,
-					)}
-				>
-					<div className="flex items-center gap-2 px-3 py-2 border-b border-border/50">
-						{success === true ? (
-							<CheckCircle2 className={cn("h-4 w-4", iconClass)} />
-						) : (
-							<AlertCircle className={cn("h-4 w-4", iconClass)} />
-						)}
-						<span className="text-xs font-medium text-foreground">
-							{t("ai.agent.result", "Result")}
-						</span>
-						<span className={cn("text-[10px] font-medium", iconClass)}>
-							{statusLabel}
-						</span>
-					</div>
-					{summary && (
-						<div className="px-3 py-2 text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-							{summary}
-						</div>
-					)}
-				</div>
-			);
-		}
-
-		if (type === "agent.step.wait_approval") {
-			const executionId =
-				typeof agentEvent.executionId === "string"
-					? agentEvent.executionId
-					: "";
-			const toolName =
-				typeof agentEvent.toolName === "string" ? agentEvent.toolName : "";
-			const preview =
-				typeof agentEvent.parametersPreview === "string"
-					? agentEvent.parametersPreview
-					: "";
-			const canApprove =
-				executionId.length > 0 && !!onApproveExecution && !!onRejectExecution;
-
-			const toolCall: ToolCall = {
-				id: executionId || `agent-${message.messageId}`,
-				type: "function",
-				executionId: executionId || undefined,
-				function: {
-					name: toolName || "unknown",
-					arguments: preview.length > 0 ? preview : "{}",
-				},
-			};
-
-			return (
-				<div className="w-full">
-					<ToolCallBlock
-						toolCall={toolCall}
-						status="pending"
-						onApprove={
-							canApprove ? () => onApproveExecution?.(executionId) : undefined
-						}
-						onReject={
-							canApprove ? () => onRejectExecution?.(executionId) : undefined
-						}
-					/>
-				</div>
-			);
-		}
-
-		return null;
-	})();
-
-	const isStructuredAgentEvent =
-		!!agentEvent &&
-		[
-			"agent.plan",
-			"agent.step.start",
-			"agent.step.result",
-			"agent.step.wait_approval",
-		].includes(agentEvent.type as string);
 
 	const shouldShowEmptyAssistantFallback =
 		!isUser &&
@@ -363,11 +65,10 @@ export function MessageBubble({
 		(!bubbleText || bubbleText.length === 0) &&
 		!!isLast;
 	const shouldRenderBubble =
-		!isStructuredAgentEvent &&
-		((bubbleText && bubbleText.length > 0) ||
-			isSending ||
-			isError ||
-			shouldShowEmptyAssistantFallback);
+		(bubbleText && bubbleText.length > 0) ||
+		isSending ||
+		isError ||
+		shouldShowEmptyAssistantFallback;
 
 	useEffect(() => {
 		if (isUser) return;
@@ -459,10 +160,8 @@ export function MessageBubble({
 					</div>
 				)}
 
-				{agentStructuredContent}
-
 				{hasToolCalls && (
-					<div className="w-full space-y-1">
+					<div className="w-full max-w-full min-w-0 overflow-hidden space-y-1">
 						{message.toolCalls!.length > 1 ? (
 							<ToolGroup
 								toolCalls={message.toolCalls!}

@@ -284,20 +284,20 @@ export function ToolCallBlock({
 				)}
 			>
 				<div
-					className="flex items-center justify-between cursor-pointer select-none group"
+					className="flex items-center justify-between cursor-pointer select-none group min-w-0"
 					onClick={() => setExpanded(!expanded)}
 				>
-					<div className="flex items-center gap-2 min-w-0">
+					<div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
 						<div className="p-1 rounded bg-background border shadow-sm">
 							<Icon className="h-3 w-3 text-foreground" />
 						</div>
-						<div className="flex items-center gap-2 min-w-0">
+						<div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
 							<span className="font-semibold text-foreground text-[11px] min-w-0 truncate">
 								{toolCall.function.name}
 							</span>
 							<span
 								className={cn(
-									"flex items-center gap-1 font-medium text-[10px] shrink-0",
+									"flex items-center gap-1 font-medium text-[10px] shrink-0 max-w-[45%] overflow-hidden",
 									statusConfig[status].color,
 								)}
 							>
@@ -307,14 +307,16 @@ export function ToolCallBlock({
 										status === "executing" && "animate-spin",
 									)}
 								/>
-								{statusConfig[status].label}
+								<span className="min-w-0 truncate">
+									{statusConfig[status].label}
+								</span>
 							</span>
 						</div>
 					</div>
 					<Button
 						variant="ghost"
-						size="sm"
-						className="h-5 w-5 p-0 hover:bg-transparent opacity-50 group-hover:opacity-100 transition-opacity"
+						size="icon"
+						className="!h-5 !w-5 !p-0 hover:bg-transparent opacity-50 group-hover:opacity-100 transition-opacity shrink-0"
 					>
 						{expanded ? (
 							<ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
@@ -336,8 +338,8 @@ export function ToolCallBlock({
 							<span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
 								Arguments
 							</span>
-							<div className="max-w-full rounded bg-muted/50 p-2 font-mono text-[10px] border border-border/50 max-h-[300px] overflow-y-auto overflow-x-auto">
-								<pre className="whitespace-pre min-w-max">
+							<div className="max-w-full rounded bg-muted/50 p-2 font-mono text-[10px] border border-border/50 max-h-[300px] overflow-y-auto">
+								<pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
 									{JSON.stringify(parsedArgs, null, 2)}
 								</pre>
 							</div>
@@ -350,7 +352,7 @@ export function ToolCallBlock({
 								</span>
 								<div
 									className={cn(
-										"max-w-full rounded p-2 border text-[10px] max-h-[300px] overflow-y-auto overflow-x-auto",
+										"max-w-full rounded p-2 border text-[10px] max-h-[300px] overflow-y-auto",
 										result.success
 											? "bg-emerald-500/5 border-emerald-500/20 text-emerald-900 dark:text-emerald-200"
 											: "bg-destructive/5 border-destructive/20 text-destructive-foreground",
@@ -362,7 +364,7 @@ export function ToolCallBlock({
 										</p>
 									)}
 									{result.data != null && (
-										<pre className="font-mono opacity-90 whitespace-pre min-w-max">
+										<pre className="font-mono opacity-90 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
 											{JSON.stringify(result.data, null, 2)}
 										</pre>
 									)}
@@ -407,8 +409,8 @@ export function ToolCallBlock({
 						{exampleParamsFromResult != null && (
 							<div className="rounded-lg border p-3">
 								<h4 className="text-[11px] font-medium mb-2">Example params</h4>
-								<div className="text-[10px] font-mono bg-muted p-2 rounded overflow-x-auto">
-									<pre className="min-w-max">
+								<div className="text-[10px] font-mono bg-muted p-2 rounded max-h-[220px] overflow-y-auto">
+									<pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
 										{JSON.stringify(exampleParamsFromResult, null, 2)}
 									</pre>
 								</div>

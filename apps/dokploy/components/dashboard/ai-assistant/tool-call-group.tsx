@@ -10,7 +10,7 @@ import {
 	ShieldAlert,
 } from "lucide-react";
 import { useTranslation } from "next-i18next";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { ToolCallBlock } from "./tool-call-block";
 import type { ToolCall } from "./use-chat";
@@ -87,6 +87,11 @@ export function ToolGroup({
 	const isPending = summary.pending > 0;
 	const hasFailed = summary.failed > 0;
 
+	useEffect(() => {
+		if (!isPending) return;
+		setIsOpen(true);
+	}, [isPending]);
+
 	// Determine overall status color/icon for the header
 	let HeaderIcon = Layers;
 	let headerColor = "text-muted-foreground";
@@ -111,16 +116,16 @@ export function ToolGroup({
 	}
 
 	return (
-		<div className="rounded-md border bg-card my-1 overflow-hidden shadow-sm w-full">
+		<div className="rounded-md border bg-card my-1 overflow-hidden shadow-sm w-full max-w-full min-w-0">
 			<div
 				className={cn(
-					"flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-muted/50 transition-colors",
+					"flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-muted/50 transition-colors min-w-0",
 					isExecuting && "bg-blue-50/50 dark:bg-blue-900/10",
 					isPending && "bg-amber-50/50 dark:bg-amber-900/10",
 				)}
 				onClick={() => setIsOpen(!isOpen)}
 			>
-				<div className="flex items-center gap-2.5">
+				<div className="flex items-center gap-2.5 min-w-0">
 					<HeaderIcon
 						className={cn(
 							"h-4 w-4 shrink-0",
@@ -128,11 +133,11 @@ export function ToolGroup({
 							isExecuting && "animate-spin",
 						)}
 					/>
-					<div className="flex flex-col">
-						<span className="text-xs font-medium text-foreground">
+					<div className="flex flex-col min-w-0">
+						<span className="text-xs font-medium text-foreground truncate">
 							{statusText}
 						</span>
-						<span className="text-[10px] text-muted-foreground">
+						<span className="text-[10px] text-muted-foreground truncate">
 							{toolCalls.length} {toolCalls.length === 1 ? "tool" : "tools"}
 						</span>
 					</div>
@@ -150,7 +155,7 @@ export function ToolGroup({
 			</div>
 
 			{isOpen && (
-				<div className="border-t bg-muted/10 divide-y divide-border/50">
+				<div className="border-t bg-muted/10 divide-y divide-border/50 max-w-full min-w-0 overflow-hidden">
 					{orderedToolCalls.map((tc) => {
 						const effectiveExecutionId = getEffectiveExecutionId(tc);
 						const status =
@@ -163,7 +168,10 @@ export function ToolGroup({
 							!!onRejectToolCall;
 
 						return (
-							<div key={tc.id} className="px-2 py-1">
+							<div
+								key={tc.id}
+								className="px-2 py-1 max-w-full min-w-0 overflow-hidden"
+							>
 								<ToolCallBlock
 									toolCall={tc}
 									status={status}

@@ -53,12 +53,16 @@ export function ToolExecutionHistory({ messages }: ToolExecutionHistoryProps) {
 		return withIndex
 			.sort((a, b) => {
 				const aStatus =
-					a.toolCall.status ?? (a.toolCall.executionId ? "pending" : "completed");
+					a.toolCall.status ??
+					(a.toolCall.executionId ? "pending" : "completed");
 				const bStatus =
-					b.toolCall.status ?? (b.toolCall.executionId ? "pending" : "completed");
+					b.toolCall.status ??
+					(b.toolCall.executionId ? "pending" : "completed");
 
-				const aNeedsApproval = aStatus === "pending" && !!a.toolCall.executionId;
-				const bNeedsApproval = bStatus === "pending" && !!b.toolCall.executionId;
+				const aNeedsApproval =
+					aStatus === "pending" && !!a.toolCall.executionId;
+				const bNeedsApproval =
+					bStatus === "pending" && !!b.toolCall.executionId;
 
 				if (aNeedsApproval && !bNeedsApproval) return -1;
 				if (!aNeedsApproval && bNeedsApproval) return 1;
@@ -88,7 +92,7 @@ export function ToolExecutionHistory({ messages }: ToolExecutionHistoryProps) {
 				<Button
 					variant="ghost"
 					size="icon"
-					className="h-8 w-8"
+					className="h-8 w-8 p-0 -ml-1"
 					title={t("ai.tools.history")}
 					aria-label={t("ai.tools.history")}
 				>

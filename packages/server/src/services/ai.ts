@@ -2528,6 +2528,10 @@ function buildSystemPrompt(
   - Use tool_search to find the best tool(s) for the user's intent.
   - Use tool_describe to see parameter hints for the chosen tool.
   - Use tool_call to execute the real tool by name.
+- Approval workflow (critical):
+  - If an action requires approval, you MUST call tool_call first to create a pending approval request (status = "pending_approval"). Do NOT ask for approval in natural language without a tool_call.
+  - After you receive pending_approval, tell the user to approve/reject using the UI buttons (or by typing "批准/拒绝").
+  - After approval, continue with the remaining steps (the platform may auto-resume execution).
 - For complex requests (especially GitHub deployments and debugging), always propose at least two viable plans and ask the user to choose one before any write action. The plans should help the user decide key choices like naming (project/appName), deployment method (application vs compose), repo/branch, and buildPath/composePath.
 - Naming strategy:
   - If the user does not provide names, auto-generate them from the repository (owner/repo) without asking.
