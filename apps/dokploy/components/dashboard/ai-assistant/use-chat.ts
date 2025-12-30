@@ -94,6 +94,15 @@ export interface Message {
 	error?: string;
 }
 
+export type ToolOutcome = {
+	toolCallId: string;
+	toolName: string;
+	executionId: string;
+	status: "completed" | "failed" | "rejected";
+	message?: string;
+	error?: string;
+};
+
 export interface UseChatOptions {
 	conversationId?: string;
 	aiId?: string;
@@ -109,6 +118,7 @@ export function useChat(options: UseChatOptions = {}) {
 		options.conversationId,
 	);
 	const [pendingMessages, setPendingMessages] = useState<Message[]>([]);
+	const [toolOutcomes, setToolOutcomes] = useState<ToolOutcome[]>([]);
 	const [toolCallMeta, setToolCallMeta] = useState<
 		Record<string, Pick<ToolCall, "status" | "executionId" | "result">>
 	>({});
@@ -311,14 +321,15 @@ export function useChat(options: UseChatOptions = {}) {
 		async (toolCallId: string) => {
 			setIsConversationAutoApproved(true);
 			const meta = toolCallMeta[toolCallId];
+			const fallbackToolCall = messages
+				.flatMap((m) => m.toolCalls || [])
+				.find((tc) => tc.id === toolCallId);
+			const toolName = fallbackToolCall?.function?.name ?? "";
 			let executionId = meta?.executionId;
 			if (!executionId) {
-				const fallback = messages
-					.flatMap((m) => m.toolCalls || [])
-					.find((tc) => tc.id === toolCallId);
-				executionId = fallback?.executionId;
+				executionId = fallbackToolCall?.executionId;
 				if (!executionId) {
-					const nested = fallback?.result?.data;
+					const nested = fallbackToolCall?.result?.data;
 					if (isRecord(nested)) {
 						const v = nested.executionId;
 						if (typeof v === "string" && v.trim().length > 0) {
@@ -372,6 +383,20 @@ export function useChat(options: UseChatOptions = {}) {
 						result: normalizedResult,
 					},
 				}));
+				setToolOutcomes((prev) => {
+					const next = [
+						...prev,
+						{
+							toolCallId,
+							toolName,
+							executionId,
+							status: normalizedResult.success ? "completed" : "failed",
+							message: normalizedResult.message,
+							error: normalizedResult.error,
+						},
+					];
+					return next.length > 50 ? next.slice(next.length - 50) : next;
+				});
 				await refetchMessages().catch(() => {});
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -383,12 +408,27 @@ export function useChat(options: UseChatOptions = {}) {
 						result: { success: false, error: message },
 					},
 				}));
+				setToolOutcomes((prev) => {
+					if (!executionId) return prev;
+					const next = [
+						...prev,
+						{
+							toolCallId,
+							toolName,
+							executionId,
+							status: "failed",
+							error: message,
+						},
+					];
+					return next.length > 50 ? next.slice(next.length - 50) : next;
+				});
 				options.onError?.(error as Error);
 			}
 		},
 		[
 			approveExecution,
 			executeExecution,
+			conversationId,
 			messages,
 			refetchMessages,
 			toolCallMeta,
@@ -434,14 +474,15 @@ export function useChat(options: UseChatOptions = {}) {
 	const rejectToolCall = useCallback(
 		async (toolCallId: string) => {
 			const meta = toolCallMeta[toolCallId];
+			const fallbackToolCall = messages
+				.flatMap((m) => m.toolCalls || [])
+				.find((tc) => tc.id === toolCallId);
+			const toolName = fallbackToolCall?.function?.name ?? "";
 			let executionId = meta?.executionId;
 			if (!executionId) {
-				const fallback = messages
-					.flatMap((m) => m.toolCalls || [])
-					.find((tc) => tc.id === toolCallId);
-				executionId = fallback?.executionId;
+				executionId = fallbackToolCall?.executionId;
 				if (!executionId) {
-					const nested = fallback?.result?.data;
+					const nested = fallbackToolCall?.result?.data;
 					if (isRecord(nested)) {
 						const v = nested.executionId;
 						if (typeof v === "string" && v.trim().length > 0) {
@@ -462,8 +503,36 @@ export function useChat(options: UseChatOptions = {}) {
 						result: { success: false, message: "Rejected" },
 					},
 				}));
+				setToolOutcomes((prev) => {
+					const next = [
+						...prev,
+						{
+							toolCallId,
+							toolName,
+							executionId,
+							status: "rejected",
+							message: "Rejected",
+						},
+					];
+					return next.length > 50 ? next.slice(next.length - 50) : next;
+				});
 				await refetchMessages().catch(() => {});
 			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				setToolOutcomes((prev) => {
+					if (!executionId) return prev;
+					const next = [
+						...prev,
+						{
+							toolCallId,
+							toolName,
+							executionId,
+							status: "failed",
+							error: message,
+						},
+					];
+					return next.length > 50 ? next.slice(next.length - 50) : next;
+				});
 				options.onError?.(error as Error);
 			}
 		},
@@ -855,6 +924,7 @@ export function useChat(options: UseChatOptions = {}) {
 		setConversationId(undefined);
 		setPendingMessages([]);
 		setToolCallMeta({});
+		setToolOutcomes([]);
 		setIsConversationAutoApproved(false);
 		autoApprovedToolCallIdsRef.current.clear();
 		isAutoApprovingRef.current = false;
@@ -882,6 +952,7 @@ export function useChat(options: UseChatOptions = {}) {
 			stopGeneration();
 			setPendingMessages([]);
 			setToolCallMeta({});
+			setToolOutcomes([]);
 			setIsConversationAutoApproved(false);
 			autoApprovedToolCallIdsRef.current.clear();
 			isAutoApprovingRef.current = false;
@@ -909,6 +980,7 @@ export function useChat(options: UseChatOptions = {}) {
 		isLoading,
 		isConversationAutoApproved,
 		enableConversationAutoApprove,
+		toolOutcomes,
 		send,
 		approveToolCall,
 		rejectToolCall,

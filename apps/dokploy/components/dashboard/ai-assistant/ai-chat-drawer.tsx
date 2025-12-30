@@ -163,6 +163,7 @@ export function AIChatDrawer({
 		messages,
 		isLoading,
 		conversationId,
+		toolOutcomes,
 		send,
 		reset,
 		retryMessage,
@@ -180,6 +181,52 @@ export function AIChatDrawer({
 		enabled: isOpen,
 		autoLoad: autoLoadHistory,
 	});
+
+	const processedOutcomeKeysRef = useRef<Set<string>>(new Set());
+
+	useEffect(() => {
+		processedOutcomeKeysRef.current.clear();
+	}, [conversationId]);
+
+	useEffect(() => {
+		if (!isOpen) return;
+		if (!selectedAiId) return;
+		if (!conversationId) return;
+		if (!toolOutcomes || toolOutcomes.length === 0) return;
+		if (isLoading) return;
+
+		const toKey = (o: (typeof toolOutcomes)[number]) =>
+			`${o.executionId}::${o.status}`;
+		const unprocessed = toolOutcomes.filter(
+			(o) => !processedOutcomeKeysRef.current.has(toKey(o)),
+		);
+		if (unprocessed.length === 0) return;
+		for (const o of unprocessed) {
+			processedOutcomeKeysRef.current.add(toKey(o));
+		}
+
+		const payload = unprocessed
+			.map((o) => {
+				const lines = [
+					`toolName: ${o.toolName || "(unknown)"}`,
+					`executionId: ${o.executionId}`,
+					`status: ${o.status}`,
+				];
+				if (o.message) lines.push(`message: ${o.message}`);
+				if (o.error) lines.push(`error: ${o.error}`);
+				return lines.join("\n");
+			})
+			.join("\n\n");
+
+		const prompt =
+			"The following is a tool approval outcome from the platform. " +
+			"Please summarize what happened and whether the user's requested action is completed. " +
+			"If it failed, explain the likely cause and the next best step. " +
+			"Do NOT execute any tools in this response; only summarize and propose next steps.\n\n" +
+			payload;
+
+		send(prompt, selectedAiId).catch(() => {});
+	}, [conversationId, isLoading, isOpen, selectedAiId, send, toolOutcomes]);
 
 	const serversForPicker = useMemo(() => {
 		const servers = serversForDefaultPick ?? [];
