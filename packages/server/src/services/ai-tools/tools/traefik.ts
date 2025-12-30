@@ -539,6 +539,7 @@ const readTraefikConfig: Tool<
 			filePath: z
 				.string()
 				.min(1)
+				.default("traefik.yml")
 				.describe("File path relative to Traefik root"),
 		}),
 	),

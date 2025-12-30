@@ -1,6 +1,10 @@
+import { IS_CLOUD } from "@dokploy/server/constants";
 import { getNodeInfo, getSwarmNodes } from "@dokploy/server/services/docker";
 import { findServerById, getAllServers } from "@dokploy/server/services/server";
-import { execAsyncRemote } from "@dokploy/server/utils/process/execAsync";
+import {
+	execAsync,
+	execAsyncRemote,
+} from "@dokploy/server/utils/process/execAsync";
 import { z } from "zod";
 import { toolRegistry } from "../registry";
 import type { Tool } from "../types";
@@ -186,29 +190,28 @@ const serverExec: Tool<
 	riskLevel: "high",
 	requiresApproval: true,
 	execute: async (params, ctx) => {
-		let serverId = params.serverId ?? ctx.serverId;
-		if (!serverId) {
+		const serverId = params.serverId ?? ctx.serverId ?? null;
+		if (!serverId && IS_CLOUD) {
 			const resolved = await resolveDefaultServerId(ctx.organizationId);
-			if (resolved.pickedServerId) {
-				serverId = resolved.pickedServerId;
-			} else {
-				return {
-					success: false,
-					message:
-						"serverId is required (either pass serverId or set a conversation serverId)",
-					error: "MISSING_SERVER_ID",
-					data: { stdout: "", stderr: "", servers: resolved.candidates },
-				};
-			}
-		}
-		const server = await findServerById(serverId);
-		if (server.organizationId !== ctx.organizationId) {
 			return {
 				success: false,
-				message: "Server access denied",
-				error: "UNAUTHORIZED",
-				data: { stdout: "", stderr: "" },
+				message:
+					"serverId is required in cloud mode (either pass serverId or set a conversation serverId)",
+				error: "MISSING_SERVER_ID",
+				data: { stdout: "", stderr: "", servers: resolved.candidates },
 			};
+		}
+
+		if (serverId) {
+			const server = await findServerById(serverId);
+			if (server.organizationId !== ctx.organizationId) {
+				return {
+					success: false,
+					message: "Server access denied",
+					error: "UNAUTHORIZED",
+					data: { stdout: "", stderr: "" },
+				};
+			}
 		}
 
 		const command = normalizeCommand(params.command);
@@ -261,13 +264,16 @@ const serverExec: Tool<
 		});
 
 		try {
-			const result = await execAsyncRemote(serverId, wrapped);
+			const result = serverId
+				? await execAsyncRemote(serverId, wrapped)
+				: await execAsync(wrapped);
 			return {
 				success: true,
 				message: "Command executed",
 				data: {
 					stdout: truncate(result.stdout ?? "", params.maxOutputChars ?? 20000),
 					stderr: truncate(result.stderr ?? "", params.maxOutputChars ?? 20000),
+					...(serverId ? {} : { exitHint: "local" }),
 				},
 			};
 		} catch (error) {

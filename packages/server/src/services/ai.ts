@@ -16,7 +16,7 @@ import {
 	streamText,
 	tool,
 } from "ai";
-import { and, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { IS_CLOUD } from "../constants";
@@ -1139,7 +1139,7 @@ export const listConversations = async (params: {
 	organizationId: string;
 	userId: string;
 	projectId?: string;
-	serverId?: string;
+	serverId?: string | null;
 	status?: "active" | "archived";
 	limit?: number;
 	offset?: number;
@@ -1152,7 +1152,9 @@ export const listConversations = async (params: {
 	if (params.projectId) {
 		conditions.push(eq(aiConversations.projectId, params.projectId));
 	}
-	if (params.serverId) {
+	if (params.serverId === null) {
+		conditions.push(isNull(aiConversations.serverId));
+	} else if (typeof params.serverId === "string" && params.serverId.length > 0) {
 		conditions.push(eq(aiConversations.serverId, params.serverId));
 	}
 	if (params.status) {
@@ -1393,6 +1395,110 @@ function safeJsonForPrompt(value: unknown, maxLen: number) {
 	}
 }
 
+function buildEmptyModelOutputFallback(userMessage: string): string {
+	const looksChinese = /[\u4e00-\u9fff]/.test(userMessage);
+	if (looksChinese) {
+		return (
+			"我这次没有拿到模型的任何输出（可能是模型接口/网络波动）。\n" +
+			"请点“重试”再试一次；如果持续出现，建议切换模型或检查 AI 配置。"
+		);
+	}
+	return (
+		"I didn't receive any output from the model (provider/network hiccup).\n" +
+		"Please retry once. If it keeps happening, switch the model or check the AI configuration."
+	);
+}
+
+async function guessConversationLanguage(
+	conversationId: string,
+): Promise<"zh" | "en"> {
+	try {
+		const recent = await getMessages({ conversationId, limit: 12 });
+		for (let i = recent.length - 1; i >= 0; i--) {
+			const msg = recent[i];
+			if (msg?.role !== "user") continue;
+			const content = (msg.content ?? "").trim();
+			if (content.length === 0) continue;
+			return /[\u4e00-\u9fff]/.test(content) ? "zh" : "en";
+		}
+	} catch {
+		// Ignore language detection errors
+	}
+	return "en";
+}
+
+function formatToolOutcomeAssistantMessage(params: {
+	lang: "zh" | "en";
+	toolName: string;
+	executionId: string;
+	outcome: "completed" | "failed" | "rejected";
+	result?: { success: boolean; message?: string; error?: string };
+}): string {
+	const toolName = params.toolName.trim();
+	const executionId = params.executionId.trim();
+	if (!toolName || !executionId) return "";
+
+	const message = params.result?.message?.trim() ?? "";
+	const error = params.result?.error?.trim() ?? "";
+
+	const detailHint =
+		params.lang === "zh"
+			? "（详情见工具执行卡片）"
+			: "(See the tool execution card for details)";
+
+	if (params.outcome === "rejected") {
+		return params.lang === "zh"
+			? `已拒绝执行：${toolName}\n执行ID：${executionId}\n${detailHint}`
+			: `Rejected: ${toolName}\nExecution ID: ${executionId}\n${detailHint}`;
+	}
+
+	if (params.outcome === "failed") {
+		const reason = safeTruncateString(error || message || "Unknown error", 500);
+		return params.lang === "zh"
+			? `❌ 执行失败：${toolName}\n执行ID：${executionId}\n原因：${reason}\n${detailHint}`
+			: `❌ Failed: ${toolName}\nExecution ID: ${executionId}\nReason: ${reason}\n${detailHint}`;
+	}
+
+	const doneText = message ? safeTruncateString(message, 500) : "";
+	return params.lang === "zh"
+		? `✅ 已完成：${toolName}\n执行ID：${executionId}${doneText ? `\n结果：${doneText}` : ""}\n${detailHint}`
+		: `✅ Completed: ${toolName}\nExecution ID: ${executionId}${doneText ? `\nResult: ${doneText}` : ""}\n${detailHint}`;
+}
+
+async function appendToolOutcomeAssistantMessage(params: {
+	conversationId?: string | null;
+	toolName: string;
+	executionId: string;
+	outcome: "completed" | "failed" | "rejected";
+	result?: { success: boolean; message?: string; error?: string };
+}) {
+	const conversationId =
+		typeof params.conversationId === "string" && params.conversationId.length > 0
+			? params.conversationId
+			: "";
+	if (!conversationId) return;
+
+	const lang = await guessConversationLanguage(conversationId);
+	const content = formatToolOutcomeAssistantMessage({
+		lang,
+		toolName: params.toolName,
+		executionId: params.executionId,
+		outcome: params.outcome,
+		result: params.result,
+	});
+	if (!content) return;
+
+	try {
+		await saveMessage({
+			conversationId,
+			role: "assistant",
+			content,
+		});
+	} catch {
+		// Best-effort: do not fail tool execution if chat message cannot be saved
+	}
+}
+
 async function generateToolOutcomeSummary(params: {
 	model: unknown;
 	userMessage: string;
@@ -1451,6 +1557,75 @@ Return ONLY the final response.`;
 	});
 
 	return text.trim();
+}
+
+function injectToolExecutionContextMessage(
+	messages: CoreMessage[],
+	content: string,
+): CoreMessage[] {
+	const trimmed = content.trim();
+	if (trimmed.length === 0) return messages;
+
+	const insertIndex =
+		messages.length > 0 && messages[messages.length - 1]?.role === "user"
+			? messages.length - 1
+			: messages.length;
+
+	const next = messages.slice();
+	next.splice(insertIndex, 0, { role: "system", content: trimmed });
+	return next;
+}
+
+async function buildToolExecutionContextMessage(params: {
+	conversationId: string;
+	maxExecutions?: number;
+	maxChars?: number;
+}): Promise<string> {
+	const maxExecutions = Math.min(Math.max(params.maxExecutions ?? 10, 1), 30);
+	const maxChars = Math.min(Math.max(params.maxChars ?? 14000, 2000), 50000);
+
+	const executions = await db.query.aiToolExecutions.findMany({
+		where: eq(aiToolExecutions.conversationId, params.conversationId),
+		orderBy: desc(aiToolExecutions.createdAt),
+		limit: maxExecutions,
+	});
+	if (!executions || executions.length === 0) return "";
+
+	const lines = executions
+		.slice()
+		.reverse()
+		.map((e) => {
+			const header = [
+				`executionId: ${e.executionId}`,
+				`tool: ${e.toolName}`,
+				`status: ${e.status}`,
+				e.requiresApproval ? "requiresApproval: true" : "",
+				typeof e.createdAt === "string" && e.createdAt.length > 0
+					? `createdAt: ${e.createdAt}`
+					: "",
+			]
+				.filter(Boolean)
+				.join("\n");
+
+			const paramsText =
+				e.parameters && typeof e.parameters === "object"
+					? `params:\n${safeJsonForPrompt(e.parameters, 2000)}`
+					: "";
+
+			const resultText =
+				e.result && typeof e.result === "object"
+					? `result:\n${safeJsonForPrompt(e.result, 4000)}`
+					: e.error
+						? `error:\n${safeTruncateString(String(e.error), 2000)}`
+						: "";
+
+			return [header, paramsText, resultText].filter(Boolean).join("\n");
+		});
+
+	const content = `Recent tool executions (for context, newest last; truncated):\n${lines.join(
+		"\n\n",
+	)}`;
+	return safeTruncateString(content, maxChars);
 }
 
 async function generatePromptText(params: {
@@ -1543,6 +1718,14 @@ export const chat = async ({
 			return null;
 		})
 		.filter(Boolean) as CoreMessage[];
+
+	const toolExecutionContextMessage = await buildToolExecutionContextMessage({
+		conversationId,
+	});
+	const messagesWithToolContext = injectToolExecutionContextMessage(
+		messages,
+		toolExecutionContextMessage,
+	);
 
 	const provider = selectAIProvider(aiSettings);
 	const model = provider(aiSettings.model);
@@ -1771,7 +1954,7 @@ export const chat = async ({
 		return await generateText({
 			model,
 			system: systemPrompt,
-			messages,
+			messages: messagesWithToolContext,
 			tools: withTools ? tools : undefined,
 			stopWhen: stepCountIs(10),
 		});
@@ -1826,6 +2009,12 @@ export const chat = async ({
 				: [],
 		});
 		finalText = summary || finalText;
+	}
+	if (
+		finalText.trim().length === 0 &&
+		(!Array.isArray(result.toolCalls) || result.toolCalls.length === 0)
+	) {
+		finalText = buildEmptyModelOutputFallback(message);
 	}
 
 	// Save assistant response
@@ -2010,6 +2199,14 @@ export const chatStream = async (
 			return null;
 		})
 		.filter(Boolean) as CoreMessage[];
+
+	const toolExecutionContextMessage = await buildToolExecutionContextMessage({
+		conversationId,
+	});
+	const messagesWithToolContext = injectToolExecutionContextMessage(
+		messages,
+		toolExecutionContextMessage,
+	);
 
 	const provider = selectAIProvider(aiSettings);
 	const model = provider(aiSettings.model);
@@ -2235,7 +2432,7 @@ export const chatStream = async (
 		const stream = streamText({
 			model,
 			system: systemPrompt,
-			messages,
+			messages: messagesWithToolContext,
 			tools: withTools ? tools : undefined,
 			stopWhen,
 			abortSignal: options.abortSignal,
@@ -2362,7 +2559,13 @@ export const chatStream = async (
 			fullText.length === 0 &&
 			!options.abortSignal?.aborted
 		) {
-			throw new Error("AI stream completed with no content");
+			fullText = buildEmptyModelOutputFallback(message);
+			hasAnyOutput = true;
+			try {
+				options.onTextDelta?.(fullText);
+			} catch {
+				// Ignore callback errors
+			}
 		}
 
 		return { fullText, toolCalls, toolResults, usage, streamError };
@@ -2504,6 +2707,7 @@ function buildSystemPrompt(
 	if (conversation.serverId) {
 		context += `\nUser is on server: ${conversation.serverId}`;
 	}
+	context += `\nPlatform mode: ${IS_CLOUD ? "cloud" : "self-hosted"}`;
 
 	const memorySummary =
 		conversation.metadata &&
@@ -2527,11 +2731,17 @@ function buildSystemPrompt(
   - Use tool_suggest to get a quick shortlist of likely relevant tools.
   - Use tool_search to find the best tool(s) for the user's intent.
   - Use tool_describe to see parameter hints for the chosen tool.
-  - Use tool_call to execute the real tool by name.
+  - Use tool_call to create a tool execution by name.
+  - If you already know the exact toolName and params, skip tool_suggest/tool_search/tool_describe and call tool_call directly.
 - Approval workflow (critical):
   - If an action requires approval, you MUST call tool_call first to create a pending approval request (status = "pending_approval"). Do NOT ask for approval in natural language without a tool_call.
   - After you receive pending_approval, tell the user to approve/reject using the UI buttons (or by typing "批准/拒绝").
   - After approval, continue with the remaining steps (the platform may auto-resume execution).
+- Context reuse:
+  - If recent tool results already include what you need, reuse them instead of re-running read-only tools.
+- Server context:
+  - In self-hosted mode, if serverId is not provided, default to the local Dokploy host. Only ask for/require serverId when the user explicitly wants to target a remote server.
+  - In cloud mode, serverId is required for server operations.
 - For complex requests (especially GitHub deployments and debugging), always propose at least two viable plans and ask the user to choose one before any write action. The plans should help the user decide key choices like naming (project/appName), deployment method (application vs compose), repo/branch, and buildPath/composePath.
 - Naming strategy:
   - If the user does not provide names, auto-generate them from the repository (owner/repo) without asking.
@@ -2551,12 +2761,14 @@ function buildSystemPrompt(
 - Do NOT invent tool names. Always use tool_search/tool_describe first if unsure.
 - For any request that can change platform state (create/deploy/restart/delete/update), first restate the user's intent in one sentence, then list any missing required details, then proceed.
 - If the user's request is ambiguous, do NOT assume. Ask focused clarifying questions. Prefer asking 1-3 questions max per turn.
+- If the user says “直接执行/用默认/别问/少问”, proceed with safe defaults and state them briefly; ask at most 1 blocking question only if required to avoid harm.
 - Never guess IDs (projectId/serverId/environmentId/applicationId/etc). Use *find*/*list* tools to locate candidates, then ask the user to confirm when ambiguous.
 - Do not ask the user for information you can retrieve via tools.
 - Prefer read-only tools first (list/get/status/check/find) to understand the current state.
 - For low-risk operations (list, get, status, check, find), execute immediately.
-- For medium/high risk operations, explain what will happen BEFORE the tool is called.
-- If a tool requires approval, clearly state that approval is required and WAIT for approval before claiming the action is done.
+- For medium/high risk operations:
+  - If requiresApproval=false, explain what will happen BEFORE calling tool_call (it will execute immediately).
+  - If requiresApproval=true, you may call tool_call immediately to create a pending approval request (this does NOT execute yet), then ask the user to approve/reject.
 - Always report the results of tool executions clearly
 - If you do not have the necessary tool in the Available Tools list, do NOT claim the platform cannot do it. Instead: explain that the current toolset for this request is insufficient, state what tool/category is missing, and suggest the next best step (e.g., use list/find tools, or ask an admin to enable the capability).
 - Database provisioning flow:
@@ -2924,6 +3136,17 @@ export const approveToolExecution = async (
 		})
 		.where(eq(aiToolExecutions.executionId, executionId))
 		.returning();
+
+	if (updated && !approved) {
+		await appendToolOutcomeAssistantMessage({
+			conversationId: updated.conversationId,
+			toolName: updated.toolName,
+			executionId: updated.executionId,
+			outcome: "rejected",
+			result: { success: false, message: "Rejected" },
+		});
+	}
+
 	return updated;
 };
 
@@ -2987,6 +3210,13 @@ export const executeApprovedTool = async (
 			},
 			completedAt: new Date().toISOString(),
 		});
+		await appendToolOutcomeAssistantMessage({
+			conversationId: execution.conversationId,
+			toolName: execution.toolName,
+			executionId,
+			outcome: "failed",
+			result: { success: false, message: errorMessage, error: errorMessage },
+		});
 		throw new TRPCError({
 			code: "NOT_FOUND",
 			message: errorMessage,
@@ -3005,6 +3235,13 @@ export const executeApprovedTool = async (
 				error: errorMessage,
 			},
 			completedAt: new Date().toISOString(),
+		});
+		await appendToolOutcomeAssistantMessage({
+			conversationId: execution.conversationId,
+			toolName: execution.toolName,
+			executionId,
+			outcome: "failed",
+			result: { success: false, message: "Invalid parameters", error: errorMessage },
 		});
 		throw new TRPCError({
 			code: "BAD_REQUEST",
@@ -3026,6 +3263,13 @@ export const executeApprovedTool = async (
 				result,
 				completedAt: new Date().toISOString(),
 			});
+			await appendToolOutcomeAssistantMessage({
+				conversationId: execution.conversationId,
+				toolName: execution.toolName,
+				executionId,
+				outcome: "completed",
+				result: { success: true, message: result.message },
+			});
 			return result;
 		}
 
@@ -3034,6 +3278,17 @@ export const executeApprovedTool = async (
 			result,
 			error: result.error || result.message,
 			completedAt: new Date().toISOString(),
+		});
+		await appendToolOutcomeAssistantMessage({
+			conversationId: execution.conversationId,
+			toolName: execution.toolName,
+			executionId,
+			outcome: "failed",
+			result: {
+				success: false,
+				message: result.message,
+				error: result.error || result.message,
+			},
 		});
 
 		return result;
@@ -3048,6 +3303,13 @@ export const executeApprovedTool = async (
 				error: errorMessage,
 			},
 			completedAt: new Date().toISOString(),
+		});
+		await appendToolOutcomeAssistantMessage({
+			conversationId: execution.conversationId,
+			toolName: execution.toolName,
+			executionId,
+			outcome: "failed",
+			result: { success: false, message: "Tool execution failed", error: errorMessage },
 		});
 
 		throw new TRPCError({

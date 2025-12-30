@@ -353,7 +353,7 @@ const conversationSchema = createInsertSchema(aiConversations, {
 	conversationId: z.string(),
 	title: z.string().optional(),
 	projectId: z.string().optional(),
-	serverId: z.string().optional(),
+	serverId: z.string().nullable().optional(),
 });
 
 export const apiCreateConversation = conversationSchema.pick({
@@ -369,7 +369,7 @@ export const apiFindConversation = z.object({
 
 export const apiListConversations = z.object({
 	projectId: z.string().optional(),
-	serverId: z.string().optional(),
+	serverId: z.string().nullable().optional(),
 	status: z.enum(["active", "archived"]).optional(),
 	limit: z.number().min(1).max(100).optional().default(20),
 	offset: z.number().min(0).optional().default(0),

@@ -145,7 +145,7 @@ export function useChat(options: UseChatOptions = {}) {
 	const { data: autoLoadConversations } = api.ai.conversations.list.useQuery(
 		{
 			projectId: options.projectId,
-			serverId: options.serverId,
+			serverId: options.serverId ?? null,
 			status: "active",
 			limit: 1,
 			offset: 0,
@@ -179,7 +179,7 @@ export function useChat(options: UseChatOptions = {}) {
 			const newConversation = await createConversation.mutateAsync({
 				aiId,
 				projectId: options.projectId,
-				serverId: options.serverId,
+				serverId: options.serverId ?? null,
 			});
 			if (!newConversation?.conversationId) {
 				throw new Error("settings.ai.errors.failedToCreateConversation");
@@ -384,17 +384,15 @@ export function useChat(options: UseChatOptions = {}) {
 					},
 				}));
 				setToolOutcomes((prev) => {
-					const next = [
-						...prev,
-						{
-							toolCallId,
-							toolName,
-							executionId,
-							status: normalizedResult.success ? "completed" : "failed",
-							message: normalizedResult.message,
-							error: normalizedResult.error,
-						},
-					];
+					const outcome: ToolOutcome = {
+						toolCallId,
+						toolName,
+						executionId,
+						status: normalizedResult.success ? "completed" : "failed",
+						message: normalizedResult.message,
+						error: normalizedResult.error,
+					};
+					const next = [...prev, outcome];
 					return next.length > 50 ? next.slice(next.length - 50) : next;
 				});
 				await refetchMessages().catch(() => {});
@@ -410,16 +408,14 @@ export function useChat(options: UseChatOptions = {}) {
 				}));
 				setToolOutcomes((prev) => {
 					if (!executionId) return prev;
-					const next = [
-						...prev,
-						{
-							toolCallId,
-							toolName,
-							executionId,
-							status: "failed",
-							error: message,
-						},
-					];
+					const outcome: ToolOutcome = {
+						toolCallId,
+						toolName,
+						executionId,
+						status: "failed",
+						error: message,
+					};
+					const next = [...prev, outcome];
 					return next.length > 50 ? next.slice(next.length - 50) : next;
 				});
 				options.onError?.(error as Error);
@@ -504,16 +500,14 @@ export function useChat(options: UseChatOptions = {}) {
 					},
 				}));
 				setToolOutcomes((prev) => {
-					const next = [
-						...prev,
-						{
-							toolCallId,
-							toolName,
-							executionId,
-							status: "rejected",
-							message: "Rejected",
-						},
-					];
+					const outcome: ToolOutcome = {
+						toolCallId,
+						toolName,
+						executionId,
+						status: "rejected",
+						message: "Rejected",
+					};
+					const next = [...prev, outcome];
 					return next.length > 50 ? next.slice(next.length - 50) : next;
 				});
 				await refetchMessages().catch(() => {});
@@ -521,16 +515,14 @@ export function useChat(options: UseChatOptions = {}) {
 				const message = error instanceof Error ? error.message : String(error);
 				setToolOutcomes((prev) => {
 					if (!executionId) return prev;
-					const next = [
-						...prev,
-						{
-							toolCallId,
-							toolName,
-							executionId,
-							status: "failed",
-							error: message,
-						},
-					];
+					const outcome: ToolOutcome = {
+						toolCallId,
+						toolName,
+						executionId,
+						status: "failed",
+						error: message,
+					};
+					const next = [...prev, outcome];
 					return next.length > 50 ? next.slice(next.length - 50) : next;
 				});
 				options.onError?.(error as Error);

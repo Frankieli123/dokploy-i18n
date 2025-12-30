@@ -57,7 +57,8 @@ export function AIChatDrawer({
 	const router = useRouter();
 	const { t } = useTranslation("common");
 	const [isOpen, setIsOpen] = useState(false);
-	const LAST_SERVER_ID_STORAGE_KEY = "dokploy.ai.lastServerId";
+	const SERVER_CONTEXT_STORAGE_KEY = "dokploy.ai.serverContext.v2";
+	const LOCAL_SERVER_CONTEXT = "local";
 	const [autoLoadHistory, setAutoLoadHistory] = useState(true);
 	const [input, setInput] = useState("");
 	const [selectedAiId, setSelectedAiId] = useState<string>("");
@@ -86,33 +87,28 @@ export function AIChatDrawer({
 
 	const projectId = _projectId ?? routeProjectId;
 	const routeBoundServerId = _serverId ?? routeServerId;
-	const [pinnedServerId, setPinnedServerId] = useState<string>(() => {
-		if (typeof window === "undefined") return "";
+	const [serverContext, setServerContext] = useState<string>(() => {
+		if (typeof window === "undefined") return LOCAL_SERVER_CONTEXT;
 		try {
-			return localStorage.getItem(LAST_SERVER_ID_STORAGE_KEY) ?? "";
+			const saved = localStorage.getItem(SERVER_CONTEXT_STORAGE_KEY) ?? "";
+			return saved.trim().length > 0 ? saved.trim() : LOCAL_SERVER_CONTEXT;
 		} catch {
-			return "";
+			return LOCAL_SERVER_CONTEXT;
 		}
 	});
+
 	const effectiveServerId =
-		pinnedServerId.trim().length > 0
-			? pinnedServerId.trim()
-			: routeBoundServerId;
-	const isServerContextReady = !!effectiveServerId;
+		serverContext === LOCAL_SERVER_CONTEXT ? undefined : serverContext;
 
 	useEffect(() => {
-		if (pinnedServerId.trim().length > 0) return;
-		if (!routeBoundServerId || routeBoundServerId.trim().length === 0) return;
-		setPinnedServerId(routeBoundServerId);
-		try {
-			localStorage.setItem(LAST_SERVER_ID_STORAGE_KEY, routeBoundServerId);
-		} catch {}
-	}, [pinnedServerId, routeBoundServerId]);
+		if (!isOpen) return;
+		const bound =
+			typeof routeBoundServerId === "string" ? routeBoundServerId.trim() : "";
+		if (!bound) return;
+		if (serverContext !== LOCAL_SERVER_CONTEXT) return;
+		setServerContext(bound);
+	}, [isOpen, routeBoundServerId, serverContext]);
 
-	const shouldPickDefaultServer =
-		isOpen &&
-		(!routeBoundServerId || routeBoundServerId.trim().length === 0) &&
-		pinnedServerId.trim().length === 0;
 	const { data: serversForDefaultPick } = api.server.all.useQuery(undefined, {
 		enabled: isOpen,
 	});
@@ -120,38 +116,16 @@ export function AIChatDrawer({
 	useEffect(() => {
 		if (!isOpen) return;
 		if (!serversForDefaultPick) return;
-		const pinned = pinnedServerId.trim();
-		if (pinned.length === 0) return;
-		const exists = serversForDefaultPick.some((s) => s.serverId === pinned);
+		if (serverContext === LOCAL_SERVER_CONTEXT) return;
+		const exists = serversForDefaultPick.some(
+			(s) => s.serverId === serverContext,
+		);
 		if (exists) return;
-		setPinnedServerId("");
+		setServerContext(LOCAL_SERVER_CONTEXT);
 		try {
-			localStorage.removeItem(LAST_SERVER_ID_STORAGE_KEY);
+			localStorage.setItem(SERVER_CONTEXT_STORAGE_KEY, LOCAL_SERVER_CONTEXT);
 		} catch {}
-	}, [isOpen, serversForDefaultPick, pinnedServerId]);
-
-	useEffect(() => {
-		if (!shouldPickDefaultServer) return;
-		if (!serversForDefaultPick || serversForDefaultPick.length === 0) return;
-
-		const activeDeployServers = serversForDefaultPick.filter(
-			(s) => s.serverStatus === "active" && s.serverType === "deploy",
-		);
-		const activeServers = serversForDefaultPick.filter(
-			(s) => s.serverStatus === "active",
-		);
-		const picked =
-			activeDeployServers[0]?.serverId ||
-			activeServers[0]?.serverId ||
-			serversForDefaultPick[0]?.serverId ||
-			"";
-		if (!picked) return;
-
-		setPinnedServerId(picked);
-		try {
-			localStorage.setItem(LAST_SERVER_ID_STORAGE_KEY, picked);
-		} catch {}
-	}, [serversForDefaultPick, shouldPickDefaultServer]);
+	}, [isOpen, serversForDefaultPick, serverContext]);
 
 	// Lazy load AI configs only when drawer is open
 	const { data: aiConfigs, isLoading: isLoadingConfigs } =
@@ -163,7 +137,6 @@ export function AIChatDrawer({
 		messages,
 		isLoading,
 		conversationId,
-		toolOutcomes,
 		send,
 		reset,
 		retryMessage,
@@ -182,52 +155,6 @@ export function AIChatDrawer({
 		autoLoad: autoLoadHistory,
 	});
 
-	const processedOutcomeKeysRef = useRef<Set<string>>(new Set());
-
-	useEffect(() => {
-		processedOutcomeKeysRef.current.clear();
-	}, [conversationId]);
-
-	useEffect(() => {
-		if (!isOpen) return;
-		if (!selectedAiId) return;
-		if (!conversationId) return;
-		if (!toolOutcomes || toolOutcomes.length === 0) return;
-		if (isLoading) return;
-
-		const toKey = (o: (typeof toolOutcomes)[number]) =>
-			`${o.executionId}::${o.status}`;
-		const unprocessed = toolOutcomes.filter(
-			(o) => !processedOutcomeKeysRef.current.has(toKey(o)),
-		);
-		if (unprocessed.length === 0) return;
-		for (const o of unprocessed) {
-			processedOutcomeKeysRef.current.add(toKey(o));
-		}
-
-		const payload = unprocessed
-			.map((o) => {
-				const lines = [
-					`toolName: ${o.toolName || "(unknown)"}`,
-					`executionId: ${o.executionId}`,
-					`status: ${o.status}`,
-				];
-				if (o.message) lines.push(`message: ${o.message}`);
-				if (o.error) lines.push(`error: ${o.error}`);
-				return lines.join("\n");
-			})
-			.join("\n\n");
-
-		const prompt =
-			"The following is a tool approval outcome from the platform. " +
-			"Please summarize what happened and whether the user's requested action is completed. " +
-			"If it failed, explain the likely cause and the next best step. " +
-			"Do NOT execute any tools in this response; only summarize and propose next steps.\n\n" +
-			payload;
-
-		send(prompt, selectedAiId).catch(() => {});
-	}, [conversationId, isLoading, isOpen, selectedAiId, send, toolOutcomes]);
-
 	const serversForPicker = useMemo(() => {
 		const servers = serversForDefaultPick ?? [];
 		const score = (s: (typeof servers)[number]) => {
@@ -241,12 +168,17 @@ export function AIChatDrawer({
 	}, [serversForDefaultPick]);
 
 	const currentServerLabel = useMemo(() => {
-		const id = effectiveServerId ?? "";
-		if (!id) return "";
-		const match = (serversForDefaultPick ?? []).find((s) => s.serverId === id);
+		if (serverContext === LOCAL_SERVER_CONTEXT) {
+			return t("server.local", "本机(默认)");
+		}
+		const match = (serversForDefaultPick ?? []).find(
+			(s) => s.serverId === serverContext,
+		);
 		const name = (match as any)?.name;
-		return typeof name === "string" && name.trim().length > 0 ? name : id;
-	}, [effectiveServerId, serversForDefaultPick]);
+		return typeof name === "string" && name.trim().length > 0
+			? name
+			: serverContext;
+	}, [LOCAL_SERVER_CONTEXT, serverContext, serversForDefaultPick, t]);
 
 	// Auto-select first AI config
 	useEffect(() => {
@@ -284,7 +216,6 @@ export function AIChatDrawer({
 	}, [isOpen]);
 
 	const handleSend = async () => {
-		if (!isServerContextReady) return;
 		if (!input.trim()) return;
 
 		const normalized = input.trim().toLowerCase();
@@ -399,11 +330,18 @@ export function AIChatDrawer({
 						</SheetTitle>
 						<div className="flex items-center shrink-0">
 							<Select
-								value={effectiveServerId || ""}
+								value={serverContext}
 								onValueChange={(next) => {
-									setPinnedServerId(next);
+									const normalized =
+										typeof next === "string" && next.trim().length > 0
+											? next.trim()
+											: LOCAL_SERVER_CONTEXT;
+									setServerContext(normalized);
 									try {
-										localStorage.setItem(LAST_SERVER_ID_STORAGE_KEY, next);
+										localStorage.setItem(
+											SERVER_CONTEXT_STORAGE_KEY,
+											normalized,
+										);
 									} catch {}
 								}}
 							>
@@ -416,6 +354,9 @@ export function AIChatDrawer({
 									</SelectValue>
 								</SelectTrigger>
 								<SelectContent>
+									<SelectItem value={LOCAL_SERVER_CONTEXT}>
+										{t("server.local", "本机(默认)")}
+									</SelectItem>
 									{serversForPicker.map((s) => (
 										<SelectItem key={s.serverId} value={s.serverId}>
 											{(s as any).name || s.serverId}
@@ -554,7 +495,7 @@ export function AIChatDrawer({
 							<Button
 								onClick={handleSend}
 								disabled={
-									!hasAiConfigs || !isServerContextReady || !input.trim()
+									!hasAiConfigs || !input.trim()
 								}
 								size="icon"
 								aria-label={t("ai.chat.sendMessage")}
@@ -582,7 +523,7 @@ function ConversationHistoryDialog(props: {
 	const { data: conversations, isLoading } = api.ai.conversations.list.useQuery(
 		{
 			projectId: props.projectId,
-			serverId: props.serverId,
+			serverId: props.serverId ?? null,
 			status: "active",
 			limit: 20,
 			offset: 0,
