@@ -148,14 +148,16 @@ export function ToolGroup({
 						)}
 					/>
 					<div className="flex flex-col min-w-0">
-						<span className="text-xs font-medium text-foreground truncate">
-							{statusText}
-						</span>
-						<span className="text-[10px] text-muted-foreground truncate">
-							{toolCalls.length} {toolCalls.length === 1 ? "tool" : "tools"}
-						</span>
+							<span className="text-xs font-medium text-foreground truncate">
+								{statusText}
+							</span>
+							<span className="text-[10px] text-muted-foreground truncate">
+								{toolCalls.length === 1
+									? t("ai.toolCall.toolCountOne", { count: toolCalls.length })
+									: t("ai.toolCall.toolCountMany", { count: toolCalls.length })}
+							</span>
+						</div>
 					</div>
-				</div>
 				<div className="flex items-center gap-2">
 					{pendingHeaderAction && (
 						<div

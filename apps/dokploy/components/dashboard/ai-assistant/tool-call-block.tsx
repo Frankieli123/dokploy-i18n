@@ -334,25 +334,25 @@ export function ToolCallBlock({
 
 				{expanded && (
 					<div className="mt-2 space-y-2 pt-2 border-t border-border/50">
-						<div className="space-y-1">
-							<span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
-								Arguments
-							</span>
-							<div className="max-w-full rounded bg-muted/50 p-2 font-mono text-[10px] border border-border/50 max-h-[300px] overflow-y-auto">
-								<pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-									{JSON.stringify(parsedArgs, null, 2)}
+							<div className="space-y-1">
+								<span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
+									{t("ai.toolCall.parameters")}
+								</span>
+								<div className="max-w-full rounded bg-muted/50 p-2 font-mono text-[10px] border border-border/50 max-h-[300px] overflow-y-auto">
+									<pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+										{JSON.stringify(parsedArgs, null, 2)}
 								</pre>
 							</div>
 						</div>
 
-						{result && (
-							<div className="space-y-1">
-								<span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
-									Result
-								</span>
-								<div
-									className={cn(
-										"max-w-full rounded p-2 border text-[10px] max-h-[300px] overflow-y-auto",
+							{result && (
+								<div className="space-y-1">
+									<span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
+										{t("ai.toolCall.result")}
+									</span>
+									<div
+										className={cn(
+											"max-w-full rounded p-2 border text-[10px] max-h-[300px] overflow-y-auto",
 										result.success
 											? "bg-emerald-500/5 border-emerald-500/20 text-emerald-900 dark:text-emerald-200"
 											: "bg-destructive/5 border-destructive/20 text-destructive-foreground",
@@ -383,35 +383,41 @@ export function ToolCallBlock({
 					<div className="mt-2 pt-2 border-t border-border/50 space-y-2">
 						{confirmHint.length > 0 && (
 							<div className="rounded-lg border border-amber-500/50 bg-amber-500/5 p-3 text-[11px] text-amber-900 dark:text-amber-200">
-								<div className="flex items-start gap-2">
-									<ShieldAlert className="h-4 w-4 text-amber-500 mt-0.5" />
-									<div className="min-w-0">
-										<p className="font-medium">Confirm required</p>
-										<p className="text-[10px] opacity-90">
-											Set <span className="font-mono">confirm</span> to{" "}
-											<span className="font-mono font-semibold select-all">
-												{confirmHint}
-											</span>
-											(must match exactly).
-										</p>
-										{confirmLiteralsFromResult.length > 1 && (
-											<p className="text-[10px] opacity-90 mt-1">
-												Allowed:{" "}
-												<span className="font-mono">
-													{confirmLiteralsFromResult.join(", ")}
+									<div className="flex items-start gap-2">
+										<ShieldAlert className="h-4 w-4 text-amber-500 mt-0.5" />
+										<div className="min-w-0">
+											<p className="font-medium">
+												{t("ai.toolCall.confirmRequired")}
+											</p>
+											<p className="text-[10px] opacity-90">
+												{t("ai.toolCall.confirmHintPrefix")}
+												<span className="font-mono">confirm</span>
+												{t("ai.toolCall.confirmHintTo")}
+												<span className="font-mono font-semibold select-all">
+													{confirmHint}
 												</span>
+												{t("ai.toolCall.confirmHintSuffix")}
+											</p>
+											{confirmLiteralsFromResult.length > 1 && (
+												<p className="text-[10px] opacity-90 mt-1">
+													{t("ai.toolCall.allowedLiterals")}
+													<span className="font-mono">
+														{confirmLiteralsFromResult.join(", ")}
+													</span>
 											</p>
 										)}
 									</div>
 								</div>
 							</div>
 						)}
-						{exampleParamsFromResult != null && (
-							<div className="rounded-lg border p-3">
-								<h4 className="text-[11px] font-medium mb-2">Example params</h4>
-								<div className="text-[10px] font-mono bg-muted p-2 rounded max-h-[220px] overflow-y-auto">
-									<pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-										{JSON.stringify(exampleParamsFromResult, null, 2)}
+							{exampleParamsFromResult != null && (
+								<div className="rounded-lg border p-3">
+									<h4 className="text-[11px] font-medium mb-2">
+										{t("ai.toolCall.exampleParams")}
+									</h4>
+									<div className="text-[10px] font-mono bg-muted p-2 rounded max-h-[220px] overflow-y-auto">
+										<pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+											{JSON.stringify(exampleParamsFromResult, null, 2)}
 									</pre>
 								</div>
 							</div>

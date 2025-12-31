@@ -167,13 +167,13 @@ export function AIChatDrawer({
 		return [...servers].sort((a, b) => score(a) - score(b));
 	}, [serversForDefaultPick]);
 
-	const currentServerLabel = useMemo(() => {
-		if (serverContext === LOCAL_SERVER_CONTEXT) {
-			return t("server.local", "本机(默认)");
-		}
-		const match = (serversForDefaultPick ?? []).find(
-			(s) => s.serverId === serverContext,
-		);
+		const currentServerLabel = useMemo(() => {
+			if (serverContext === LOCAL_SERVER_CONTEXT) {
+				return t("server.local");
+			}
+			const match = (serversForDefaultPick ?? []).find(
+				(s) => s.serverId === serverContext,
+			);
 		const name = (match as any)?.name;
 		return typeof name === "string" && name.trim().length > 0
 			? name
@@ -345,18 +345,18 @@ export function AIChatDrawer({
 									} catch {}
 								}}
 							>
-								<SelectTrigger
-									className="h-8 w-[120px] sm:w-[140px] mr-0.5"
-									aria-label={t("server.select", "选择服务器")}
-								>
-									<SelectValue placeholder={t("server.select", "选择服务器")}>
-										<span className="truncate">{currentServerLabel}</span>
-									</SelectValue>
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value={LOCAL_SERVER_CONTEXT}>
-										{t("server.local", "本机(默认)")}
-									</SelectItem>
+									<SelectTrigger
+										className="h-8 w-[120px] sm:w-[140px] mr-0.5"
+										aria-label={t("server.select")}
+									>
+										<SelectValue placeholder={t("server.select")}>
+											<span className="truncate">{currentServerLabel}</span>
+										</SelectValue>
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value={LOCAL_SERVER_CONTEXT}>
+											{t("server.local")}
+										</SelectItem>
 									{serversForPicker.map((s) => (
 										<SelectItem key={s.serverId} value={s.serverId}>
 											{(s as any).name || s.serverId}
@@ -548,7 +548,7 @@ function ConversationHistoryDialog(props: {
 			const title =
 				typeof c.title === "string" && c.title.trim().length > 0
 					? c.title
-					: t("ai.chat.untitled", "未命名对话");
+						: t("ai.chat.untitled");
 			return title.toLowerCase().includes(s);
 		});
 	}, [conversations, search, t]);
@@ -560,9 +560,9 @@ function ConversationHistoryDialog(props: {
 					variant="ghost"
 					size="icon"
 					className="h-8 w-8 p-0"
-					title={t("ai.chat.history", "历史对话")}
-					aria-label={t("ai.chat.history", "历史对话")}
-				>
+						title={t("ai.chat.history")}
+						aria-label={t("ai.chat.history")}
+					>
 					<History className="h-4 w-4" />
 				</Button>
 			</DialogTrigger>
@@ -570,11 +570,11 @@ function ConversationHistoryDialog(props: {
 				<DialogHeader className="p-6 pb-2">
 					<DialogTitle className="flex items-center gap-2">
 						<History className="h-5 w-5" />
-						{t("ai.chat.historyTitle", "历史对话")}
-					</DialogTitle>
-					<DialogDescription>
-						{t("ai.chat.historyDescription", "选择一条历史对话以继续。")}
-					</DialogDescription>
+							{t("ai.chat.historyTitle")}
+						</DialogTitle>
+						<DialogDescription>
+							{t("ai.chat.historyDescription")}
+						</DialogDescription>
 					<div className="relative mt-4">
 						<Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
 						<Input
@@ -595,7 +595,7 @@ function ConversationHistoryDialog(props: {
 						) : !conversations || conversations.length === 0 ? (
 							<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
 								<History className="h-10 w-10 opacity-20 mb-2" />
-								<p>{t("ai.chat.noHistory", "暂无历史对话")}</p>
+								<p>{t("ai.chat.noHistory")}</p>
 							</div>
 						) : filteredConversations.length === 0 ? (
 							<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
@@ -609,7 +609,7 @@ function ConversationHistoryDialog(props: {
 								const title =
 									typeof c.title === "string" && c.title.trim().length > 0
 										? c.title
-										: t("ai.chat.untitled", "未命名对话");
+											: t("ai.chat.untitled");
 								const ts =
 									typeof c.updatedAt === "string" && c.updatedAt.length > 0
 										? c.updatedAt

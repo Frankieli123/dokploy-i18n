@@ -43,38 +43,38 @@ export function AgentStatusPanel({
 		<div className="rounded-lg border bg-card text-card-foreground shadow-sm mb-4">
 			<div className="p-4 space-y-4">
 				<div className="flex items-start justify-between">
-					<div className="space-y-1">
-						<h3 className="font-semibold leading-none tracking-tight">
-							{t("ai.agent.statusTitle", "Agent Execution")}
-						</h3>
-						<p className="text-sm text-muted-foreground">{goal}</p>
-					</div>
+						<div className="space-y-1">
+							<h3 className="font-semibold leading-none tracking-tight">
+								{t("ai.agent.statusTitle")}
+							</h3>
+							<p className="text-sm text-muted-foreground">{goal}</p>
+						</div>
 					<div className="flex items-center gap-2">
-						{status === "paused" && onApprove && (
-							<Button size="sm" onClick={onApprove} className="h-8">
-								<Play className="mr-2 h-4 w-4" />
-								{t("common.continue", "Continue")}
-							</Button>
-						)}
+							{status === "paused" && onApprove && (
+								<Button size="sm" onClick={onApprove} className="h-8">
+									<Play className="mr-2 h-4 w-4" />
+									{t("common.continue")}
+								</Button>
+							)}
 						{onCancel && status !== "completed" && status !== "failed" && (
 							<Button
 								size="sm"
 								variant="destructive"
 								onClick={onCancel}
-								className="h-8"
-							>
-								<XCircle className="mr-2 h-4 w-4" />
-								{t("common.cancel", "Cancel")}
-							</Button>
-						)}
+									className="h-8"
+								>
+									<XCircle className="mr-2 h-4 w-4" />
+									{t("common.cancel")}
+								</Button>
+							)}
 					</div>
 				</div>
 
 				<div className="space-y-2">
-					<div className="flex justify-between text-xs text-muted-foreground">
-						<span>{t("ai.agent.progress", "Progress")}</span>
-						<span>{Math.round(progress)}%</span>
-					</div>
+						<div className="flex justify-between text-xs text-muted-foreground">
+							<span>{t("ai.agent.progress")}</span>
+							<span>{Math.round(progress)}%</span>
+						</div>
 					<Progress value={progress} className="h-2" />
 				</div>
 

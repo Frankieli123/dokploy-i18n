@@ -113,12 +113,12 @@ export function ResourceCard({ type, resource, actions }: ResourceCardProps) {
 				<div className="flex items-center justify-between mt-4">
 					{resource.url ? (
 						<Link href={resource.url} passHref>
-							<Button variant="outline" size="sm" className="h-8">
-								<ExternalLink className="mr-2 h-3 w-3" />
-								{t("common.view", "View")}
-							</Button>
-						</Link>
-					) : (
+								<Button variant="outline" size="sm" className="h-8">
+									<ExternalLink className="mr-2 h-3 w-3" />
+									{t("common.view")}
+								</Button>
+							</Link>
+						) : (
 						<div />
 					)}
 
