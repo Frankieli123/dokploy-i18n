@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ToolCallBlock } from "./tool-call-block";
 import type { ToolCall } from "./use-chat";
@@ -83,6 +84,19 @@ export function ToolGroup({
 			.map((x) => x.tc);
 	}, [toolCalls, onApproveToolCall, onRejectToolCall]);
 
+	const pendingHeaderAction = useMemo(() => {
+		if (!onApproveToolCall || !onRejectToolCall) return null;
+		for (const tc of orderedToolCalls) {
+			const effectiveExecutionId = getEffectiveExecutionId(tc);
+			const status =
+				tc.status ?? (effectiveExecutionId.length > 0 ? "pending" : "completed");
+			if (status !== "pending") continue;
+			if (effectiveExecutionId.length === 0) continue;
+			return { toolCallId: tc.id };
+		}
+		return null;
+	}, [onApproveToolCall, onRejectToolCall, orderedToolCalls]);
+
 	const isExecuting = summary.executing > 0;
 	const isPending = summary.pending > 0;
 	const hasFailed = summary.failed > 0;
@@ -143,6 +157,34 @@ export function ToolGroup({
 					</div>
 				</div>
 				<div className="flex items-center gap-2">
+					{pendingHeaderAction && (
+						<div
+							className="flex items-center gap-1"
+							onClick={(e) => e.stopPropagation()}
+						>
+							<Button
+								size="sm"
+								className="h-6 px-2 text-[10px]"
+								onClick={(e) => {
+									e.stopPropagation();
+									onApproveToolCall?.(pendingHeaderAction.toolCallId);
+								}}
+							>
+								{t("ai.toolCall.reviewApprove")}
+							</Button>
+							<Button
+								size="sm"
+								variant="outline"
+								className="h-6 px-2 text-[10px]"
+								onClick={(e) => {
+									e.stopPropagation();
+									onRejectToolCall?.(pendingHeaderAction.toolCallId);
+								}}
+							>
+								{t("ai.toolCall.reject")}
+							</Button>
+						</div>
+					)}
 					{isPending && (
 						<span className="flex h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
 					)}

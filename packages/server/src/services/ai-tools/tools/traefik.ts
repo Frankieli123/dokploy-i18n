@@ -453,6 +453,142 @@ const writeMainTraefikConfig: Tool<
 	},
 };
 
+const writeTraefikDynamicConfig: Tool<
+	{ serverId?: string; fileName: string; content: string; confirm: string },
+	{ configPath: string; backupPath?: string }
+> = {
+	name: "traefik_dynamic_config_write",
+	description:
+		"Write a Traefik dynamic configuration file under the Traefik dynamic directory. Creates a backup before overwriting.",
+	category: "server",
+	aliases: [
+		"write traefik dynamic config",
+		"update traefik dynamic yml",
+		"edit traefik dynamic config",
+		"写入Traefik动态配置",
+		"修改Traefik动态配置",
+	],
+	tags: ["traefik", "dynamic", "config", "write", "update", "配置", "写入", "修改"],
+	parameters: z
+		.object({
+			serverId: z
+				.string()
+				.optional()
+				.describe("Server ID (defaults to current context)"),
+			fileName: z
+				.string()
+				.min(1)
+				.describe(
+					'Target filename inside the Traefik dynamic directory (no subdirectories), e.g. "dokploy.yml" or "git-proxy.yml"',
+				),
+			content: z.string().min(1).describe("New dynamic config content (YAML)"),
+			confirm: z
+				.literal("WRITE_TRAEFIK_DYNAMIC")
+				.describe("Confirmation token: WRITE_TRAEFIK_DYNAMIC"),
+		})
+		.superRefine((v, ctx2) => {
+			const name = v.fileName.trim();
+			if (name.length === 0) {
+				ctx2.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "fileName is required",
+				});
+				return;
+			}
+			if (name.includes("/") || name.includes("\\")) {
+				ctx2.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "fileName must not include directory separators",
+				});
+			}
+			const ext = path.extname(name).toLowerCase();
+			if (ext !== ".yml" && ext !== ".yaml") {
+				ctx2.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "Only .yml or .yaml files are allowed",
+				});
+			}
+			if (name.toLowerCase() === "acme.json") {
+				ctx2.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "Writing acme.json is not allowed",
+				});
+			}
+		}),
+	riskLevel: "high",
+	requiresApproval: true,
+	execute: async (params, ctx) => {
+		const serverId = params.serverId ?? ctx.serverId;
+		const hasAccess = await canAccessToTraefikFiles(ctx.userId, ctx.organizationId);
+		if (!hasAccess) {
+			return { success: false, message: "Permission denied" };
+		}
+
+		if (serverId) {
+			const server = await findServerById(serverId);
+			if (server.organizationId !== ctx.organizationId) {
+				return { success: false, message: "Server access denied" };
+			}
+		}
+
+		try {
+			parseYaml(params.content);
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			return {
+				success: false,
+				message: `Invalid YAML: ${msg}`,
+			};
+		}
+
+		const fileName = params.fileName.trim();
+		const traefikDynamic = paths(!!serverId).DYNAMIC_TRAEFIK_PATH;
+		const { rootResolved, targetResolved } = resolveTraefikPath(
+			traefikDynamic,
+			fileName,
+		);
+
+		const configPath = targetResolved;
+		const backupPath = path.join(
+			rootResolved,
+			`${path.basename(configPath)}.bak.${Date.now()}`,
+		);
+		let backupCreated = false;
+
+		try {
+			const current = await readConfigInPath(configPath, serverId);
+			if (current !== null) {
+				await writeTraefikConfigInPath(backupPath, current, serverId);
+				const backupContent = await readConfigInPath(backupPath, serverId);
+				backupCreated = backupContent !== null;
+			}
+		} catch {
+			// ignore backup errors
+		}
+
+		await writeTraefikConfigInPath(configPath, params.content, serverId);
+		const after = await readConfigInPath(configPath, serverId);
+		const normalizedAfter = (after ?? "").replace(/\r\n/g, "\n");
+		const normalizedExpected = params.content.replace(/\r\n/g, "\n");
+		if (!after || normalizedAfter !== normalizedExpected) {
+			return {
+				success: false,
+				message: "Failed to write Traefik dynamic config file",
+			};
+		}
+
+		const didBackup = backupCreated || (!serverId && existsSync(backupPath));
+		return {
+			success: true,
+			message: "Traefik dynamic config updated successfully",
+			data: {
+				configPath,
+				...(didBackup ? { backupPath } : {}),
+			},
+		};
+	},
+};
+
 const reloadTraefik: Tool<{ serverId?: string }, { reloaded: boolean }> = {
 	name: "traefik_reload",
 	description:
@@ -881,6 +1017,7 @@ export function registerTraefikTools() {
 	toolRegistry.register(readTraefikMiddlewares);
 	toolRegistry.register(traefikAcmeStatus);
 	toolRegistry.register(writeMainTraefikConfig);
+	toolRegistry.register(writeTraefikDynamicConfig);
 	toolRegistry.register(reloadTraefik);
 	toolRegistry.register(traefikAcmeRetry);
 	toolRegistry.register(traefikAcmeLogTail);

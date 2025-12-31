@@ -890,32 +890,19 @@ export const suggestVariants = async ({
 					}),
 				),
 			}),
-			prompt: `
-        Act as advanced DevOps engineer and generate a list of open source projects what can cover users needs(up to 3 items).
-        
-        Return your response as a JSON object with the following structure:
-        {
-          "suggestions": [
-            {
-              "id": "project-slug",
-              "name": "Project Name",
-              "shortDescription": "Brief one-line description",
-              "description": "Detailed description"
-            }
-          ]
-        }
-        
-        Important rules for the response:
-        1. Use slug format for the id field (lowercase, hyphenated)
-        2. The description field should ONLY contain a plain text description of the project, its features, and use cases
-        3. Do NOT include any code snippets, configuration examples, or installation instructions in the description
-        4. The shortDescription should be a single-line summary focusing on the main technologies
-        5. All projects should be installable in docker and have docker compose support
-        
-        User wants to create a new project with the following details:
-        
-        ${input}
-      `,
+			prompt: `Suggest up to 3 open-source projects that match the user's needs.
+
+Return JSON only:
+{"suggestions":[{"id":"project-slug","name":"Project Name","shortDescription":"1-line summary","description":"Plain text description"}]}
+
+Rules:
+- id: lowercase slug with hyphens
+- shortDescription: single line, main technologies
+- description: plain text only (no code/config/install steps)
+- Must be docker + docker-compose deployable
+
+User request:
+${input}`,
 		});
 
 		if (object?.suggestions?.length) {
@@ -949,61 +936,19 @@ export const suggestVariants = async ({
 								)
 								.optional(),
 						}),
-						prompt: `
-              Act as advanced DevOps engineer and generate docker compose with environment variables and domain configurations needed to install the following project.
-              
-              Return your response as a JSON object with this structure:
-              {
-                "dockerCompose": "yaml string here",
-                "envVariables": [{"name": "VAR_NAME", "value": "example_value"}],
-                "domains": [{"host": "domain.com", "port": 3000, "serviceName": "service"}],
-                "configFiles": [{"content": "file content", "filePath": "path/to/file"}]
-              }
-              
-              Note: configFiles is optional - only include it if configuration files are absolutely required.
-              
-              Follow these rules:
+						prompt: `Generate a docker-compose.yml plus env vars and domain configs to install the project.
 
-              Docker Compose Rules:
-              1. Use placeholder like \${VARIABLE_NAME-default} for generated variables in the docker-compose.yml
-              2. Use complex values for passwords/secrets variables
-              3. Don't set container_name field in services
-              4. Don't set version field in the docker compose
-              5. Don't set ports like 'ports: 3000:3000', use 'ports: "3000"' instead
-              6. If a service depends on a database or other service, INCLUDE that service in the docker-compose
-              7. Make sure all required services are defined in the docker-compose
+Return JSON only:
+{"dockerCompose":"<yaml>","envVariables":[{"name":"VAR","value":"example"}],"domains":[{"host":"domain","port":3000,"serviceName":"service"}],"configFiles":[{"content":"...","filePath":"..."}]}
 
-			  Volume Mounting and Configuration Rules:
-              1. DO NOT create configuration files unless the service CANNOT work without them
-              2. Most services can work with just environment variables - USE THEM FIRST
-              3. Ask yourself: "Can this be configured with an environment variable instead?"
-              4. If and ONLY IF a config file is absolutely required:
-                 - Keep it minimal with only critical settings
-                 - Use "../files/" prefix for all mounts
-                 - Format: "../files/folder:/container/path"
-              5. DO NOT add configuration files for:
-                 - Default configurations that work out of the box
-                 - Settings that can be handled by environment variables
-                 - Proxy or routing configurations (these are handled elsewhere)
+Rules:
+- dockerCompose: no "version", no "container_name"; use ports like "3000" (no host:container); include all required dependency services.
+- Variables: in dockerCompose use \${VAR-default}; in envVariables use concrete example values (no \${...}); list every referenced VAR exactly once.
+- configFiles: omit unless strictly required; prefer env vars; if used, keep minimal and mount from ../files/<folder>.
+- domains: for each public service add {host:"{service}-{hex3}-${ip ? ip.replaceAll(".", "-") : ""}.traefik.me", port:<internal>, serviceName:<service>}.
 
-			  Environment Variables Rules:
-              1. For the envVariables array, provide ACTUAL example values, not placeholders
-              2. Use realistic example values (e.g., "admin@example.com" for emails, "mypassword123" for passwords)
-			  3. DO NOT use \${VARIABLE_NAME-default} syntax in the envVariables values
-              4. ONLY include environment variables that are actually used in the docker-compose
-              5. Every environment variable referenced in the docker-compose MUST have a corresponding entry in envVariables
-              6. Do not include environment variables for services that don't exist in the docker-compose
-                     
-              For each service that needs to be exposed to the internet:
-              1. Define a domain configuration with:
-                - host: the domain name for the service in format: {service-name}-{random-3-chars-hex}-${ip ? ip.replaceAll(".", "-") : ""}.traefik.me
-                - port: the internal port the service runs on
-                - serviceName: the name of the service in the docker-compose
-              2. Make sure the service is properly configured to work with the specified port
-              
-              Project details:
-              ${suggestion?.description}
-            `,
+Project details:
+${suggestion?.description}`,
 					});
 					if (!!docker && !!docker.dockerCompose) {
 						result.push({
@@ -1234,7 +1179,20 @@ const scheduleConversationSummaryUpdate = (params: {
 
 			const summaryText = await generatePromptText({
 				model: params.model as any,
-				prompt: `Update the conversation memory summary for the Dokploy AI assistant.\n\nRules:\n- Keep it short (max 10 lines).\n- Capture stable facts, user preferences, selected project/server context, and decisions.\n- Do NOT include secrets (API keys, tokens, passwords).\n- Write in the same language as the conversation (if most lines are Chinese, write Chinese).\n\nExisting summary:\n${existingSummary || "(none)"}\n\nRecent conversation (most recent last):\n${transcript}\n\nReturn ONLY the updated summary.`,
+				prompt: `Update the conversation memory summary.
+
+Rules:
+- Output max 10 lines, same language as the conversation.
+- Keep stable facts, user preferences, chosen project/server context, and decisions.
+- No secrets.
+
+Existing summary:
+${existingSummary || "(none)"}
+
+Recent conversation (most recent last):
+${transcript}
+
+Return ONLY the updated summary.`,
 				maxOutputTokens: 220,
 			});
 
@@ -1524,18 +1482,13 @@ async function generateToolOutcomeSummary(params: {
 			? params.streamError.trim()
 			: "";
 
-	const prompt = `You are Dokploy AI Assistant.
-
-Write the final user-facing response for the turn based on the user's request and the tool execution details.
+	const prompt = `Write the final user-facing reply for this turn using the user request and tool calls/results.
 
 Rules:
-- Use the same language as the user's request.
-- Be concise (3-8 lines).
-- If any tool result indicates pending approval (e.g., status = "pending_approval"), clearly ask the user to approve/reject.
-- If any tool failed (success=false or contains error), explain what failed and what the user can do next.
-- If tools succeeded, confirm completion and summarize the outcome.
-- Do not include secrets.
-- Output plain text only.
+- Same language as the user. Plain text only. 3-8 lines. No secrets.
+- If any result is pending approval (status="pending_approval"), ask the user to approve/reject.
+- If any tool failed (success=false or has error), explain what failed and the next step.
+- Otherwise, confirm completion and summarize.
 
 User request:
 ${safeTruncateString(params.userMessage, 1200)}
@@ -1548,7 +1501,7 @@ ${toolResultsText || "(none)"}
 
 ${streamErrorText ? `Model streaming error (non-fatal):\n${safeTruncateString(streamErrorText, 1200)}\n` : ""}
 
-Return ONLY the final response.`;
+Return ONLY the reply.`;
 
 	const text = await generatePromptText({
 		model: params.model,
@@ -1854,7 +1807,7 @@ export const chat = async ({
 		}),
 		tool_call: tool({
 			description:
-				"Execute a tool by name with params. Enforces validation and approval. Use tool_describe first if unsure about parameters.",
+				"Create a tool execution by name + params. Enforces validation. If the target tool requires approval, this returns pending_approval and does NOT execute; you must still provide all required params (including confirm literals). Use tool_describe first if unsure.",
 			inputSchema: z.object({
 				toolName: z.string().min(1).describe("Exact tool name to execute"),
 				params: z
@@ -1874,7 +1827,8 @@ export const chat = async ({
 				if (!validation.success) {
 					return {
 						success: false,
-						message: "Invalid parameters",
+						message:
+							"Invalid parameters (use tool_describe and provide all required fields; for approval-required tools, include confirm literals in the tool_call params)",
 						error: validation.error.message,
 						data: {
 							toolName: t.name,
@@ -2098,7 +2052,7 @@ export const chat = async ({
 		try {
 			const titleText = await generatePromptText({
 				model,
-				prompt: `Generate a short title (max 50 chars, no quotes) for this conversation. User message: "${message}". Reply with ONLY the title, nothing else.`,
+				prompt: `Generate a short conversation title (<=50 chars, no quotes) from this user message: "${message}". Return ONLY the title.`,
 				maxOutputTokens: 60,
 			});
 			const title = titleText.trim().slice(0, 50);
@@ -2331,7 +2285,7 @@ export const chatStream = async (
 		}),
 		tool_call: tool({
 			description:
-				"Execute a tool by name with params. Enforces validation and approval. Use tool_describe first if unsure about parameters.",
+				"Create a tool execution by name + params. Enforces validation. If the target tool requires approval, this returns pending_approval and does NOT execute; you must still provide all required params (including confirm literals). Use tool_describe first if unsure.",
 			inputSchema: z.object({
 				toolName: z.string().min(1).describe("Exact tool name to execute"),
 				params: z
@@ -2351,7 +2305,8 @@ export const chatStream = async (
 				if (!validation.success) {
 					return {
 						success: false,
-						message: "Invalid parameters",
+						message:
+							"Invalid parameters (use tool_describe and provide all required fields; for approval-required tools, include confirm literals in the tool_call params)",
 						error: validation.error.message,
 						data: {
 							toolName: t.name,
@@ -2676,7 +2631,7 @@ export const chatStream = async (
 			try {
 				const titleText = await generatePromptText({
 					model,
-					prompt: `Generate a short title (max 50 chars, no quotes) for this conversation. User message: "${message}". Reply with ONLY the title, nothing else.`,
+					prompt: `Generate a short conversation title (<=50 chars, no quotes) from this user message: "${message}". Return ONLY the title.`,
 					maxOutputTokens: 60,
 				});
 				const title = titleText.trim().slice(0, 50);
@@ -2725,61 +2680,21 @@ function buildSystemPrompt(
 		.join("\n");
 
 	const guidelines = `Guidelines:
-- Be concise and helpful
-- You can access ALL platform capabilities through a tool catalog.
-- Workflow:
-  - Use tool_suggest to get a quick shortlist of likely relevant tools.
-  - Use tool_search to find the best tool(s) for the user's intent.
-  - Use tool_describe to see parameter hints for the chosen tool.
-  - Use tool_call to create a tool execution by name.
-  - If you already know the exact toolName and params, skip tool_suggest/tool_search/tool_describe and call tool_call directly.
-- Approval workflow (critical):
-  - If an action requires approval, you MUST call tool_call first to create a pending approval request (status = "pending_approval"). Do NOT ask for approval in natural language without a tool_call.
-  - After you receive pending_approval, tell the user to approve/reject using the UI buttons (or by typing "批准/拒绝").
-  - After approval, continue with the remaining steps (the platform may auto-resume execution).
-- Context reuse:
-  - If recent tool results already include what you need, reuse them instead of re-running read-only tools.
-- Server context:
-  - In self-hosted mode, if serverId is not provided, default to the local Dokploy host. Only ask for/require serverId when the user explicitly wants to target a remote server.
-  - In cloud mode, serverId is required for server operations.
-- For complex requests (especially GitHub deployments and debugging), always propose at least two viable plans and ask the user to choose one before any write action. The plans should help the user decide key choices like naming (project/appName), deployment method (application vs compose), repo/branch, and buildPath/composePath.
-- Naming strategy:
-  - If the user does not provide names, auto-generate them from the repository (owner/repo) without asking.
-  - Defaults:
-    - project name: repo name
-    - application display name / compose display name: repo name
-    - application appName / compose appName: repo name + short suffix (e.g., "repo-xxxx") to reduce collisions
-  - If a create call fails due to name conflicts, retry once with a different suffix. Only ask the user if conflicts persist or if they have a naming preference.
-- GitHub repository code changes (optional):
-  - If the fix requires changing repository code, first ask the user whether they want you to create a PR.
-  - If the user agrees, then use github_file_get to read the current file content, show a unified diff and explain why, and only then call github_branch_create/github_file_upsert/github_pull_request_create (approval required).
-- Deployment debugging workflow:
-  - Use deployment_list and deployment_log_tail to retrieve the failing deployment and its logs.
-  - Prefer fixing Dokploy configuration first (e.g., application_update_github_source/compose_update_github_source).
-  - If the fix requires repository code changes, ask the user whether they want a PR.
-  - If you cannot fix the issue, clearly explain the root cause, what evidence you used (log excerpts), and what information or access is missing.
-- Do NOT invent tool names. Always use tool_search/tool_describe first if unsure.
-- For any request that can change platform state (create/deploy/restart/delete/update), first restate the user's intent in one sentence, then list any missing required details, then proceed.
-- If the user's request is ambiguous, do NOT assume. Ask focused clarifying questions. Prefer asking 1-3 questions max per turn.
-- If the user says “直接执行/用默认/别问/少问”, proceed with safe defaults and state them briefly; ask at most 1 blocking question only if required to avoid harm.
-- Never guess IDs (projectId/serverId/environmentId/applicationId/etc). Use *find*/*list* tools to locate candidates, then ask the user to confirm when ambiguous.
-- Do not ask the user for information you can retrieve via tools.
-- Prefer read-only tools first (list/get/status/check/find) to understand the current state.
-- For low-risk operations (list, get, status, check, find), execute immediately.
-- For medium/high risk operations:
-  - If requiresApproval=false, explain what will happen BEFORE calling tool_call (it will execute immediately).
-  - If requiresApproval=true, you may call tool_call immediately to create a pending approval request (this does NOT execute yet), then ask the user to approve/reject.
-- Always report the results of tool executions clearly
-- If you do not have the necessary tool in the Available Tools list, do NOT claim the platform cannot do it. Instead: explain that the current toolset for this request is insufficient, state what tool/category is missing, and suggest the next best step (e.g., use list/find tools, or ask an admin to enable the capability).
-- Database provisioning flow:
-  - If user wants to deploy a database, first identify the target project/environment using tools (project_list/project_find, environment_list/environment_find).
-  - If the user asks for PostgreSQL 17, prefer docker image "postgres:17".
-  - Only call create/deploy tools after you have the environmentId and the user has explicitly confirmed the exact action.`;
+- Be concise; ask at most 1-3 focused questions only if blocking.
+- Tools: if you know the exact tool + params, call tool_call directly; otherwise use tool_suggest/tool_search/tool_describe, then tool_call.
+ - Approvals (critical): if requires approval, you MUST create a tool_call that returns status="pending_approval" (do not ask in natural language without a tool_call). Include ALL required params (including any confirm literal); do NOT send empty params as a placeholder. Tell the user to approve/reject in the UI (or type "批准/拒绝"). After the first approval in this conversation, assume auto-approval may be enabled and keep proceeding unless the user disables it.
+- Context: reuse recent tool results; do not re-run the same read-only checks/config reads unnecessarily.
+- ServerId: self-hosted defaults to the local Dokploy host when serverId is missing; only require serverId for remote targets. Cloud mode requires serverId for server operations.
+- Safety: run low-risk read tools immediately; for medium/high-risk actions, explain before executing; if approval is required, create the pending_approval tool_call first.
+- Accuracy: never invent tool names; never guess IDs. Use list/find/get tools; ask the user to confirm only when ambiguous.
+- Defaults: if the user says "直接执行/用默认/别问/少问", proceed with safe defaults and ask at most 1 blocking question to avoid harm.
+- Results: clearly report tool outcomes; if the toolset is insufficient, say what's missing and the next best step.
+- Repo/code changes: if you must change a Git repo, ask whether to create a PR; read files first and show a unified diff before writing (approval required).
+- Deploy/debug: start with deployment status/logs; explain root cause and evidence if it cannot be fixed.
+- DB deploy: identify project/environment first; for PostgreSQL 17 prefer image "postgres:17".`;
 
-	return `You are Dokploy AI Assistant, an expert DevOps assistant for the Dokploy PaaS platform.
-
-You help users manage their applications, databases, and infrastructure through natural language.
-You have access to tools that can execute real operations on the platform.
+	return `You are Dokploy AI Assistant (DevOps for the Dokploy PaaS).
+You can call tools that perform real operations on the platform.
 
 Current Context:${context || " General conversation"}
 
