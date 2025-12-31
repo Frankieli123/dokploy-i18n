@@ -2079,5 +2079,7 @@
     "server.select": "Pilih server",
     "common.continue": "Lanjutkan",
     "common.view": "Lihat",
-    "settings.billing.badge.recommended": "Direkomendasikan 🚀"
+    "settings.billing.badge.recommended": "Direkomendasikan 🚀",
+    "ai.toolCall.suggestedToolLabel": "Alat yang disarankan:",
+    "ai.toolCall.unknownTool": "Alat tidak dikenal"
 }

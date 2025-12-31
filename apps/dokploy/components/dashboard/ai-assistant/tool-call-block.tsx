@@ -88,6 +88,10 @@ const toolIcons: Record<string, typeof Wrench> = {
 	user: User,
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function getToolIcon(toolName: string) {
 	const normalized = String(toolName ?? "")
 		.trim()
@@ -157,7 +161,6 @@ export function ToolCallBlock({
 	const [expanded, setExpanded] = useState(false);
 
 	const Icon = getToolIcon(toolCall.function.name);
-	const riskColor = getRiskColor(toolCall.function.name);
 
 	const parsedArgs = (() => {
 		try {
@@ -166,6 +169,49 @@ export function ToolCallBlock({
 			return toolCall.function.arguments;
 		}
 	})();
+
+	const unknownToolInfo = (() => {
+		if (!result || result.success !== false) return null;
+		const errorText = typeof result.error === "string" ? result.error : "";
+		const messageText = typeof result.message === "string" ? result.message : "";
+		const looksUnknownTool =
+			errorText.toLowerCase().startsWith("unknown tool:") ||
+			(messageText.toLowerCase().includes("tool") &&
+				messageText.toLowerCase().includes("not found"));
+		if (!looksUnknownTool) return null;
+
+		const data = isRecord(result.data) ? result.data : undefined;
+		const nextCall = data && isRecord(data.nextCall) ? data.nextCall : undefined;
+		const suggestedToolName =
+			nextCall && typeof nextCall.toolName === "string" ? nextCall.toolName : "";
+		const suggestedParams = nextCall ? nextCall.params : undefined;
+
+		const suggestionsRaw =
+			data && Array.isArray(data.suggestions) ? data.suggestions : [];
+		const suggestions = suggestionsRaw
+			.filter(isRecord)
+			.map((s) => ({
+				name: typeof s.name === "string" ? s.name : "",
+				description: typeof s.description === "string" ? s.description : "",
+				riskLevel: typeof s.riskLevel === "string" ? s.riskLevel : "",
+				requiresApproval:
+					typeof s.requiresApproval === "boolean" ? s.requiresApproval : false,
+			}))
+			.filter((s) => s.name.length > 0);
+
+		return {
+			suggestedToolName,
+			suggestedParams,
+			suggestions,
+			errorText,
+			messageText,
+		};
+	})();
+
+	const isUnknownToolError = !!unknownToolInfo;
+	const riskColor = isUnknownToolError
+		? "border-amber-500/50 bg-amber-500/5"
+		: getRiskColor(toolCall.function.name);
 
 	const statusConfig = {
 		pending: {
@@ -200,17 +246,21 @@ export function ToolCallBlock({
 		},
 	};
 
-	const StatusIcon = statusConfig[status].icon;
+	const StatusIcon = isUnknownToolError ? ShieldAlert : statusConfig[status].icon;
+	const statusColor = isUnknownToolError
+		? "text-amber-500"
+		: statusConfig[status].color;
 	const isDestructive =
-		toolCall.function.name.includes("delete") ||
-		toolCall.function.name.includes("remove") ||
-		toolCall.function.name.includes("destroy") ||
-		toolCall.function.name.includes("purge") ||
-		toolCall.function.name.includes("uninstall") ||
-		toolCall.function.name.includes("reset") ||
-		toolCall.function.name.includes("rotate") ||
-		toolCall.function.name.includes("revoke") ||
-		toolCall.function.name.includes("restore");
+		!isUnknownToolError &&
+		(toolCall.function.name.includes("delete") ||
+			toolCall.function.name.includes("remove") ||
+			toolCall.function.name.includes("destroy") ||
+			toolCall.function.name.includes("purge") ||
+			toolCall.function.name.includes("uninstall") ||
+			toolCall.function.name.includes("reset") ||
+			toolCall.function.name.includes("rotate") ||
+			toolCall.function.name.includes("revoke") ||
+			toolCall.function.name.includes("restore"));
 	const confirmLiteral = getConfirmLiteral(parsedArgs);
 	const confirmLiteralsFromResult = (() => {
 		if (
@@ -248,6 +298,13 @@ export function ToolCallBlock({
 			return "";
 		}
 		if (!result) return "";
+		if (isUnknownToolError) {
+			const suggested = unknownToolInfo?.suggestedToolName ?? "";
+			if (suggested.trim().length > 0) {
+				return `${result.message || result.error || t("ai.toolCall.unknownTool")} → ${suggested}`;
+			}
+			return result.message || result.error || "";
+		}
 		if (!result.success) {
 			return result.message || result.error || "";
 		}
@@ -298,7 +355,7 @@ export function ToolCallBlock({
 							<span
 								className={cn(
 									"flex items-center gap-1 font-medium text-[10px] shrink-0 max-w-[45%] overflow-hidden",
-									statusConfig[status].color,
+									statusColor,
 								)}
 							>
 								<StatusIcon
@@ -353,9 +410,11 @@ export function ToolCallBlock({
 									<div
 										className={cn(
 											"max-w-full rounded p-2 border text-[10px] max-h-[300px] overflow-y-auto",
-										result.success
-											? "bg-emerald-500/5 border-emerald-500/20 text-emerald-900 dark:text-emerald-200"
-											: "bg-destructive/5 border-destructive/20 text-destructive-foreground",
+										isUnknownToolError
+											? "bg-amber-500/5 border-amber-500/20 text-amber-900 dark:text-amber-200"
+											: result.success
+												? "bg-emerald-500/5 border-emerald-500/20 text-emerald-900 dark:text-emerald-200"
+												: "bg-destructive/5 border-destructive/20 text-destructive-foreground",
 									)}
 								>
 									{result.message && (
@@ -363,13 +422,29 @@ export function ToolCallBlock({
 											{result.message}
 										</p>
 									)}
+									{isUnknownToolError &&
+										unknownToolInfo?.suggestedToolName.trim().length > 0 && (
+											<p className="font-medium mb-1 break-words">
+												{t("ai.toolCall.suggestedToolLabel")}{" "}
+												<span className="font-mono">
+													{unknownToolInfo.suggestedToolName}
+												</span>
+											</p>
+										)}
 									{result.data != null && (
 										<pre className="font-mono opacity-90 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
 											{JSON.stringify(result.data, null, 2)}
 										</pre>
 									)}
 									{result.error && (
-										<p className="font-medium text-destructive break-words">
+										<p
+											className={cn(
+												"font-medium break-words",
+												isUnknownToolError
+													? "text-amber-700 dark:text-amber-200"
+													: "text-destructive",
+											)}
+										>
 											{result.error}
 										</p>
 									)}

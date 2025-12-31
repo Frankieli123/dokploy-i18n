@@ -2070,8 +2070,8 @@
     "ai.toolCall.toolCountOne": "ツール {{count}} 件",
     "ai.toolCall.toolCountMany": "ツール {{count}} 件",
     "ai.toolCall.confirmRequired": "確認が必要です",
-	"ai.toolCall.confirmHintPrefix": "「",
-	"ai.toolCall.confirmHintTo": "」を ",
+    "ai.toolCall.confirmHintPrefix": "「",
+    "ai.toolCall.confirmHintTo": "」を ",
     "ai.toolCall.confirmHintSuffix": " に設定してください（完全一致が必要です）。",
     "ai.toolCall.allowedLiterals": "許可: ",
     "ai.toolCall.exampleParams": "パラメータ例",
@@ -2079,5 +2079,7 @@
     "server.select": "サーバーを選択",
     "common.continue": "続行",
     "common.view": "表示",
-    "settings.billing.badge.recommended": "おすすめ 🚀"
+    "settings.billing.badge.recommended": "おすすめ 🚀",
+    "ai.toolCall.suggestedToolLabel": "推奨ツール:",
+    "ai.toolCall.unknownTool": "不明なツール"
 }

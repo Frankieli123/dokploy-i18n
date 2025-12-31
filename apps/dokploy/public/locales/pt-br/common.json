@@ -2079,5 +2079,7 @@
     "server.select": "Selecionar servidor",
     "common.continue": "Continuar",
     "common.view": "Ver",
-    "settings.billing.badge.recommended": "Recomendado 🚀"
+    "settings.billing.badge.recommended": "Recomendado 🚀",
+    "ai.toolCall.suggestedToolLabel": "Ferramenta sugerida:",
+    "ai.toolCall.unknownTool": "Ferramenta desconhecida"
 }

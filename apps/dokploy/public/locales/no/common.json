@@ -2079,5 +2079,7 @@
     "server.select": "Velg server",
     "common.continue": "Fortsett",
     "common.view": "Vis",
-    "settings.billing.badge.recommended": "Anbefalt 🚀"
+    "settings.billing.badge.recommended": "Anbefalt 🚀",
+    "ai.toolCall.suggestedToolLabel": "Foreslått verktøy:",
+    "ai.toolCall.unknownTool": "Ukjent verktøy"
 }

@@ -2079,5 +2079,7 @@
     "ai.agent.goalLabel": "代理目标",
     "ai.agent.statusTitle": "代理执行",
     "ai.agent.progress": "进度",
-    "ai.chat.messagesAriaLabel": "聊天消息"
+    "ai.chat.messagesAriaLabel": "聊天消息",
+    "ai.toolCall.suggestedToolLabel": "推荐工具：",
+    "ai.toolCall.unknownTool": "未知工具"
 }

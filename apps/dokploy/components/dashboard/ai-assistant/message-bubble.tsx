@@ -190,7 +190,7 @@ export function MessageBubble({
 								})();
 								const status =
 									toolCall.status ??
-									(effectiveExecutionId.length > 0 ? "pending" : "completed");
+									(effectiveExecutionId.length > 0 ? "executing" : "completed");
 								const canApprove =
 									status === "pending" &&
 									effectiveExecutionId.length > 0 &&

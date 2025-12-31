@@ -2070,7 +2070,7 @@
     "ai.toolCall.toolCountOne": "{{count}} ابزار",
     "ai.toolCall.toolCountMany": "{{count}} ابزار",
     "ai.toolCall.confirmRequired": "نیاز به تأیید",
-	"ai.toolCall.confirmHintPrefix": "مقدار ",
+    "ai.toolCall.confirmHintPrefix": "مقدار ",
     "ai.toolCall.confirmHintTo": " را روی ",
     "ai.toolCall.confirmHintSuffix": " تنظیم کنید (باید دقیقاً مطابق باشد).",
     "ai.toolCall.allowedLiterals": "مجاز: ",
@@ -2079,5 +2079,7 @@
     "server.select": "انتخاب سرور",
     "common.continue": "ادامه",
     "common.view": "مشاهده",
-    "settings.billing.badge.recommended": "پیشنهادی 🚀"
+    "settings.billing.badge.recommended": "پیشنهادی 🚀",
+    "ai.toolCall.suggestedToolLabel": "ابزار پیشنهادی:",
+    "ai.toolCall.unknownTool": "ابزار ناشناخته"
 }

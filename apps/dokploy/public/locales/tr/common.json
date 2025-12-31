@@ -2070,7 +2070,7 @@
     "ai.toolCall.toolCountOne": "{{count}} araç",
     "ai.toolCall.toolCountMany": "{{count}} araç",
     "ai.toolCall.confirmRequired": "Onay gerekli",
-	"ai.toolCall.confirmHintPrefix": " ",
+    "ai.toolCall.confirmHintPrefix": " ",
     "ai.toolCall.confirmHintTo": " değerini ",
     "ai.toolCall.confirmHintSuffix": " olarak ayarlayın (tam eşleşmeli).",
     "ai.toolCall.allowedLiterals": "İzin verilenler: ",
@@ -2079,5 +2079,7 @@
     "server.select": "Sunucu seç",
     "common.continue": "Devam et",
     "common.view": "Görüntüle",
-    "settings.billing.badge.recommended": "Önerilen 🚀"
+    "settings.billing.badge.recommended": "Önerilen 🚀",
+    "ai.toolCall.suggestedToolLabel": "Önerilen araç:",
+    "ai.toolCall.unknownTool": "Bilinmeyen araç"
 }

@@ -30,6 +30,25 @@ export function ToolGroup({
 	const { t } = useTranslation("common");
 	const [isOpen, setIsOpen] = useState(false);
 
+	const isUnknownToolFailure = (tc: ToolCall) => {
+		const errorText = tc.result?.error;
+		const messageText = tc.result?.message;
+		if (
+			typeof errorText === "string" &&
+			errorText.toLowerCase().startsWith("unknown tool:")
+		) {
+			return true;
+		}
+		if (
+			typeof messageText === "string" &&
+			messageText.toLowerCase().includes("tool") &&
+			messageText.toLowerCase().includes("not found")
+		) {
+			return true;
+		}
+		return false;
+	};
+
 	const getEffectiveExecutionId = (tc: ToolCall) => {
 		if (typeof tc.executionId === "string" && tc.executionId.length > 0) {
 			return tc.executionId;
@@ -47,19 +66,25 @@ export function ToolGroup({
 		let pending = 0;
 		let failed = 0;
 		let completed = 0;
+		let unknownToolFailures = 0;
 
 		for (const tc of toolCalls) {
 			const effectiveExecutionId = getEffectiveExecutionId(tc);
 			const status =
 				tc.status ??
-				(effectiveExecutionId.length > 0 ? "pending" : "completed");
+				(effectiveExecutionId.length > 0 ? "executing" : "completed");
 			if (status === "executing") executing++;
 			else if (status === "pending") pending++;
-			else if (status === "failed" || status === "rejected") failed++;
+			else if (status === "failed" || status === "rejected") {
+				failed++;
+				if (status === "failed" && isUnknownToolFailure(tc)) {
+					unknownToolFailures++;
+				}
+			}
 			else if (status === "completed" || status === "approved") completed++;
 		}
 
-		return { executing, pending, failed, completed };
+		return { executing, pending, failed, completed, unknownToolFailures };
 	}, [toolCalls]);
 
 	const orderedToolCalls = useMemo(() => {
@@ -68,7 +93,7 @@ export function ToolGroup({
 				const effectiveExecutionId = getEffectiveExecutionId(tc);
 				const status =
 					tc.status ??
-					(effectiveExecutionId.length > 0 ? "pending" : "completed");
+					(effectiveExecutionId.length > 0 ? "executing" : "completed");
 				const canApprove =
 					status === "pending" &&
 					effectiveExecutionId.length > 0 &&
@@ -89,7 +114,8 @@ export function ToolGroup({
 		for (const tc of orderedToolCalls) {
 			const effectiveExecutionId = getEffectiveExecutionId(tc);
 			const status =
-				tc.status ?? (effectiveExecutionId.length > 0 ? "pending" : "completed");
+				tc.status ??
+				(effectiveExecutionId.length > 0 ? "executing" : "completed");
 			if (status !== "pending") continue;
 			if (effectiveExecutionId.length === 0) continue;
 			return { toolCallId: tc.id };
@@ -100,6 +126,10 @@ export function ToolGroup({
 	const isExecuting = summary.executing > 0;
 	const isPending = summary.pending > 0;
 	const hasFailed = summary.failed > 0;
+	const hasOnlyUnknownToolFailures =
+		hasFailed &&
+		summary.unknownToolFailures > 0 &&
+		summary.unknownToolFailures === summary.failed;
 
 	useEffect(() => {
 		if (!isPending) return;
@@ -120,8 +150,8 @@ export function ToolGroup({
 		headerColor = "text-amber-500";
 		statusText = t("ai.toolCall.pendingApproval");
 	} else if (hasFailed) {
-		HeaderIcon = AlertCircle;
-		headerColor = "text-destructive";
+		HeaderIcon = hasOnlyUnknownToolFailures ? ShieldAlert : AlertCircle;
+		headerColor = hasOnlyUnknownToolFailures ? "text-amber-500" : "text-destructive";
 		statusText = t("ai.toolCall.failed");
 	} else {
 		HeaderIcon = CheckCircle2;
@@ -136,6 +166,7 @@ export function ToolGroup({
 					"flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-muted/50 transition-colors min-w-0",
 					isExecuting && "bg-blue-50/50 dark:bg-blue-900/10",
 					isPending && "bg-amber-50/50 dark:bg-amber-900/10",
+					hasOnlyUnknownToolFailures && "bg-amber-50/50 dark:bg-amber-900/10",
 				)}
 				onClick={() => setIsOpen(!isOpen)}
 			>

@@ -2070,7 +2070,7 @@
     "ai.toolCall.toolCountOne": "{{count}} ടൂൾ",
     "ai.toolCall.toolCountMany": "{{count}} ടൂളുകൾ",
     "ai.toolCall.confirmRequired": "സ്ഥിരീകരണം ആവശ്യമാണ്",
-	"ai.toolCall.confirmHintPrefix": " ",
+    "ai.toolCall.confirmHintPrefix": " ",
     "ai.toolCall.confirmHintTo": " നെ ",
     "ai.toolCall.confirmHintSuffix": " ആയി സജ്ജീകരിക്കുക (കൃത്യമായി പൊരുത്തപ്പെടണം).",
     "ai.toolCall.allowedLiterals": "അനുവദിച്ചത്: ",
@@ -2079,5 +2079,7 @@
     "server.select": "സെർവർ തിരഞ്ഞെടുക്കുക",
     "common.continue": "തുടരുക",
     "common.view": "കാണുക",
-    "settings.billing.badge.recommended": "ശുപാർശ ചെയ്യുന്നു 🚀"
+    "settings.billing.badge.recommended": "ശുപാർശ ചെയ്യുന്നു 🚀",
+    "ai.toolCall.suggestedToolLabel": "ശുപാർശ ചെയ്ത ടൂൾ:",
+    "ai.toolCall.unknownTool": "അറിയാത്ത ടൂൾ"
 }

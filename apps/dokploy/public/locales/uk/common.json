@@ -2079,5 +2079,7 @@
     "server.select": "Вибрати сервер",
     "common.continue": "Продовжити",
     "common.view": "Переглянути",
-    "settings.billing.badge.recommended": "Рекомендуємо 🚀"
+    "settings.billing.badge.recommended": "Рекомендуємо 🚀",
+    "ai.toolCall.suggestedToolLabel": "Рекомендований інструмент:",
+    "ai.toolCall.unknownTool": "Невідомий інструмент"
 }

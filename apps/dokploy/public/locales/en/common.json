@@ -2057,6 +2057,8 @@
 	"ai.toolCall.aiRequestExecute": "The AI is requesting to execute",
 	"ai.toolCall.parameters": "Parameters",
 	"ai.toolCall.result": "Result",
+	"ai.toolCall.suggestedToolLabel": "Suggested tool:",
+	"ai.toolCall.unknownTool": "Unknown tool",
 	"ai.toolCall.toolCountOne": "{{count}} tool",
 	"ai.toolCall.toolCountMany": "{{count}} tools",
 	"ai.toolCall.confirmRequired": "Confirm required",

@@ -235,7 +235,7 @@ function buildMetaToolPromptInfo(): ToolPromptInfo[] {
 
 function tokenizeToolSearchQuery(query: string): string[] {
 	const q = query.trim().toLowerCase();
-	const tokens: string[] = q.split(/\s+/g).filter(Boolean);
+	const tokens: string[] = q.split(/[\s/_-]+/g).filter(Boolean);
 
 	const add = (arr: string[]) => {
 		for (const t of arr) tokens.push(t);
@@ -1650,11 +1650,11 @@ export const chat = async ({
 	// Build messages array for AI
 	const messages: CoreMessage[] = history
 		.map((msg) => {
-			if (msg.role === "tool") return null;
+			if (msg.role !== "user" && msg.role !== "assistant") return null;
 			const content = (msg.content || "").trim();
 			if (content.length > 0) {
 				return {
-					role: msg.role as "user" | "assistant" | "system",
+					role: msg.role as "user" | "assistant",
 					content,
 				};
 			}
@@ -1664,7 +1664,7 @@ export const chat = async ({
 				.join(", ");
 			if (toolNames.length > 0) {
 				return {
-					role: msg.role as "user" | "assistant" | "system",
+					role: msg.role as "user" | "assistant",
 					content: `[tool_calls: ${toolNames}]`,
 				};
 			}
@@ -1675,20 +1675,20 @@ export const chat = async ({
 	const toolExecutionContextMessage = await buildToolExecutionContextMessage({
 		conversationId,
 	});
-	const messagesWithToolContext = injectToolExecutionContextMessage(
-		messages,
-		toolExecutionContextMessage,
-	);
 
 	const provider = selectAIProvider(aiSettings);
 	const model = provider(aiSettings.model);
 
 	// Get system prompt with context
 	const conversation = await getConversationById(conversationId);
-	const systemPrompt = buildSystemPrompt(
+	const baseSystemPrompt = buildSystemPrompt(
 		conversation,
 		buildMetaToolPromptInfo(),
 	);
+	const systemPrompt =
+		toolExecutionContextMessage.trim().length > 0
+			? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
+			: baseSystemPrompt;
 
 	// Build tool context
 	const toolContext: ToolContext = {
@@ -1817,12 +1817,27 @@ export const chat = async ({
 					.describe("Parameters object for the tool"),
 			}),
 			execute: async (params: { toolName: string; params?: unknown }) => {
-				const t = toolRegistry.get(params.toolName);
+				const rawParams = (params.params ?? {}) as Record<string, unknown>;
+				let t = toolRegistry.get(params.toolName);
 				if (!t) {
-					return buildUnknownToolSuggestionResult(params.toolName);
+					const searched = searchToolCatalog({ query: params.toolName, limit: 5 });
+					const candidateName = searched.meta.nextCall?.toolName ?? "";
+					const candidate = candidateName
+						? toolRegistry.get(candidateName)
+						: undefined;
+					if (
+						candidate &&
+						candidate.riskLevel === "low" &&
+						!candidate.requiresApproval
+					) {
+						const candidateValidation = candidate.parameters.safeParse(rawParams);
+						if (candidateValidation.success) {
+							t = candidate;
+						}
+					}
 				}
 
-				const rawParams = (params.params ?? {}) as Record<string, unknown>;
+				if (!t) return buildUnknownToolSuggestionResult(params.toolName);
 				const validation = t.parameters.safeParse(rawParams);
 				if (!validation.success) {
 					return {
@@ -1908,7 +1923,7 @@ export const chat = async ({
 		return await generateText({
 			model,
 			system: systemPrompt,
-			messages: messagesWithToolContext,
+			messages,
 			tools: withTools ? tools : undefined,
 			stopWhen: stepCountIs(10),
 		});
@@ -1973,11 +1988,28 @@ export const chat = async ({
 
 	// Save assistant response
 	const executionIdByToolCallId = new Map<string, string>();
+	const invokedToolNameByToolCallId = new Map<string, string>();
 	if (Array.isArray(result.toolResults)) {
 		for (const tr of result.toolResults as unknown[]) {
 			if (!tr || typeof tr !== "object") continue;
 			const resultValue = (tr as { result?: unknown }).result;
-			if (resultValue && typeof resultValue === "object") {
+			if (!resultValue || typeof resultValue !== "object") continue;
+
+			const toolCallId =
+				(tr as { toolCallId?: unknown }).toolCallId ?? (tr as { id?: unknown }).id;
+			if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) {
+				continue;
+			}
+			const toolCallIdKey = toolCallId.trim();
+
+			const invokedTool =
+				(resultValue as { invokedTool?: unknown }).invokedTool ??
+				(resultValue as { toolName?: unknown }).toolName;
+			if (typeof invokedTool === "string" && invokedTool.trim().length > 0) {
+				invokedToolNameByToolCallId.set(toolCallIdKey, invokedTool.trim());
+			}
+
+			{
 				const executionId = (resultValue as { executionId?: unknown })
 					.executionId;
 				const nestedExecutionId =
@@ -1993,12 +2025,7 @@ export const chat = async ({
 							? nestedExecutionId
 							: "";
 				if (picked.trim().length > 0) {
-					const toolCallId =
-						(tr as { toolCallId?: unknown }).toolCallId ??
-						(tr as { id?: unknown }).id;
-					if (typeof toolCallId === "string" && toolCallId.trim().length > 0) {
-						executionIdByToolCallId.set(toolCallId, picked.trim());
-					}
+					executionIdByToolCallId.set(toolCallIdKey, picked.trim());
 				}
 			}
 		}
@@ -2011,13 +2038,16 @@ export const chat = async ({
 				(tc as unknown as { args?: unknown; input?: unknown }).args ??
 				(tc as unknown as { args?: unknown; input?: unknown }).input ??
 				{};
-			const toolName =
+			const toolNameFromArgs =
 				rawArgs &&
 				typeof rawArgs === "object" &&
 				"toolName" in (rawArgs as any) &&
 				typeof (rawArgs as any).toolName === "string"
 					? String((rawArgs as any).toolName)
 					: tc.toolName;
+			const toolName =
+				invokedToolNameByToolCallId.get(tc.toolCallId.trim()) ??
+				toolNameFromArgs;
 			const toolParams =
 				rawArgs && typeof rawArgs === "object" && "params" in (rawArgs as any)
 					? (rawArgs as any).params
@@ -2132,11 +2162,11 @@ export const chatStream = async (
 	const history = await getMessages({ conversationId, limit: 20 });
 	const messages: CoreMessage[] = history
 		.map((msg) => {
-			if (msg.role === "tool") return null;
+			if (msg.role !== "user" && msg.role !== "assistant") return null;
 			const content = (msg.content ?? "").trim();
 			if (content.length > 0) {
 				return {
-					role: msg.role as "user" | "assistant" | "system",
+					role: msg.role as "user" | "assistant",
 					content,
 				};
 			}
@@ -2146,7 +2176,7 @@ export const chatStream = async (
 				.join(", ");
 			if (toolNames.length > 0) {
 				return {
-					role: msg.role as "user" | "assistant" | "system",
+					role: msg.role as "user" | "assistant",
 					content: `[tool_calls: ${toolNames}]`,
 				};
 			}
@@ -2157,17 +2187,17 @@ export const chatStream = async (
 	const toolExecutionContextMessage = await buildToolExecutionContextMessage({
 		conversationId,
 	});
-	const messagesWithToolContext = injectToolExecutionContextMessage(
-		messages,
-		toolExecutionContextMessage,
-	);
 
 	const provider = selectAIProvider(aiSettings);
 	const model = provider(aiSettings.model);
-	const systemPrompt = buildSystemPrompt(
+	const baseSystemPrompt = buildSystemPrompt(
 		conversation,
 		buildMetaToolPromptInfo(),
 	);
+	const systemPrompt =
+		toolExecutionContextMessage.trim().length > 0
+			? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
+			: baseSystemPrompt;
 
 	const toolContext: ToolContext = {
 		organizationId,
@@ -2295,12 +2325,27 @@ export const chatStream = async (
 					.describe("Parameters object for the tool"),
 			}),
 			execute: async (params: { toolName: string; params?: unknown }) => {
-				const t = toolRegistry.get(params.toolName);
+				const rawParams = (params.params ?? {}) as Record<string, unknown>;
+				let t = toolRegistry.get(params.toolName);
 				if (!t) {
-					return buildUnknownToolSuggestionResult(params.toolName);
+					const searched = searchToolCatalog({ query: params.toolName, limit: 5 });
+					const candidateName = searched.meta.nextCall?.toolName ?? "";
+					const candidate = candidateName
+						? toolRegistry.get(candidateName)
+						: undefined;
+					if (
+						candidate &&
+						candidate.riskLevel === "low" &&
+						!candidate.requiresApproval
+					) {
+						const candidateValidation = candidate.parameters.safeParse(rawParams);
+						if (candidateValidation.success) {
+							t = candidate;
+						}
+					}
 				}
 
-				const rawParams = (params.params ?? {}) as Record<string, unknown>;
+				if (!t) return buildUnknownToolSuggestionResult(params.toolName);
 				const validation = t.parameters.safeParse(rawParams);
 				if (!validation.success) {
 					return {
@@ -2387,7 +2432,7 @@ export const chatStream = async (
 		const stream = streamText({
 			model,
 			system: systemPrompt,
-			messages: messagesWithToolContext,
+			messages,
 			tools: withTools ? tools : undefined,
 			stopWhen,
 			abortSignal: options.abortSignal,
@@ -2463,21 +2508,46 @@ export const chatStream = async (
 					}
 				} else if (chunk.type === "tool-result") {
 					hasAnyOutput = true;
-					const normalizedToolName =
-						toolNameByToolCallId.get(chunk.toolCallId) ?? chunk.toolName;
 					const toolResult =
 						(chunk as unknown as { result?: unknown }).result ??
 						(chunk as unknown as { output?: unknown }).output ??
 						chunk;
+					const resolvedToolName = (() => {
+						const current =
+							toolNameByToolCallId.get(chunk.toolCallId) ?? chunk.toolName;
+						if (!toolResult || typeof toolResult !== "object") return current;
+						const invoked =
+							(toolResult as { invokedTool?: unknown }).invokedTool ??
+							(toolResult as { toolName?: unknown }).toolName;
+						if (typeof invoked !== "string") return current;
+						const trimmed = invoked.trim();
+						return trimmed.length > 0 ? trimmed : current;
+					})();
+					if (
+						typeof resolvedToolName === "string" &&
+						resolvedToolName.trim().length > 0
+					) {
+						toolNameByToolCallId.set(chunk.toolCallId, resolvedToolName);
+						const idx = toolCalls.findIndex((tc) => tc.id === chunk.toolCallId);
+						if (idx >= 0) {
+							const existing = toolCalls[idx];
+							if (existing) {
+								toolCalls[idx] = {
+									...existing,
+									function: { ...existing.function, name: resolvedToolName },
+								};
+							}
+						}
+					}
 					toolResults.push({
 						toolCallId: chunk.toolCallId,
-						toolName: normalizedToolName,
+						toolName: resolvedToolName,
 						result: toolResult,
 					});
 					try {
 						options.onToolResult?.(
 							chunk.toolCallId,
-							normalizedToolName,
+							resolvedToolName,
 							toolResult,
 						);
 					} catch {

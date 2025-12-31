@@ -84,6 +84,20 @@ export interface ToolCall {
 	};
 }
 
+const TOOL_CALL_STATUS_RANK: Record<NonNullable<ToolCall["status"]>, number> = {
+	pending: 1,
+	approved: 2,
+	executing: 3,
+	completed: 4,
+	failed: 4,
+	rejected: 4,
+};
+
+function getToolCallStatusRank(status: ToolCall["status"] | undefined): number {
+	if (!status) return 0;
+	return TOOL_CALL_STATUS_RANK[status] ?? 0;
+}
+
 export interface Message {
 	messageId: string;
 	role: "user" | "assistant" | "system" | "tool";
@@ -126,6 +140,7 @@ export function useChat(options: UseChatOptions = {}) {
 		useState(false);
 	const autoApprovedToolCallIdsRef = useRef<Set<string>>(new Set());
 	const isAutoApprovingRef = useRef(false);
+	const inFlightApprovalExecutionIdsRef = useRef<Set<string>>(new Set());
 	const [isLoading, setIsLoading] = useState(false);
 	const [abortController, setAbortController] =
 		useState<AbortController | null>(null);
@@ -267,7 +282,10 @@ export function useChat(options: UseChatOptions = {}) {
 				for (const toolCallId of toolCallIds) {
 					const prevMeta = next[toolCallId];
 					const shouldUpdateResult = !prevMeta?.result && exec.result != null;
-					const shouldUpdateStatus = prevMeta?.status !== exec.status;
+					const shouldUpdateStatus =
+						!prevMeta?.status ||
+						getToolCallStatusRank(exec.status) >=
+							getToolCallStatusRank(prevMeta.status);
 					const shouldUpdateExecutionId =
 						prevMeta?.executionId !== exec.executionId;
 					if (
@@ -277,7 +295,7 @@ export function useChat(options: UseChatOptions = {}) {
 						shouldUpdateExecutionId
 					) {
 						next[toolCallId] = {
-							status: exec.status,
+							status: shouldUpdateStatus ? exec.status : prevMeta?.status,
 							executionId: exec.executionId,
 							result: shouldUpdateResult ? exec.result : prevMeta?.result,
 						};
@@ -319,6 +337,17 @@ export function useChat(options: UseChatOptions = {}) {
 
 	const approveToolCall = useCallback(
 		async (toolCallId: string) => {
+			const currentStatus = toolCallMeta[toolCallId]?.status;
+			if (
+				currentStatus === "approved" ||
+				currentStatus === "executing" ||
+				currentStatus === "completed" ||
+				currentStatus === "failed" ||
+				currentStatus === "rejected"
+			) {
+				return;
+			}
+
 			setIsConversationAutoApproved(true);
 			const meta = toolCallMeta[toolCallId];
 			const fallbackToolCall = messages
@@ -339,6 +368,8 @@ export function useChat(options: UseChatOptions = {}) {
 				}
 			}
 			if (!executionId) return;
+			if (inFlightApprovalExecutionIdsRef.current.has(executionId)) return;
+			inFlightApprovalExecutionIdsRef.current.add(executionId);
 
 			type NormalizedToolResult = NonNullable<ToolCall["result"]>;
 
@@ -419,6 +450,8 @@ export function useChat(options: UseChatOptions = {}) {
 					return next.length > 50 ? next.slice(next.length - 50) : next;
 				});
 				options.onError?.(error as Error);
+			} finally {
+				inFlightApprovalExecutionIdsRef.current.delete(executionId);
 			}
 		},
 		[
@@ -469,6 +502,17 @@ export function useChat(options: UseChatOptions = {}) {
 
 	const rejectToolCall = useCallback(
 		async (toolCallId: string) => {
+			const currentStatus = toolCallMeta[toolCallId]?.status;
+			if (
+				currentStatus === "approved" ||
+				currentStatus === "executing" ||
+				currentStatus === "completed" ||
+				currentStatus === "failed" ||
+				currentStatus === "rejected"
+			) {
+				return;
+			}
+
 			const meta = toolCallMeta[toolCallId];
 			const fallbackToolCall = messages
 				.flatMap((m) => m.toolCalls || [])
@@ -488,6 +532,8 @@ export function useChat(options: UseChatOptions = {}) {
 				}
 			}
 			if (!executionId) return;
+			if (inFlightApprovalExecutionIdsRef.current.has(executionId)) return;
+			inFlightApprovalExecutionIdsRef.current.add(executionId);
 
 			try {
 				await approveExecution.mutateAsync({ executionId, approved: false });
@@ -526,6 +572,8 @@ export function useChat(options: UseChatOptions = {}) {
 					return next.length > 50 ? next.slice(next.length - 50) : next;
 				});
 				options.onError?.(error as Error);
+			} finally {
+				inFlightApprovalExecutionIdsRef.current.delete(executionId);
 			}
 		},
 		[approveExecution, refetchMessages, toolCallMeta, options, messages],

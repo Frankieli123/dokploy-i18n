@@ -2070,7 +2070,7 @@
     "ai.toolCall.toolCountOne": "{{count}} құрал",
     "ai.toolCall.toolCountMany": "{{count}} құрал",
     "ai.toolCall.confirmRequired": "Растау қажет",
-	"ai.toolCall.confirmHintPrefix": " ",
+    "ai.toolCall.confirmHintPrefix": " ",
     "ai.toolCall.confirmHintTo": " мәнін ",
     "ai.toolCall.confirmHintSuffix": " деп орнатыңыз (дәл сәйкес болуы тиіс).",
     "ai.toolCall.allowedLiterals": "Рұқсат етілген: ",
@@ -2079,5 +2079,7 @@
     "server.select": "Серверді таңдаңыз",
     "common.continue": "Жалғастыру",
     "common.view": "Қарау",
-    "settings.billing.badge.recommended": "Ұсынылады 🚀"
+    "settings.billing.badge.recommended": "Ұсынылады 🚀",
+    "ai.toolCall.suggestedToolLabel": "Ұсынылған құрал:",
+    "ai.toolCall.unknownTool": "Белгісіз құрал"
 }

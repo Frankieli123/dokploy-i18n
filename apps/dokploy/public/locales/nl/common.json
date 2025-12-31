@@ -2079,5 +2079,7 @@
     "server.select": "Server selecteren",
     "common.continue": "Doorgaan",
     "common.view": "Bekijken",
-    "settings.billing.badge.recommended": "Aanbevolen 🚀"
+    "settings.billing.badge.recommended": "Aanbevolen 🚀",
+    "ai.toolCall.suggestedToolLabel": "Voorgestelde tool:",
+    "ai.toolCall.unknownTool": "Onbekende tool"
 }

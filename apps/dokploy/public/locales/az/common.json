@@ -2079,5 +2079,7 @@
     "server.select": "Server seçin",
     "common.continue": "Davam et",
     "common.view": "Bax",
-    "settings.billing.badge.recommended": "Tövsiyə olunur 🚀"
+    "settings.billing.badge.recommended": "Tövsiyə olunur 🚀",
+    "ai.toolCall.suggestedToolLabel": "Tövsiyə olunan alət:",
+    "ai.toolCall.unknownTool": "Naməlum alət"
 }
