@@ -925,6 +925,13 @@
       "when": 1766340000000,
       "tag": "0131_enable_auto_check_updates",
       "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "7",
+      "when": 1766350000000,
+      "tag": "0132_github_mirror_forward_auth",
+      "breakpoints": true
     }
   ]
 }

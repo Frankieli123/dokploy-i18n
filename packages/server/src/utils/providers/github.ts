@@ -189,27 +189,22 @@ export const cloneGithubRepository = async ({
 	const basePath = isCompose ? COMPOSE_PATH : APPLICATIONS_PATH;
 	const outputPath = join(basePath, appName, "code");
 	const repoclone = `github.com/${owner}/${repository}.git`;
+	const canonical = `https://${repoclone}`;
 	const mirrorPrefixUrl = normalizeMirrorPrefixUrl(
 		githubProvider.githubMirrorPrefixUrl ?? "",
 	);
 	const shouldUseMirror = Boolean(mirrorPrefixUrl);
 	const forwardAuth = Boolean(githubProvider.githubMirrorForwardAuth);
 
-	let cloneUrl = "";
-	if (shouldUseMirror) {
-		if (forwardAuth) {
-			const octokit = authGithub(githubProvider);
-			const token = await getGithubToken(octokit);
-			const canonical = `https://oauth2:${encodeURIComponent(token)}@${repoclone}`;
-			cloneUrl = `${mirrorPrefixUrl}${canonical}`;
-		} else {
-			const canonical = `https://${repoclone}`;
-			cloneUrl = `${mirrorPrefixUrl}${canonical}`;
-		}
-	} else {
+	let cloneUrl = shouldUseMirror ? `${mirrorPrefixUrl}${canonical}` : canonical;
+	let gitConfigArgs = "";
+	if (forwardAuth || !shouldUseMirror) {
 		const octokit = authGithub(githubProvider);
 		const token = await getGithubToken(octokit);
-		cloneUrl = `https://oauth2:${encodeURIComponent(token)}@${repoclone}`;
+		const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
+		gitConfigArgs = `-c http.extraheader=${shSingleQuote(
+			`Authorization: Basic ${basic}`,
+		)} `;
 	}
 
 	if (githubProvider.githubApiProxyUrl) {
@@ -222,9 +217,22 @@ export const cloneGithubRepository = async ({
 	command += `mkdir -p ${shSingleQuote(outputPath)};`;
 
 	command += `echo "Cloning Repo ${repoclone} to ${outputPath}: ✅";`;
-	command += `git clone --branch ${shSingleQuote(branch || "")} --depth 1 ${
-		enableSubmodules ? "--recurse-submodules" : ""
-	} ${shSingleQuote(cloneUrl)} ${shSingleQuote(outputPath)} --progress;`;
+	if (shouldUseMirror && forwardAuth) {
+		command += `if ! git ${gitConfigArgs}clone --branch ${shSingleQuote(branch || "")} --depth 1 ${
+			enableSubmodules ? "--recurse-submodules" : ""
+		} ${shSingleQuote(cloneUrl)} ${shSingleQuote(outputPath)} --progress; then `;
+		command += 'echo "Mirror clone failed, falling back to direct clone..."; ';
+		command += `rm -rf ${shSingleQuote(outputPath)}; `;
+		command += `mkdir -p ${shSingleQuote(outputPath)}; `;
+		command += `git ${gitConfigArgs}clone --branch ${shSingleQuote(branch || "")} --depth 1 ${
+			enableSubmodules ? "--recurse-submodules" : ""
+		} ${shSingleQuote(canonical)} ${shSingleQuote(outputPath)} --progress; `;
+		command += "fi;";
+	} else {
+		command += `git ${gitConfigArgs}clone --branch ${shSingleQuote(branch || "")} --depth 1 ${
+			enableSubmodules ? "--recurse-submodules" : ""
+		} ${shSingleQuote(cloneUrl)} ${shSingleQuote(outputPath)} --progress;`;
+	}
 
 	return command;
 };

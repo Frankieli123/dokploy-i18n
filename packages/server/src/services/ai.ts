@@ -1547,6 +1547,27 @@ function isSystemMessagePlacementError(err: unknown): boolean {
 	);
 }
 
+function getInitialSystemMode(aiSettings: {
+	providerType?: string | null;
+}): "system" | "inline" {
+	const providerType = String(aiSettings.providerType ?? "")
+		.trim()
+		.toLowerCase();
+
+	// Prefer the provider-native system channel when it's widely supported and stable.
+	if (
+		providerType === "openai" ||
+		providerType === "azure" ||
+		providerType === "anthropic"
+	) {
+		return "system";
+	}
+
+	// For OpenAI-compatible/custom endpoints and various providers, use inline system
+	// instructions by default to maximize compatibility.
+	return "inline";
+}
+
 function isInvalidJsonLikelySse(err: unknown): boolean {
 	const msg = err instanceof Error ? err.message : String(err);
 	if (msg.includes("Invalid JSON response")) return true;
@@ -1944,6 +1965,8 @@ export const chat = async ({
 		messageId: userMessage.messageId,
 	});
 
+	const initialSystemMode = getInitialSystemMode(aiSettings);
+
 	const runGenerate = async (
 		withTools: boolean,
 		systemMode: "system" | "inline" = "system",
@@ -1969,7 +1992,7 @@ export const chat = async ({
 
 	let result: Awaited<ReturnType<typeof generateText>>;
 	try {
-		result = await runGenerate(true);
+		result = await runGenerate(true, initialSystemMode);
 	} catch (error) {
 		const aborted = false;
 		if (isSystemMessagePlacementError(error) && !aborted) {
@@ -1984,7 +2007,7 @@ export const chat = async ({
 			}
 		} else if (isMissingToolUseIdError(error) && !aborted) {
 			try {
-				result = await runGenerate(false);
+				result = await runGenerate(false, initialSystemMode);
 			} catch (retryError) {
 				if (isSystemMessagePlacementError(retryError)) {
 					result = await runGenerate(false, "inline");
@@ -2273,6 +2296,8 @@ export const chatStream = async (
 		messageId: userMessage.messageId,
 	});
 
+	const initialSystemMode = getInitialSystemMode(aiSettings);
+
 	const runStream = async (
 		withTools: boolean,
 		systemMode: "system" | "inline" = "system",
@@ -2457,7 +2482,7 @@ export const chatStream = async (
 
 	let streamed: Awaited<ReturnType<typeof runStream>>;
 	try {
-		streamed = await runStream(true);
+		streamed = await runStream(true, initialSystemMode);
 	} catch (error) {
 		const aborted = options.abortSignal?.aborted;
 		if (!aborted && isSystemMessagePlacementError(error)) {
@@ -2472,7 +2497,7 @@ export const chatStream = async (
 			}
 		} else if (!aborted && isMissingToolUseIdError(error)) {
 			try {
-				streamed = await runStream(false);
+				streamed = await runStream(false, initialSystemMode);
 			} catch (retryError) {
 				if (!aborted && isSystemMessagePlacementError(retryError)) {
 					streamed = await runStream(false, "inline");
@@ -3136,6 +3161,8 @@ async function autoContinueAfterApprovedToolExecution(params: {
 		messageId: undefined,
 	});
 
+	const initialSystemMode = getInitialSystemMode(aiSettings);
+
 	const runGenerate = async (
 		withTools: boolean,
 		systemMode: "system" | "inline" = "system",
@@ -3161,7 +3188,7 @@ async function autoContinueAfterApprovedToolExecution(params: {
 
 	let result: Awaited<ReturnType<typeof generateText>>;
 	try {
-		result = await runGenerate(true);
+		result = await runGenerate(true, initialSystemMode);
 	} catch (error) {
 		if (isSystemMessagePlacementError(error)) {
 			try {
@@ -3175,7 +3202,7 @@ async function autoContinueAfterApprovedToolExecution(params: {
 			}
 		} else if (isMissingToolUseIdError(error)) {
 			try {
-				result = await runGenerate(false);
+				result = await runGenerate(false, initialSystemMode);
 			} catch (retryError) {
 				if (isSystemMessagePlacementError(retryError)) {
 					result = await runGenerate(false, "inline");
