@@ -775,6 +775,8 @@
 	"settings.gitProviders.github.edit.toast.updatedError": "Error updating GitHub provider",
 	"settings.gitProviders.github.edit.mirrorPrefixLabel": "Mirror Prefix URL (Git Clone)",
 	"settings.gitProviders.github.edit.mirrorPrefixPlaceholder": "e.g. https://ghproxy.com/",
+	"settings.gitProviders.github.edit.mirrorForwardAuthLabel": "Allow forwarding GitHub auth through Mirror Prefix (private repos)",
+	"settings.gitProviders.github.edit.mirrorForwardAuthDescription": "Includes a GitHub App installation token in the mirror-prefixed clone URL. Enable only for trusted/self-hosted mirrors.",
 	"settings.gitProviders.github.edit.apiProxyLabel": "GitHub API Proxy URL",
 	"settings.gitProviders.github.edit.apiProxyPlaceholder": "e.g. http://1.2.3.4:7890",
 	"settings.gitProviders.github.edit.testButton": "Test Connection",

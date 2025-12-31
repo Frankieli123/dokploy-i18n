@@ -162,6 +162,161 @@ const updateApplicationGithubSource: Tool<
 	},
 };
 
+const updateApplicationBuildConfig: Tool<
+	{
+		applicationId: string;
+		buildType:
+			| "dockerfile"
+			| "heroku_buildpacks"
+			| "paketo_buildpacks"
+			| "nixpacks"
+			| "static"
+			| "railpack";
+		dockerfile?: string;
+		dockerContextPath?: string;
+		dockerBuildStage?: string;
+		herokuVersion?: string;
+		railpackVersion?: string;
+		publishDirectory?: string;
+		isStaticSpa?: boolean;
+		confirm: "CONFIRM_APPLICATION_BUILD_CONFIG";
+	},
+	{
+		applicationId: string;
+		buildType: string;
+		dockerfile: string;
+		dockerContextPath: string;
+		dockerBuildStage: string;
+		publishDirectory: string;
+		isStaticSpa: boolean;
+		herokuVersion: string;
+		railpackVersion: string;
+	}
+> = {
+	name: "application_update_build_config",
+	description:
+		"Update an application's build type and build settings (e.g. set buildType=dockerfile and dockerfile path).",
+	category: "application",
+	aliases: ["set build type", "dockerfile build", "build config"],
+	tags: ["application", "build", "dockerfile", "nixpacks", "static"],
+	parameters: z
+		.object({
+			applicationId: z.string().min(1).describe("Application ID"),
+			buildType: z
+				.enum([
+					"dockerfile",
+					"heroku_buildpacks",
+					"paketo_buildpacks",
+					"nixpacks",
+					"static",
+					"railpack",
+				])
+				.describe("Build type to use"),
+			dockerfile: z
+				.string()
+				.optional()
+				.describe('Dockerfile path (default "Dockerfile")'),
+			dockerContextPath: z
+				.string()
+				.optional()
+				.describe("Docker build context path relative to the repo"),
+			dockerBuildStage: z
+				.string()
+				.optional()
+				.describe("Optional multi-stage build target"),
+			herokuVersion: z.string().optional().describe("Heroku stack version"),
+			railpackVersion: z.string().optional().describe("Railpack version"),
+			publishDirectory: z
+				.string()
+				.optional()
+				.describe("Publish directory for static builds"),
+			isStaticSpa: z.boolean().optional().describe("Treat static output as SPA"),
+			confirm: z.literal("CONFIRM_APPLICATION_BUILD_CONFIG"),
+		})
+		.superRefine((val, ctx) => {
+			if (val.buildType === "dockerfile") {
+				const dockerfile = (val.dockerfile ?? "Dockerfile").trim();
+				if (dockerfile.length === 0) {
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: "dockerfile is required when buildType=dockerfile",
+						path: ["dockerfile"],
+					});
+				}
+			}
+		}),
+	riskLevel: "high",
+	requiresApproval: true,
+	execute: async (params, ctx) => {
+		const app = await findApplicationById(params.applicationId);
+		if (app.environment?.project?.organizationId !== ctx.organizationId) {
+			return {
+				success: false,
+				message: "Application access denied",
+				data: {
+					applicationId: params.applicationId,
+					buildType: "",
+					dockerfile: "",
+					dockerContextPath: "",
+					dockerBuildStage: "",
+					publishDirectory: "",
+					isStaticSpa: false,
+					herokuVersion: "",
+					railpackVersion: "",
+				},
+			};
+		}
+
+		const next = await updateApplication(params.applicationId, {
+			buildType: params.buildType,
+			...(params.buildType === "dockerfile"
+				? { dockerfile: (params.dockerfile ?? "Dockerfile").trim() }
+				: {}),
+			...(typeof params.dockerContextPath === "string"
+				? { dockerContextPath: params.dockerContextPath }
+				: {}),
+			...(typeof params.dockerBuildStage === "string"
+				? { dockerBuildStage: params.dockerBuildStage }
+				: {}),
+			...(typeof params.publishDirectory === "string"
+				? { publishDirectory: params.publishDirectory }
+				: {}),
+			...(typeof params.isStaticSpa === "boolean"
+				? { isStaticSpa: params.isStaticSpa }
+				: {}),
+			...(typeof params.herokuVersion === "string"
+				? { herokuVersion: params.herokuVersion }
+				: {}),
+			...(typeof params.railpackVersion === "string"
+				? { railpackVersion: params.railpackVersion }
+				: {}),
+		});
+		if (!next) {
+			return {
+				success: false,
+				message: "Application update failed",
+				error: "Update did not return a record",
+			};
+		}
+
+		return {
+			success: true,
+			message: "Application build config updated",
+			data: {
+				applicationId: next.applicationId,
+				buildType: next.buildType,
+				dockerfile: next.dockerfile ?? "",
+				dockerContextPath: next.dockerContextPath ?? "",
+				dockerBuildStage: next.dockerBuildStage ?? "",
+				publishDirectory: next.publishDirectory ?? "",
+				isStaticSpa: Boolean(next.isStaticSpa),
+				herokuVersion: next.herokuVersion ?? "",
+				railpackVersion: next.railpackVersion ?? "",
+			},
+		};
+	},
+};
+
 const findApplications: Tool<
 	{ query: string; projectId?: string; limit?: number },
 	Array<{
@@ -407,6 +562,7 @@ export function registerApplicationTools() {
 	toolRegistry.register(findApplications);
 	toolRegistry.register(createNewApplication);
 	toolRegistry.register(updateApplicationGithubSource);
+	toolRegistry.register(updateApplicationBuildConfig);
 	toolRegistry.register(deployApp);
 	toolRegistry.register(restartApp);
 	toolRegistry.register(getAppStatus);

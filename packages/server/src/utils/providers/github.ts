@@ -193,15 +193,23 @@ export const cloneGithubRepository = async ({
 		githubProvider.githubMirrorPrefixUrl ?? "",
 	);
 	const shouldUseMirror = Boolean(mirrorPrefixUrl);
+	const forwardAuth = Boolean(githubProvider.githubMirrorForwardAuth);
 
 	let cloneUrl = "";
 	if (shouldUseMirror) {
-		const canonical = `https://${repoclone}`;
-		cloneUrl = `${mirrorPrefixUrl}${canonical}`;
+		if (forwardAuth) {
+			const octokit = authGithub(githubProvider);
+			const token = await getGithubToken(octokit);
+			const canonical = `https://oauth2:${encodeURIComponent(token)}@${repoclone}`;
+			cloneUrl = `${mirrorPrefixUrl}${canonical}`;
+		} else {
+			const canonical = `https://${repoclone}`;
+			cloneUrl = `${mirrorPrefixUrl}${canonical}`;
+		}
 	} else {
 		const octokit = authGithub(githubProvider);
 		const token = await getGithubToken(octokit);
-		cloneUrl = `https://oauth2:${token}@${repoclone}`;
+		cloneUrl = `https://oauth2:${encodeURIComponent(token)}@${repoclone}`;
 	}
 
 	if (githubProvider.githubApiProxyUrl) {

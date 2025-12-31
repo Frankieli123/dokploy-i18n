@@ -1284,6 +1284,230 @@ type ChatUsage = {
 	outputTokens?: number;
 };
 
+function buildChatTools(params: {
+	conversationId: string;
+	toolContext: ToolContext;
+	messageId?: string;
+}): Record<string, any> {
+	return {
+		tool_suggest: tool({
+			description:
+				"Suggest likely relevant tools for a request. Returns a short list; use tool_search if the list is empty or insufficient.",
+			inputSchema: z.object({
+				query: z.string().min(1).describe("The user's request (natural language)"),
+				limit: z
+					.number()
+					.min(1)
+					.max(30)
+					.optional()
+					.default(15)
+					.describe("Max number of tools to return"),
+			}),
+			execute: async (input: { query: string; limit?: number }) => {
+				const limit = input.limit ?? 15;
+				const selected = selectRelevantTools(input.query, {
+					projectId: params.toolContext.projectId,
+					serverId: params.toolContext.serverId,
+					minTools: 0,
+					maxTools: limit,
+				});
+				return {
+					success: true,
+					message:
+						selected.length > 0
+							? `Suggested ${selected.length} tool(s) for "${input.query}"`
+							: `No direct suggestions for "${input.query}". Use tool_search to explore the full catalog.`,
+					data: selected.map((t) => ({
+						name: t.name,
+						description: t.description,
+						category: t.category,
+						riskLevel: t.riskLevel,
+						requiresApproval: t.requiresApproval,
+					})),
+				};
+			},
+		}),
+		tool_search: tool({
+			description:
+				"Search the full tool catalog and return matching tool names and summaries.",
+			inputSchema: z.object({
+				query: z
+					.string()
+					.min(1)
+					.describe("What you want to do or find (natural language)"),
+				limit: z
+					.number()
+					.min(1)
+					.max(30)
+					.optional()
+					.default(12)
+					.describe("Max number of tools to return"),
+				domain: z
+					.enum(TOOL_SEARCH_DOMAINS)
+					.optional()
+					.describe("Optional domain filter"),
+				category: z
+					.string()
+					.min(1)
+					.optional()
+					.describe("Optional tool category filter"),
+				riskLevelMax: z
+					.enum(["low", "medium", "high"])
+					.optional()
+					.describe("Optional max risk level filter"),
+				requiresApproval: z
+					.boolean()
+					.optional()
+					.describe("Optional approval requirement filter"),
+			}),
+			execute: async (input: {
+				query: string;
+				limit?: number;
+				domain?: (typeof TOOL_SEARCH_DOMAINS)[number];
+				category?: string;
+				riskLevelMax?: "low" | "medium" | "high";
+				requiresApproval?: boolean;
+			}) => {
+				return searchToolCatalog(input);
+			},
+		}),
+		tool_describe: tool({
+			description:
+				"Describe a specific tool, including parameter hints extracted from its schema.",
+			inputSchema: z.object({
+				toolName: z
+					.string()
+					.min(1)
+					.describe("Exact tool name, e.g. postgres_create"),
+			}),
+			execute: async (input: { toolName: string }) => {
+				const t = toolRegistry.get(input.toolName);
+				if (!t) {
+					return buildUnknownToolSuggestionResult(input.toolName);
+				}
+				const data = getToolDescribeData(t);
+				return {
+					success: true,
+					message: `Tool "${t.name}" description retrieved`,
+					data,
+				};
+			},
+		}),
+		tool_call: tool({
+			description:
+				"Create a tool execution by name + params. Enforces validation. If the target tool requires approval, this returns pending_approval and does NOT execute; you must still provide all required params (including confirm literals). Use tool_describe first if unsure.",
+			inputSchema: z.object({
+				toolName: z.string().min(1).describe("Exact tool name to execute"),
+				params: z
+					.record(z.any())
+					.optional()
+					.default({})
+					.describe("Parameters object for the tool"),
+			}),
+			execute: async (input: { toolName: string; params?: unknown }) => {
+				const rawParams = (input.params ?? {}) as Record<string, unknown>;
+				let t = toolRegistry.get(input.toolName);
+				if (!t) {
+					const searched = searchToolCatalog({ query: input.toolName, limit: 5 });
+					const candidateName = searched.meta.nextCall?.toolName ?? "";
+					const candidate = candidateName
+						? toolRegistry.get(candidateName)
+						: undefined;
+					if (
+						candidate &&
+						candidate.riskLevel === "low" &&
+						!candidate.requiresApproval
+					) {
+						const candidateValidation = candidate.parameters.safeParse(rawParams);
+						if (candidateValidation.success) {
+							t = candidate;
+						}
+					}
+				}
+
+				if (!t) return buildUnknownToolSuggestionResult(input.toolName);
+				const validation = t.parameters.safeParse(rawParams);
+				if (!validation.success) {
+					return {
+						success: false,
+						message:
+							"Invalid parameters (use tool_describe and provide all required fields; for approval-required tools, include confirm literals in the tool_call params)",
+						error: validation.error.message,
+						data: {
+							toolName: t.name,
+							confirmLiterals: extractConfirmLiterals(t.parameters),
+							exampleParams: buildExampleParams(t.parameters),
+						},
+					};
+				}
+
+				const validatedParams = validation.data as unknown as Record<
+					string,
+					unknown
+				>;
+
+				const execution = await createToolExecution({
+					conversationId: params.conversationId,
+					messageId: params.messageId,
+					toolName: t.name,
+					parameters: validatedParams,
+					requiresApproval: t.requiresApproval,
+				});
+
+				if (t.requiresApproval) {
+					return {
+						success: true,
+						status: "pending_approval",
+						executionId: execution.executionId,
+						toolName: t.name,
+						message: `This action requires approval. Tool: ${t.name}`,
+						data: {
+							executionId: execution.executionId,
+							toolName: t.name,
+							confirmLiterals: extractConfirmLiterals(t.parameters),
+							exampleParams: buildExampleParams(t.parameters),
+						},
+					};
+				}
+
+				try {
+					const result = await t.execute(validation.data as never, params.toolContext);
+
+					const completionUpdate: Record<string, unknown> = {
+						status: result.success ? "completed" : "failed",
+						result,
+						completedAt: new Date().toISOString(),
+					};
+					if (!result.success) {
+						completionUpdate.error = result.error || result.message;
+					}
+					await updateToolExecution(execution.executionId, completionUpdate);
+
+					return {
+						executionId: execution.executionId,
+						invokedTool: t.name,
+						...(result as object),
+					};
+				} catch (error) {
+					const errorMessage =
+						error instanceof Error ? error.message : String(error);
+					await updateToolExecution(execution.executionId, {
+						status: "failed",
+						error: errorMessage,
+						completedAt: new Date().toISOString(),
+					});
+					return {
+						executionId: execution.executionId,
+						success: false,
+						message: "Tool execution failed",
+						error: errorMessage,
+					};
+				}
+			},
+		}),
+	};
+}
+
 function getProviderErrorText(err: unknown): string {
 	const msg = err instanceof Error ? err.message : String(err);
 	const responseBody = (err as { responseBody?: unknown })?.responseBody;
@@ -1310,6 +1534,16 @@ function isMissingToolUseIdError(err: unknown): boolean {
 		(msg.includes("messages.") &&
 			msg.includes("tool_use") &&
 			msg.includes("Field required"))
+	);
+}
+
+function isSystemMessagePlacementError(err: unknown): boolean {
+	const msg = getProviderErrorText(err).toLowerCase();
+	return (
+		msg.includes("system messages are only supported at the beginning") ||
+		(msg.includes("system messages") &&
+			msg.includes("beginning of the conversation")) ||
+		msg.includes("system messages are not supported")
 	);
 }
 
@@ -1638,11 +1872,17 @@ export const chat = async ({
 	initializeTools();
 
 	// Save user message
-	await saveMessage({
+	const userMessage = await saveMessage({
 		conversationId,
 		role: "user",
 		content: message,
 	});
+	if (!userMessage) {
+		throw new TRPCError({
+			code: "INTERNAL_SERVER_ERROR",
+			message: "Failed to save user message",
+		});
+	}
 
 	// Get conversation history
 	const history = await getMessages({ conversationId, limit: 20 });
@@ -1698,232 +1938,30 @@ export const chat = async ({
 		serverId: conversation.serverId || undefined,
 	};
 
-	const tools: Record<string, any> = {
-		tool_suggest: tool({
-			description:
-				"Suggest likely relevant tools for a request. Returns a short list; use tool_search if the list is empty or insufficient.",
-			inputSchema: z.object({
-				query: z
-					.string()
-					.min(1)
-					.describe("The user's request (natural language)"),
-				limit: z
-					.number()
-					.min(1)
-					.max(30)
-					.optional()
-					.default(15)
-					.describe("Max number of tools to return"),
-			}),
-			execute: async (params: { query: string; limit?: number }) => {
-				const limit = params.limit ?? 15;
-				const selected = selectRelevantTools(params.query, {
-					projectId: toolContext.projectId,
-					serverId: toolContext.serverId,
-					minTools: 0,
-					maxTools: limit,
-				});
-				return {
-					success: true,
-					message:
-						selected.length > 0
-							? `Suggested ${selected.length} tool(s) for "${params.query}"`
-							: `No direct suggestions for "${params.query}". Use tool_search to explore the full catalog.`,
-					data: selected.map((t) => ({
-						name: t.name,
-						description: t.description,
-						category: t.category,
-						riskLevel: t.riskLevel,
-						requiresApproval: t.requiresApproval,
-					})),
-				};
-			},
-		}),
-		tool_search: tool({
-			description:
-				"Search the full tool catalog and return matching tool names and summaries.",
-			inputSchema: z.object({
-				query: z
-					.string()
-					.min(1)
-					.describe("What you want to do or find (natural language)"),
-				limit: z
-					.number()
-					.min(1)
-					.max(30)
-					.optional()
-					.default(12)
-					.describe("Max number of tools to return"),
-				domain: z
-					.enum(TOOL_SEARCH_DOMAINS)
-					.optional()
-					.describe("Optional domain filter"),
-				category: z
-					.string()
-					.min(1)
-					.optional()
-					.describe("Optional tool category filter"),
-				riskLevelMax: z
-					.enum(["low", "medium", "high"])
-					.optional()
-					.describe("Optional max risk level filter"),
-				requiresApproval: z
-					.boolean()
-					.optional()
-					.describe("Optional approval requirement filter"),
-			}),
-			execute: async (params: {
-				query: string;
-				limit?: number;
-				domain?: (typeof TOOL_SEARCH_DOMAINS)[number];
-				category?: string;
-				riskLevelMax?: "low" | "medium" | "high";
-				requiresApproval?: boolean;
-			}) => {
-				return searchToolCatalog(params);
-			},
-		}),
-		tool_describe: tool({
-			description:
-				"Describe a specific tool, including parameter hints extracted from its schema.",
-			inputSchema: z.object({
-				toolName: z
-					.string()
-					.min(1)
-					.describe("Exact tool name, e.g. postgres_create"),
-			}),
-			execute: async (params: { toolName: string }) => {
-				const t = toolRegistry.get(params.toolName);
-				if (!t) {
-					return buildUnknownToolSuggestionResult(params.toolName);
-				}
-				const data = getToolDescribeData(t);
-				return {
-					success: true,
-					message: `Tool "${t.name}" description retrieved`,
-					data,
-				};
-			},
-		}),
-		tool_call: tool({
-			description:
-				"Create a tool execution by name + params. Enforces validation. If the target tool requires approval, this returns pending_approval and does NOT execute; you must still provide all required params (including confirm literals). Use tool_describe first if unsure.",
-			inputSchema: z.object({
-				toolName: z.string().min(1).describe("Exact tool name to execute"),
-				params: z
-					.record(z.any())
-					.optional()
-					.default({})
-					.describe("Parameters object for the tool"),
-			}),
-			execute: async (params: { toolName: string; params?: unknown }) => {
-				const rawParams = (params.params ?? {}) as Record<string, unknown>;
-				let t = toolRegistry.get(params.toolName);
-				if (!t) {
-					const searched = searchToolCatalog({ query: params.toolName, limit: 5 });
-					const candidateName = searched.meta.nextCall?.toolName ?? "";
-					const candidate = candidateName
-						? toolRegistry.get(candidateName)
-						: undefined;
-					if (
-						candidate &&
-						candidate.riskLevel === "low" &&
-						!candidate.requiresApproval
-					) {
-						const candidateValidation = candidate.parameters.safeParse(rawParams);
-						if (candidateValidation.success) {
-							t = candidate;
-						}
-					}
-				}
+	const tools = buildChatTools({
+		conversationId,
+		toolContext,
+		messageId: userMessage.messageId,
+	});
 
-				if (!t) return buildUnknownToolSuggestionResult(params.toolName);
-				const validation = t.parameters.safeParse(rawParams);
-				if (!validation.success) {
-					return {
-						success: false,
-						message:
-							"Invalid parameters (use tool_describe and provide all required fields; for approval-required tools, include confirm literals in the tool_call params)",
-						error: validation.error.message,
-						data: {
-							toolName: t.name,
-							confirmLiterals: extractConfirmLiterals(t.parameters),
-							exampleParams: buildExampleParams(t.parameters),
+	const runGenerate = async (
+		withTools: boolean,
+		systemMode: "system" | "inline" = "system",
+	) => {
+		const nextMessages =
+			systemMode === "inline"
+				? [
+						{
+							role: "user" as const,
+							content: `SYSTEM INSTRUCTIONS (treat as system):\n${systemPrompt}`,
 						},
-					};
-				}
-
-				const validatedParams = validation.data as unknown as Record<
-					string,
-					unknown
-				>;
-
-				const execution = await createToolExecution({
-					conversationId,
-					messageId: undefined,
-					toolName: t.name,
-					parameters: validatedParams,
-					requiresApproval: t.requiresApproval,
-				});
-
-				if (t.requiresApproval) {
-					return {
-						success: true,
-						status: "pending_approval",
-						executionId: execution.executionId,
-						toolName: t.name,
-						message: `This action requires approval. Tool: ${t.name}`,
-						data: {
-							executionId: execution.executionId,
-							toolName: t.name,
-							confirmLiterals: extractConfirmLiterals(t.parameters),
-							exampleParams: buildExampleParams(t.parameters),
-						},
-					};
-				}
-
-				try {
-					const result = await t.execute(validation.data as never, toolContext);
-
-					const completionUpdate: Record<string, unknown> = {
-						status: result.success ? "completed" : "failed",
-						result,
-						completedAt: new Date().toISOString(),
-					};
-					if (!result.success) {
-						completionUpdate.error = result.error || result.message;
-					}
-					await updateToolExecution(execution.executionId, completionUpdate);
-
-					return {
-						executionId: execution.executionId,
-						invokedTool: t.name,
-						...(result as object),
-					};
-				} catch (error) {
-					const errorMessage =
-						error instanceof Error ? error.message : String(error);
-					await updateToolExecution(execution.executionId, {
-						status: "failed",
-						error: errorMessage,
-						completedAt: new Date().toISOString(),
-					});
-					return {
-						executionId: execution.executionId,
-						success: false,
-						message: "Tool execution failed",
-						error: errorMessage,
-					};
-				}
-			},
-		}),
-	};
-
-	const runGenerate = async (withTools: boolean) => {
+						...messages,
+					]
+				: messages;
 		return await generateText({
 			model,
-			system: systemPrompt,
-			messages,
+			system: systemMode === "system" ? systemPrompt : undefined,
+			messages: nextMessages,
 			tools: withTools ? tools : undefined,
 			stopWhen: stepCountIs(10),
 		});
@@ -1933,11 +1971,28 @@ export const chat = async ({
 	try {
 		result = await runGenerate(true);
 	} catch (error) {
-		if (isMissingToolUseIdError(error)) {
-			result = await runGenerate(false);
-		} else {
-			throw error;
-		}
+		const aborted = false;
+		if (isSystemMessagePlacementError(error) && !aborted) {
+			try {
+				result = await runGenerate(true, "inline");
+			} catch (retryError) {
+				if (isMissingToolUseIdError(retryError)) {
+					result = await runGenerate(false, "inline");
+				} else {
+					throw retryError;
+				}
+			}
+		} else if (isMissingToolUseIdError(error) && !aborted) {
+			try {
+				result = await runGenerate(false);
+			} catch (retryError) {
+				if (isSystemMessagePlacementError(retryError)) {
+					result = await runGenerate(false, "inline");
+				} else {
+					throw retryError;
+				}
+			}
+		} else throw error;
 	}
 
 	let finalText = typeof result.text === "string" ? result.text : "";
@@ -2153,11 +2208,17 @@ export const chatStream = async (
 
 	initializeTools();
 
-	await saveMessage({
+	const userMessage = await saveMessage({
 		conversationId,
 		role: "user",
 		content: message,
 	});
+	if (!userMessage) {
+		throw new TRPCError({
+			code: "INTERNAL_SERVER_ERROR",
+			message: "Failed to save user message",
+		});
+	}
 
 	const history = await getMessages({ conversationId, limit: 20 });
 	const messages: CoreMessage[] = history
@@ -2206,233 +2267,31 @@ export const chatStream = async (
 		serverId: conversation.serverId || undefined,
 	};
 
-	const tools: Record<string, any> = {
-		tool_suggest: tool({
-			description:
-				"Suggest likely relevant tools for a request. Returns a short list; use tool_search if the list is empty or insufficient.",
-			inputSchema: z.object({
-				query: z
-					.string()
-					.min(1)
-					.describe("The user's request (natural language)"),
-				limit: z
-					.number()
-					.min(1)
-					.max(30)
-					.optional()
-					.default(15)
-					.describe("Max number of tools to return"),
-			}),
-			execute: async (params: { query: string; limit?: number }) => {
-				const limit = params.limit ?? 15;
-				const selected = selectRelevantTools(params.query, {
-					projectId: toolContext.projectId,
-					serverId: toolContext.serverId,
-					minTools: 0,
-					maxTools: limit,
-				});
-				return {
-					success: true,
-					message:
-						selected.length > 0
-							? `Suggested ${selected.length} tool(s) for "${params.query}"`
-							: `No direct suggestions for "${params.query}". Use tool_search to explore the full catalog.`,
-					data: selected.map((t) => ({
-						name: t.name,
-						description: t.description,
-						category: t.category,
-						riskLevel: t.riskLevel,
-						requiresApproval: t.requiresApproval,
-					})),
-				};
-			},
-		}),
-		tool_search: tool({
-			description:
-				"Search the full tool catalog and return matching tool names and summaries.",
-			inputSchema: z.object({
-				query: z
-					.string()
-					.min(1)
-					.describe("What you want to do or find (natural language)"),
-				limit: z
-					.number()
-					.min(1)
-					.max(30)
-					.optional()
-					.default(12)
-					.describe("Max number of tools to return"),
-				domain: z
-					.enum(TOOL_SEARCH_DOMAINS)
-					.optional()
-					.describe("Optional domain filter"),
-				category: z
-					.string()
-					.min(1)
-					.optional()
-					.describe("Optional tool category filter"),
-				riskLevelMax: z
-					.enum(["low", "medium", "high"])
-					.optional()
-					.describe("Optional max risk level filter"),
-				requiresApproval: z
-					.boolean()
-					.optional()
-					.describe("Optional approval requirement filter"),
-			}),
-			execute: async (params: {
-				query: string;
-				limit?: number;
-				domain?: (typeof TOOL_SEARCH_DOMAINS)[number];
-				category?: string;
-				riskLevelMax?: "low" | "medium" | "high";
-				requiresApproval?: boolean;
-			}) => {
-				return searchToolCatalog(params);
-			},
-		}),
-		tool_describe: tool({
-			description:
-				"Describe a specific tool, including parameter hints extracted from its schema.",
-			inputSchema: z.object({
-				toolName: z
-					.string()
-					.min(1)
-					.describe("Exact tool name, e.g. postgres_create"),
-			}),
-			execute: async (params: { toolName: string }) => {
-				const t = toolRegistry.get(params.toolName);
-				if (!t) {
-					return buildUnknownToolSuggestionResult(params.toolName);
-				}
-				const data = getToolDescribeData(t);
-				return {
-					success: true,
-					message: `Tool "${t.name}" description retrieved`,
-					data,
-				};
-			},
-		}),
-		tool_call: tool({
-			description:
-				"Create a tool execution by name + params. Enforces validation. If the target tool requires approval, this returns pending_approval and does NOT execute; you must still provide all required params (including confirm literals). Use tool_describe first if unsure.",
-			inputSchema: z.object({
-				toolName: z.string().min(1).describe("Exact tool name to execute"),
-				params: z
-					.record(z.any())
-					.optional()
-					.default({})
-					.describe("Parameters object for the tool"),
-			}),
-			execute: async (params: { toolName: string; params?: unknown }) => {
-				const rawParams = (params.params ?? {}) as Record<string, unknown>;
-				let t = toolRegistry.get(params.toolName);
-				if (!t) {
-					const searched = searchToolCatalog({ query: params.toolName, limit: 5 });
-					const candidateName = searched.meta.nextCall?.toolName ?? "";
-					const candidate = candidateName
-						? toolRegistry.get(candidateName)
-						: undefined;
-					if (
-						candidate &&
-						candidate.riskLevel === "low" &&
-						!candidate.requiresApproval
-					) {
-						const candidateValidation = candidate.parameters.safeParse(rawParams);
-						if (candidateValidation.success) {
-							t = candidate;
-						}
-					}
-				}
+	const tools = buildChatTools({
+		conversationId,
+		toolContext,
+		messageId: userMessage.messageId,
+	});
 
-				if (!t) return buildUnknownToolSuggestionResult(params.toolName);
-				const validation = t.parameters.safeParse(rawParams);
-				if (!validation.success) {
-					return {
-						success: false,
-						message:
-							"Invalid parameters (use tool_describe and provide all required fields; for approval-required tools, include confirm literals in the tool_call params)",
-						error: validation.error.message,
-						data: {
-							toolName: t.name,
-							confirmLiterals: extractConfirmLiterals(t.parameters),
-							exampleParams: buildExampleParams(t.parameters),
-						},
-					};
-				}
-
-				const validatedParams = validation.data as unknown as Record<
-					string,
-					unknown
-				>;
-
-				const execution = await createToolExecution({
-					conversationId,
-					messageId: undefined,
-					toolName: t.name,
-					parameters: validatedParams,
-					requiresApproval: t.requiresApproval,
-				});
-
-				if (t.requiresApproval) {
-					return {
-						success: true,
-						status: "pending_approval",
-						executionId: execution.executionId,
-						toolName: t.name,
-						message: `This action requires approval. Tool: ${t.name}`,
-						data: {
-							executionId: execution.executionId,
-							toolName: t.name,
-							confirmLiterals: extractConfirmLiterals(t.parameters),
-							exampleParams: buildExampleParams(t.parameters),
-						},
-					};
-				}
-
-				try {
-					const result = await t.execute(validation.data as never, toolContext);
-
-					const completionUpdate: Record<string, unknown> = {
-						status: result.success ? "completed" : "failed",
-						result,
-						completedAt: new Date().toISOString(),
-					};
-					if (!result.success) {
-						completionUpdate.error = result.error || result.message;
-					}
-					await updateToolExecution(execution.executionId, completionUpdate);
-
-					return {
-						executionId: execution.executionId,
-						invokedTool: t.name,
-						...(result as object),
-					};
-				} catch (error) {
-					const errorMessage =
-						error instanceof Error ? error.message : String(error);
-					await updateToolExecution(execution.executionId, {
-						status: "failed",
-						error: errorMessage,
-						completedAt: new Date().toISOString(),
-					});
-					return {
-						executionId: execution.executionId,
-						success: false,
-						message: "Tool execution failed",
-						error: errorMessage,
-					};
-				}
-			},
-		}),
-	};
-
-	const runStream = async (withTools: boolean) => {
+	const runStream = async (
+		withTools: boolean,
+		systemMode: "system" | "inline" = "system",
+	) => {
 		const stopWhen = stepCountIs(10);
+		const nextMessages =
+			systemMode === "inline"
+				? [
+						{
+							role: "user" as const,
+							content: `SYSTEM INSTRUCTIONS (treat as system):\n${systemPrompt}`,
+						},
+						...messages,
+					]
+				: messages;
 		const stream = streamText({
 			model,
-			system: systemPrompt,
-			messages,
+			system: systemMode === "system" ? systemPrompt : undefined,
+			messages: nextMessages,
 			tools: withTools ? tools : undefined,
 			stopWhen,
 			abortSignal: options.abortSignal,
@@ -2600,11 +2459,28 @@ export const chatStream = async (
 	try {
 		streamed = await runStream(true);
 	} catch (error) {
-		if (isMissingToolUseIdError(error) && !options.abortSignal?.aborted) {
-			streamed = await runStream(false);
-		} else {
-			throw error;
-		}
+		const aborted = options.abortSignal?.aborted;
+		if (!aborted && isSystemMessagePlacementError(error)) {
+			try {
+				streamed = await runStream(true, "inline");
+			} catch (retryError) {
+				if (!aborted && isMissingToolUseIdError(retryError)) {
+					streamed = await runStream(false, "inline");
+				} else {
+					throw retryError;
+				}
+			}
+		} else if (!aborted && isMissingToolUseIdError(error)) {
+			try {
+				streamed = await runStream(false);
+			} catch (retryError) {
+				if (!aborted && isSystemMessagePlacementError(retryError)) {
+					streamed = await runStream(false, "inline");
+				} else {
+					throw retryError;
+				}
+			}
+		} else throw error;
 	}
 
 	if (
@@ -3168,6 +3044,276 @@ export const updateToolExecution = async (
 // Execute Approved Tool
 // ============================================
 
+async function autoContinueAfterApprovedToolExecution(params: {
+	conversationId: string;
+	organizationId: string;
+	userId: string;
+	toolName: string;
+	executionId: string;
+	outcome: "completed" | "failed";
+}): Promise<void> {
+	const conversation = await getConversationById(params.conversationId);
+	if (conversation.organizationId !== params.organizationId) return;
+	if (conversation.status !== "active") return;
+
+	const aiId =
+		typeof conversation.aiId === "string" && conversation.aiId.trim().length > 0
+			? conversation.aiId.trim()
+			: "";
+	if (!aiId) return;
+
+	const aiSettings = await getAiSettingById(aiId);
+	if (!aiSettings || !aiSettings.isEnabled) return;
+	if (aiSettings.organizationId !== params.organizationId) return;
+
+	initializeTools();
+
+	const history = await getMessages({ conversationId: params.conversationId, limit: 20 });
+	const messages: CoreMessage[] = history
+		.map((msg) => {
+			if (msg.role !== "user" && msg.role !== "assistant") return null;
+			const content = (msg.content ?? "").trim();
+			if (content.length > 0) {
+				return {
+					role: msg.role as "user" | "assistant",
+					content,
+				};
+			}
+			const toolNames = (msg.toolCalls ?? [])
+				.map((tc) => tc.function?.name)
+				.filter(Boolean)
+				.join(", ");
+			if (toolNames.length > 0) {
+				return {
+					role: msg.role as "user" | "assistant",
+					content: `[tool_calls: ${toolNames}]`,
+				};
+			}
+			return null;
+		})
+		.filter(Boolean) as CoreMessage[];
+
+	const internalPrompt = [
+		"Continue the task based on the conversation so far.",
+		`The last approved tool execution has ${params.outcome}.`,
+		`Tool: ${params.toolName}`,
+		`Execution ID: ${params.executionId}`,
+		"",
+		"Rules:",
+		"- Use the recent tool execution context to reuse IDs and avoid repeating completed actions.",
+		"- If more actions are required, create tool_call(s) with all required params.",
+		"- If the task is already complete, briefly confirm and stop.",
+	].join("\n");
+
+	messages.push({ role: "user", content: internalPrompt });
+
+	const toolExecutionContextMessage = await buildToolExecutionContextMessage({
+		conversationId: params.conversationId,
+	});
+
+	const provider = selectAIProvider(aiSettings);
+	const model = provider(aiSettings.model);
+
+	const baseSystemPrompt = buildSystemPrompt(
+		conversation,
+		buildMetaToolPromptInfo(),
+	);
+	const systemPrompt =
+		toolExecutionContextMessage.trim().length > 0
+			? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
+			: baseSystemPrompt;
+
+	const toolContext: ToolContext = {
+		organizationId: params.organizationId,
+		userId: params.userId,
+		projectId: conversation.projectId || undefined,
+		serverId: conversation.serverId || undefined,
+	};
+
+	const tools = buildChatTools({
+		conversationId: params.conversationId,
+		toolContext,
+		messageId: undefined,
+	});
+
+	const runGenerate = async (
+		withTools: boolean,
+		systemMode: "system" | "inline" = "system",
+	) => {
+		const nextMessages =
+			systemMode === "inline"
+				? [
+						{
+							role: "user" as const,
+							content: `SYSTEM INSTRUCTIONS (treat as system):\n${systemPrompt}`,
+						},
+						...messages,
+					]
+				: messages;
+		return await generateText({
+			model,
+			system: systemMode === "system" ? systemPrompt : undefined,
+			messages: nextMessages,
+			tools: withTools ? tools : undefined,
+			stopWhen: stepCountIs(10),
+		});
+	};
+
+	let result: Awaited<ReturnType<typeof generateText>>;
+	try {
+		result = await runGenerate(true);
+	} catch (error) {
+		if (isSystemMessagePlacementError(error)) {
+			try {
+				result = await runGenerate(true, "inline");
+			} catch (retryError) {
+				if (isMissingToolUseIdError(retryError)) {
+					result = await runGenerate(false, "inline");
+				} else {
+					throw retryError;
+				}
+			}
+		} else if (isMissingToolUseIdError(error)) {
+			try {
+				result = await runGenerate(false);
+			} catch (retryError) {
+				if (isSystemMessagePlacementError(retryError)) {
+					result = await runGenerate(false, "inline");
+				} else {
+					throw retryError;
+				}
+			}
+		} else throw error;
+	}
+
+	let finalText = typeof result.text === "string" ? result.text : "";
+	if (
+		finalText.trim().length === 0 &&
+		Array.isArray(result.toolCalls) &&
+		result.toolCalls.length > 0
+	) {
+		finalText =
+			(await generateToolOutcomeSummary({
+				model,
+				userMessage: internalPrompt,
+				toolCalls: result.toolCalls.map((tc) => ({
+					id: tc.toolCallId,
+					name: tc.toolName,
+					arguments:
+						(tc as unknown as { args?: unknown; input?: unknown }).args ??
+						(tc as unknown as { args?: unknown; input?: unknown }).input ??
+						{},
+				})),
+				toolResults: Array.isArray(result.toolResults)
+					? (result.toolResults as unknown[]).map((tr) => {
+							const toolCallId =
+								(tr as { toolCallId?: unknown }).toolCallId ??
+								(tr as { id?: unknown }).id;
+							const toolName =
+								(tr as { toolName?: unknown }).toolName ??
+								(tr as { name?: unknown }).name;
+							const resultValue =
+								(tr as { result?: unknown }).result ??
+								(tr as { output?: unknown }).output ??
+								tr;
+							return {
+								toolCallId: typeof toolCallId === "string" ? toolCallId : "",
+								toolName: typeof toolName === "string" ? toolName : "",
+								result: resultValue,
+							};
+						})
+					: [],
+			})) || finalText;
+	}
+
+	const executionIdByToolCallId = new Map<string, string>();
+	const invokedToolNameByToolCallId = new Map<string, string>();
+	if (Array.isArray(result.toolResults)) {
+		for (const tr of result.toolResults as unknown[]) {
+			if (!tr || typeof tr !== "object") continue;
+			const resultValue = (tr as { result?: unknown }).result;
+			if (!resultValue || typeof resultValue !== "object") continue;
+
+			const toolCallId =
+				(tr as { toolCallId?: unknown }).toolCallId ?? (tr as { id?: unknown }).id;
+			if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) {
+				continue;
+			}
+			const toolCallIdKey = toolCallId.trim();
+
+			const invokedTool =
+				(resultValue as { invokedTool?: unknown }).invokedTool ??
+				(resultValue as { toolName?: unknown }).toolName;
+			if (typeof invokedTool === "string" && invokedTool.trim().length > 0) {
+				invokedToolNameByToolCallId.set(toolCallIdKey, invokedTool.trim());
+			}
+
+			const executionId = (resultValue as { executionId?: unknown }).executionId;
+			const nestedExecutionId =
+				(resultValue as { data?: unknown }).data &&
+				typeof (resultValue as { data?: unknown }).data === "object"
+					? ((resultValue as { data?: { executionId?: unknown } }).data
+							?.executionId as unknown)
+					: undefined;
+			const picked =
+				typeof executionId === "string"
+					? executionId
+					: typeof nestedExecutionId === "string"
+						? nestedExecutionId
+						: "";
+			if (picked.trim().length > 0) {
+				executionIdByToolCallId.set(toolCallIdKey, picked.trim());
+			}
+		}
+	}
+
+	const toolCallsToPersist = (result.toolCalls ?? [])
+		.filter((tc) => tc.toolName === "tool_call")
+		.map((tc) => {
+			const rawArgs =
+				(tc as unknown as { args?: unknown; input?: unknown }).args ??
+				(tc as unknown as { args?: unknown; input?: unknown }).input ??
+				{};
+			const toolNameFromArgs =
+				rawArgs &&
+				typeof rawArgs === "object" &&
+				"toolName" in (rawArgs as any) &&
+				typeof (rawArgs as any).toolName === "string"
+					? String((rawArgs as any).toolName)
+					: tc.toolName;
+			const toolName =
+				invokedToolNameByToolCallId.get(tc.toolCallId.trim()) ??
+				toolNameFromArgs;
+			const toolParams =
+				rawArgs && typeof rawArgs === "object" && "params" in (rawArgs as any)
+					? (rawArgs as any).params
+					: rawArgs;
+			return {
+				id: tc.toolCallId,
+				type: "function" as const,
+				executionId: executionIdByToolCallId.get(tc.toolCallId),
+				function: {
+					name: toolName,
+					arguments: JSON.stringify(toolParams ?? {}),
+				},
+			};
+		});
+
+	await saveMessage({
+		conversationId: params.conversationId,
+		role: "assistant",
+		content: finalText,
+		toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : undefined,
+		promptTokens: result.usage?.inputTokens,
+		completionTokens: result.usage?.outputTokens,
+	});
+
+	scheduleConversationSummaryUpdate({
+		conversationId: params.conversationId,
+		model,
+	});
+}
+
 export const executeApprovedTool = async (
 	executionId: string,
 	ctx: ToolContext,
@@ -3255,6 +3401,22 @@ export const executeApprovedTool = async (
 				outcome: "completed",
 				result: { success: true, message: result.message },
 			});
+			if (
+				typeof execution.conversationId === "string" &&
+				execution.conversationId.trim().length > 0 &&
+				(!execution.runId || String(execution.runId).trim().length === 0)
+			) {
+				try {
+					await autoContinueAfterApprovedToolExecution({
+						conversationId: execution.conversationId,
+						organizationId: ctx.organizationId,
+						userId: ctx.userId,
+						toolName: execution.toolName,
+						executionId,
+						outcome: "completed",
+					});
+				} catch {}
+			}
 			return result;
 		}
 
@@ -3275,6 +3437,22 @@ export const executeApprovedTool = async (
 				error: result.error || result.message,
 			},
 		});
+		if (
+			typeof execution.conversationId === "string" &&
+			execution.conversationId.trim().length > 0 &&
+			(!execution.runId || String(execution.runId).trim().length === 0)
+		) {
+			try {
+				await autoContinueAfterApprovedToolExecution({
+					conversationId: execution.conversationId,
+					organizationId: ctx.organizationId,
+					userId: ctx.userId,
+					toolName: execution.toolName,
+					executionId,
+					outcome: "failed",
+				});
+			} catch {}
+		}
 
 		return result;
 	} catch (error) {

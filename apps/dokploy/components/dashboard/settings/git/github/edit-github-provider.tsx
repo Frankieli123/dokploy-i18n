@@ -19,12 +19,14 @@ import {
 import {
 	Form,
 	FormControl,
+	FormDescription,
 	FormField,
 	FormItem,
 	FormLabel,
 	FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { api } from "@/utils/api";
 
 const createSchema = (t: (key: string, options?: any) => string) =>
@@ -53,6 +55,7 @@ const createSchema = (t: (key: string, options?: any) => string) =>
 			})
 			.optional()
 			.or(z.literal("")),
+		githubMirrorForwardAuth: z.boolean().optional(),
 	});
 
 type Schema = z.infer<ReturnType<typeof createSchema>>;
@@ -83,6 +86,7 @@ export const EditGithubProvider = ({ githubId }: Props) => {
 			appName: "",
 			githubMirrorPrefixUrl: "",
 			githubApiProxyUrl: "",
+			githubMirrorForwardAuth: false,
 		},
 		resolver: zodResolver(schema),
 	});
@@ -93,6 +97,7 @@ export const EditGithubProvider = ({ githubId }: Props) => {
 			appName: github?.githubAppName || "",
 			githubMirrorPrefixUrl: github?.githubMirrorPrefixUrl || "",
 			githubApiProxyUrl: github?.githubApiProxyUrl || "",
+			githubMirrorForwardAuth: github?.githubMirrorForwardAuth ?? false,
 		});
 	}, [form, isOpen]);
 
@@ -104,6 +109,7 @@ export const EditGithubProvider = ({ githubId }: Props) => {
 			githubAppName: data.appName || "",
 			githubMirrorPrefixUrl: data.githubMirrorPrefixUrl || null,
 			githubApiProxyUrl: data.githubApiProxyUrl || null,
+			githubMirrorForwardAuth: data.githubMirrorForwardAuth ?? false,
 		})
 			.then(async () => {
 				await utils.gitProvider.getAll.invalidate();
@@ -181,6 +187,41 @@ export const EditGithubProvider = ({ githubId }: Props) => {
 													{...field}
 												/>
 											</FormControl>
+											<FormMessage />
+										</FormItem>
+									)}
+								/>
+								<FormField
+									control={form.control}
+									name="githubMirrorForwardAuth"
+									render={({ field }) => (
+										<FormItem>
+											<div className="flex items-center space-x-2">
+												<FormControl>
+													<Switch
+														checked={Boolean(field.value)}
+														onCheckedChange={field.onChange}
+													/>
+												</FormControl>
+												<FormLabel className="!mt-0">
+													{t(
+														"settings.gitProviders.github.edit.mirrorForwardAuthLabel",
+														{
+															defaultValue:
+																"Allow forwarding GitHub auth through Mirror Prefix (private repos)",
+														},
+													)}
+												</FormLabel>
+											</div>
+											<FormDescription>
+												{t(
+													"settings.gitProviders.github.edit.mirrorForwardAuthDescription",
+													{
+														defaultValue:
+															"Includes a GitHub App installation token in the mirror-prefixed clone URL. Enable only for trusted/self-hosted mirrors.",
+													},
+												)}
+											</FormDescription>
 											<FormMessage />
 										</FormItem>
 									)}

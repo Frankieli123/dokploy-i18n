@@ -4,6 +4,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { gitProvider } from "./git-provider";
+import { boolean } from "drizzle-orm/pg-core";
 
 export const github = pgTable("github", {
 	githubId: text("githubId")
@@ -18,6 +19,9 @@ export const github = pgTable("github", {
 	githubPrivateKey: text("githubPrivateKey"),
 	githubWebhookSecret: text("githubWebhookSecret"),
 	githubMirrorPrefixUrl: text("githubMirrorPrefixUrl"),
+	githubMirrorForwardAuth: boolean("githubMirrorForwardAuth")
+		.notNull()
+		.default(false),
 	githubApiProxyUrl: text("githubApiProxyUrl"),
 	gitProviderId: text("gitProviderId")
 		.notNull()
@@ -41,6 +45,7 @@ export const apiCreateGithub = createSchema.extend({
 	githubPrivateKey: z.string().optional(),
 	githubWebhookSecret: z.string().nullable(),
 	githubMirrorPrefixUrl: z.string().url().nullable().optional(),
+	githubMirrorForwardAuth: z.boolean().optional(),
 	githubApiProxyUrl: z.string().url().nullable().optional(),
 	gitProviderId: z.string().optional(),
 	name: z.string().min(1),
@@ -64,5 +69,6 @@ export const apiUpdateGithub = createSchema.extend({
 	gitProviderId: z.string().min(1),
 	githubAppName: z.string().min(1),
 	githubMirrorPrefixUrl: z.string().url().nullable().optional(),
+	githubMirrorForwardAuth: z.boolean().optional(),
 	githubApiProxyUrl: z.string().url().nullable().optional(),
 });

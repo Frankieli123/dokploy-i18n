@@ -775,6 +775,8 @@
 	"settings.gitProviders.github.edit.toast.updatedError": "更新 GitHub 提供商时发生错误",
 	"settings.gitProviders.github.edit.mirrorPrefixLabel": "镜像前缀 URL（Git Clone）",
 	"settings.gitProviders.github.edit.mirrorPrefixPlaceholder": "例如：https://ghproxy.com/",
+	"settings.gitProviders.github.edit.mirrorForwardAuthLabel": "允许通过镜像前缀转发 GitHub 授权（私有仓库）",
+	"settings.gitProviders.github.edit.mirrorForwardAuthDescription": "启用后，Dokploy 会在镜像前缀的克隆 URL 中携带 GitHub App 安装令牌。仅建议用于可信/自建镜像。",
 	"settings.gitProviders.github.edit.apiProxyLabel": "GitHub API 代理 URL",
 	"settings.gitProviders.github.edit.apiProxyPlaceholder": "例如：http://1.2.3.4:7890",
 	"settings.gitProviders.github.edit.testButton": "测试连接",

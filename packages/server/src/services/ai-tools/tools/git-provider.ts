@@ -23,6 +23,7 @@ type GitProviderSummary = {
 		githubClientId: string | null;
 		githubInstallationId: string | null;
 		githubMirrorPrefixUrl: string | null;
+		githubMirrorForwardAuth: boolean | null;
 		githubApiProxyUrl: string | null;
 	} | null;
 	gitlab: {
@@ -67,6 +68,7 @@ const toSummary = (p: {
 		githubClientId: string | null;
 		githubInstallationId: string | null;
 		githubMirrorPrefixUrl: string | null;
+		githubMirrorForwardAuth: boolean | null;
 		githubApiProxyUrl: string | null;
 	} | null;
 	gitlab?: {
@@ -106,6 +108,10 @@ const toSummary = (p: {
 					githubClientId: p.github.githubClientId ?? null,
 					githubInstallationId: p.github.githubInstallationId ?? null,
 					githubMirrorPrefixUrl: p.github.githubMirrorPrefixUrl ?? null,
+					githubMirrorForwardAuth:
+						typeof p.github.githubMirrorForwardAuth === "boolean"
+							? p.github.githubMirrorForwardAuth
+							: null,
 					githubApiProxyUrl: p.github.githubApiProxyUrl ?? null,
 				}
 			: null,
@@ -183,6 +189,10 @@ const gitProviderList: Tool<Record<string, never>, GitProviderSummary[]> = {
 								githubClientId: p.github.githubClientId,
 								githubInstallationId: p.github.githubInstallationId,
 								githubMirrorPrefixUrl: p.github.githubMirrorPrefixUrl,
+								githubMirrorForwardAuth:
+									typeof p.github.githubMirrorForwardAuth === "boolean"
+										? p.github.githubMirrorForwardAuth
+										: null,
 								githubApiProxyUrl: p.github.githubApiProxyUrl,
 							}
 						: null,
