@@ -88,6 +88,19 @@ export const ShowDeployments = ({
 		},
 	);
 
+	const visibleQueuedJobs = useMemo(() => {
+		const jobs = queuedJobs ?? [];
+		if (jobs.length === 0) return [];
+
+		const hasRunningDeployment =
+			deployments?.some((deployment) => deployment.status === "running") ?? false;
+		const filteredJobs = hasRunningDeployment
+			? jobs.filter((job) => job.state !== "active")
+			: jobs;
+
+		return [...filteredJobs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	}, [queuedJobs, deployments]);
+
 	const { mutateAsync: rollback, isLoading: isRollingBack } =
 		api.rollback.rollback.useMutation();
 	const { mutateAsync: killProcess, isLoading: isKillingProcess } =
@@ -218,40 +231,6 @@ export const ShowDeployments = ({
 				</div>
 			</CardHeader>
 			<CardContent className="flex flex-col gap-4">
-				{!!queuedJobs?.length && (
-					<div className="flex flex-col gap-2">
-						{queuedJobs.map((job) => {
-							const isActive = job.state === "active";
-							const label = isActive
-								? t("deployments.status.running")
-								: t("deployments.status.queued");
-							const tooltipStatus = isActive ? "running" : "queued";
-
-							return (
-								<div
-									key={job.jobId}
-									className="flex items-center justify-between rounded-lg border p-4 gap-2"
-								>
-									<div className="flex flex-col">
-										<span className="flex items-center gap-4 font-medium capitalize text-foreground">
-											{label}
-											<StatusTooltip
-												status={tooltipStatus}
-												className="size-2.5"
-											/>
-										</span>
-										<span className="break-words text-sm text-muted-foreground whitespace-pre-wrap">
-											{job?.data?.titleLog || t("deployments.title.manual")}
-										</span>
-									</div>
-									<div className="text-sm capitalize text-muted-foreground flex items-center gap-2">
-										<DateTooltip date={job.createdAt} />
-									</div>
-								</div>
-							);
-						})}
-					</div>
-				)}
 				{stuckDeployment && (type === "application" || type === "compose") && (
 					<AlertBlock
 						type="warning"
@@ -323,7 +302,7 @@ export const ShowDeployments = ({
 							{t("deployments.loading")}
 						</span>
 					</div>
-				) : deployments?.length === 0 ? (
+				) : deployments?.length === 0 && visibleQueuedJobs.length === 0 ? (
 					<div className="flex w-full flex-col items-center justify-center gap-3 pt-10 min-h-[25vh]">
 						<RocketIcon className="size-8 text-muted-foreground" />
 						<span className="text-base text-muted-foreground">
@@ -332,6 +311,36 @@ export const ShowDeployments = ({
 					</div>
 				) : (
 					<div className="flex flex-col gap-4">
+						{visibleQueuedJobs.map((job, index) => {
+							const isActive = job.state === "active";
+							const label = isActive
+								? t("deployments.status.running")
+								: t("deployments.status.queued");
+							const tooltipStatus = isActive ? "running" : "queued";
+
+							return (
+								<div
+									key={job.jobId}
+									className="flex items-center justify-between rounded-lg border p-4 gap-2"
+								>
+									<div className="flex flex-col">
+										<span className="flex items-center gap-4 font-medium capitalize text-foreground">
+											{index + 1}. {label}
+											<StatusTooltip
+												status={tooltipStatus}
+												className="size-2.5"
+											/>
+										</span>
+										<span className="break-words text-sm text-muted-foreground whitespace-pre-wrap">
+											{job?.data?.titleLog || t("deployments.title.manual")}
+										</span>
+									</div>
+									<div className="text-sm capitalize text-muted-foreground flex items-center gap-2">
+										<DateTooltip date={job.createdAt} />
+									</div>
+								</div>
+							);
+						})}
 						{deployments?.map((deployment, index) => {
 							const rawTitle = deployment?.title?.trim() || "";
 							const titleText = formatTitle(rawTitle);
@@ -352,7 +361,7 @@ export const ShowDeployments = ({
 								>
 									<div className="flex flex-col">
 										<span className="flex items-center gap-4 font-medium capitalize text-foreground">
-											{index + 1}. {statusLabel}
+											{index + 1 + visibleQueuedJobs.length}. {statusLabel}
 											<StatusTooltip
 												status={deployment?.status}
 												className="size-2.5"

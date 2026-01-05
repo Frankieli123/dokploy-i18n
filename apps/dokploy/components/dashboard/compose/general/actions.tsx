@@ -28,8 +28,10 @@ export const ComposeActions = ({ composeId }: Props) => {
 		{ enabled: !!composeId },
 	);
 	const { mutateAsync: update } = api.compose.update.useMutation();
-	const { mutateAsync: deploy } = api.compose.deploy.useMutation();
-	const { mutateAsync: redeploy } = api.compose.redeploy.useMutation();
+	const { mutateAsync: deploy, isLoading: isDeploying } =
+		api.compose.deploy.useMutation();
+	const { mutateAsync: redeploy, isLoading: isRedeploying } =
+		api.compose.redeploy.useMutation();
 	const { mutateAsync: start, isLoading: isStarting } =
 		api.compose.start.useMutation();
 	const { mutateAsync: stop, isLoading: isStopping } =
@@ -59,7 +61,7 @@ export const ComposeActions = ({ composeId }: Props) => {
 				>
 					<Button
 						variant="default"
-						isLoading={data?.composeStatus === "running"}
+						isLoading={isDeploying}
 						className="flex items-center gap-1.5 group focus-visible:ring-2 focus-visible:ring-offset-2"
 					>
 						<Tooltip>
@@ -96,7 +98,7 @@ export const ComposeActions = ({ composeId }: Props) => {
 				>
 					<Button
 						variant="secondary"
-						isLoading={data?.composeStatus === "running"}
+						isLoading={isRedeploying}
 						className="flex items-center gap-1.5 group focus-visible:ring-2 focus-visible:ring-offset-2"
 					>
 						<Tooltip>

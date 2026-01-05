@@ -44,12 +44,14 @@ export const ShowGeneralApplication = ({ applicationId }: Props) => {
 	const { mutateAsync: stop, isLoading: isStopping } =
 		api.application.stop.useMutation();
 
-	const { mutateAsync: deploy } = api.application.deploy.useMutation();
+	const { mutateAsync: deploy, isLoading: isDeploying } =
+		api.application.deploy.useMutation();
 
 	const { mutateAsync: reload, isLoading: isReloading } =
 		api.application.reload.useMutation();
 
-	const { mutateAsync: redeploy } = api.application.redeploy.useMutation();
+	const { mutateAsync: redeploy, isLoading: isRedeploying } =
+		api.application.redeploy.useMutation();
 
 	return (
 		<>
@@ -83,7 +85,7 @@ export const ShowGeneralApplication = ({ applicationId }: Props) => {
 						>
 							<Button
 								variant="default"
-								isLoading={data?.applicationStatus === "running"}
+								isLoading={isDeploying}
 								className="flex items-center gap-1.5 group focus-visible:ring-2 focus-visible:ring-offset-2"
 							>
 								<Tooltip>
@@ -158,7 +160,7 @@ export const ShowGeneralApplication = ({ applicationId }: Props) => {
 						>
 							<Button
 								variant="secondary"
-								isLoading={data?.applicationStatus === "running"}
+								isLoading={isRedeploying}
 								className="flex items-center gap-1.5 group focus-visible:ring-2 focus-visible:ring-offset-2"
 							>
 								<Tooltip>
