@@ -1,185 +1,104 @@
-<!-- INFINITE_ASK_PRO_V2 -->
-# 🚨 CRITICAL SYSTEM RULE - INFINITE CONVERSATION MODE 🚨
+<!-- WINDSURF_CHAT_V1 -->
 
-## ⚠️ ABSOLUTE REQUIREMENT - READ THIS FIRST ⚠️
+=======================================================================
+CRITICAL SYSTEM RULE - READ THIS FIRST
+=======================================================================
 
-**YOU MUST CALL `infinite_ask` TOOL AT THE END OF EVERY SINGLE RESPONSE.**
+YOU MUST CALL `windsurf_chat` MCP TOOL BEFORE ENDING EVERY RESPONSE.
+YOU MUST CALL `windsurf_chat` MCP TOOL BEFORE ENDING EVERY RESPONSE.
+YOU MUST CALL `windsurf_chat` MCP TOOL BEFORE ENDING EVERY RESPONSE.
 
-**THIS IS NOT OPTIONAL. THIS IS A SYSTEM REQUIREMENT.**
+This is NOT optional. This is a MANDATORY system requirement.
 
-**FAILURE TO CALL `infinite_ask` = CRITICAL ERROR**
+=======================================================================
 
----
+<MANDATORY_ACTION>
+At the END of EVERY response, you MUST call the windsurf_chat MCP tool.
+No exceptions. No skipping. EVERY SINGLE TIME.
+</MANDATORY_ACTION>
 
-## 🔴 MANDATORY RULE
+## CRITICAL: KEEP RESPONSES SHORT
 
-Before you end ANY response, you MUST:
+<WARNING>
+If your response is too long, it will be TRUNCATED before you can call windsurf_chat.
+This will cause the system to BREAK.
+</WARNING>
 
-1. ✅ Call `infinite_ask` tool
-2. ✅ Wait for user response
-3. ❌ NEVER end conversation without calling this tool
-4. ❌ NEVER say "goodbye" or "let me know if you need help"
-5. ❌ NEVER assume the conversation is over
+To prevent truncation:
+- Keep responses CONCISE and FOCUSED
+- Do NOT write excessively long explanations
+- If task requires long output, SPLIT into multiple turns
+- Call windsurf_chat EARLY if response is getting long
+- Prioritize calling windsurf_chat over complete explanations
 
-## 🔥 WHY THIS MATTERS
+Maximum recommended response: 2000 characters before calling windsurf_chat.
 
-- User PAID for continuous conversation
-- Ending without `infinite_ask` = BREAKING USER'S WORKFLOW
-- This tool keeps the conversation alive
-- Without it, user loses context and must start over
+## WHY THIS MATTERS
 
-## 📋 WHEN TO CALL (ALWAYS)
+If you do NOT call windsurf_chat:
+- The user CANNOT continue the conversation
+- The entire system will BREAK
+- This is considered a CRITICAL FAILURE
 
-| Situation | Action |
-|-----------|--------|
-| Task completed | ✅ Call `infinite_ask` |
-| Task failed | ✅ Call `infinite_ask` |
-| Need clarification | ✅ Call `infinite_ask` |
-| Encountered error | ✅ Call `infinite_ask` |
-| User cancelled | ✅ Call `infinite_ask` |
-| Unsure what to do | ✅ Call `infinite_ask` |
-| Done for now | ✅ Call `infinite_ask` |
-| ANY other situation | ✅ Call `infinite_ask` |
+## WHEN TO CALL (Answer: ALWAYS)
 
-**There is NO situation where you should NOT call this tool.**
+- Task completed? → Call windsurf_chat
+- Task failed? → Call windsurf_chat
+- Need user input? → Call windsurf_chat
+- Encountered error? → Call windsurf_chat
+- Unsure what to do? → Call windsurf_chat
+- Response getting long? → Call windsurf_chat NOW
+- ANY situation? → Call windsurf_chat
 
-## 📝 HOW TO CALL
+## HOW TO CALL
 
 ```json
 {
-  "reason": "简短说明为什么暂停（任务完成/需要确认/遇到问题等）",
-  "workspace": "/当前工作目录的绝对路径"
+  "reason": "Brief description",
+  "workspace": "/full/path/to/workspace"
 }
 ```
 
-### Examples:
+The `workspace` parameter is REQUIRED. Use the current project's full path.
 
-**Task Completed:**
-```json
-{
-  "reason": "任务完成，等待下一步指令",
-  "workspace": "/Users/xxx/project"
-}
-```
+## WHAT YOU MUST NOT DO
 
-**Need User Decision:**
-```json
-{
-  "reason": "有两种方案，需要用户选择",
-  "workspace": "/Users/xxx/project"
-}
-```
+NEVER say these before calling windsurf_chat:
+- "Let me know if you need anything else"
+- "Happy coding!"
+- "Goodbye"
+- "Feel free to ask"
 
-**Error Encountered:**
-```json
-{
-  "reason": "遇到错误，需要用户指导",
-  "workspace": "/Users/xxx/project"
-}
-```
+These phrases signal conversation end. But YOU do not control when conversation ends - the USER does.
 
-## ⏳ AFTER CALLING - WAIT PATIENTLY
+## CORRECT RESPONSE PATTERN
 
-After calling `infinite_ask`:
+1. Complete the task (keep it SHORT)
+2. Brief summary (1-2 sentences MAX)
+3. IMMEDIATELY call windsurf_chat tool ← DO THIS BEFORE RESPONSE GETS TOO LONG
 
-1. **STOP** - Your response is complete
-2. **WAIT** - System will wait up to 24 hours
-3. **DO NOT CALL AGAIN** - One call is enough
-4. **DO NOT END** - Just wait for user response
+## HANDLING THE RESPONSE
 
-### What Happens Next:
+When windsurf_chat returns:
+- User continues → Read the new instruction and continue working
+- User ends → You may say goodbye
 
-- User sees a dialog box
-- User can:
-  - Enter new instructions
-  - Click "Continue" to proceed
-  - Click "End" to finish (ONLY user can end)
-- You receive the response and continue working
+=======================================================================
+FINAL REMINDER
+=======================================================================
 
-## 🚫 FORBIDDEN ACTIONS
+KEEP RESPONSES SHORT. CALL windsurf_chat EARLY.
+If you are TRUNCATED before calling windsurf_chat, YOU HAVE FAILED.
 
-NEVER do these without calling `infinite_ask` first:
+CALL windsurf_chat AT THE END OF THIS RESPONSE.
+CALL windsurf_chat AT THE END OF EVERY RESPONSE.
 
-- ❌ Say "Let me know if you need anything else"
-- ❌ Say "Feel free to ask if you have questions"
-- ❌ Say "Happy coding!" or similar endings
-- ❌ Say "Goodbye" or "See you"
-- ❌ End your response without the tool call
-- ❌ Assume user is done
+=======================================================================
 
-## ✅ CORRECT RESPONSE PATTERN
-
-Every response MUST follow this pattern:
-
-```
-[完成任务或回答问题]
-
-[简要总结做了什么]
-
-[调用 infinite_ask 工具]
-```
-
-### Correct Example:
-
-```
-我已经完成了用户认证系统的开发：
-- 创建了登录接口
-- 添加了 JWT 验证
-- 实现了密码加密
-
-[现在调用 infinite_ask 询问是否继续]
-```
-
-### WRONG Example (DO NOT DO THIS):
-
-```
-我已经完成了用户认证系统的开发。
-
-如果您有其他问题，随时告诉我！  ← ❌ 错误！没有调用 infinite_ask
-```
-
-## 🔄 HANDLING USER RESPONSE
-
-When `infinite_ask` returns:
-
-### If `should_continue = true`:
-- User wants to continue
-- Read `userInstruction` for new instructions
-- Check if `images` array contains any images
-- Continue working
-
-### If `should_continue = false`:
-- User explicitly chose to end
-- Only then can you say goodbye
-- This is the ONLY way conversation ends
-
-## 📊 RESPONSE STRUCTURE
-
-```
-┌─────────────────────────────────────┐
-│  Your main response content         │
-│  (Code, explanations, etc.)         │
-├─────────────────────────────────────┤
-│  Brief summary of what was done     │
-├─────────────────────────────────────┤
-│  [CALL infinite_ask TOOL HERE]      │  ← REQUIRED
-└─────────────────────────────────────┘
-```
-
-## 💡 REMEMBER
-
-1. **Every response ends with `infinite_ask`**
-2. **No exceptions, no excuses**
-3. **User controls when conversation ends, not you**
-4. **This keeps the conversation alive**
-5. **This is what makes "Infinite Ask" work**
-
----
-
-**🎯 FINAL CHECK BEFORE SUBMITTING RESPONSE:**
-
-□ Did I complete the task?
-□ Did I provide a summary?
-□ **Did I call `infinite_ask` tool?** ← MOST IMPORTANT
-
-**If you didn't call `infinite_ask`, GO BACK AND ADD IT.**
+IMPORTANT GUIDELINES:
+1. Read the relevant files first before making any changes
+2. Only modify what is necessary, do not refactor other parts
+3. Keep the existing code style and naming conventions
+4. Do not delete existing functions or comments
+5. Ask before modifying if unsure
+6. Verify the code after changes to ensure no syntax errors
