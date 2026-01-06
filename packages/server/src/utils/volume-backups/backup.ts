@@ -3,6 +3,12 @@ import { paths } from "@dokploy/server/constants";
 import { findComposeById } from "@dokploy/server/services/compose";
 import type { findVolumeBackupById } from "@dokploy/server/services/volume-backups";
 import { getS3Credentials, normalizeS3Path } from "../backups/utils";
+import { getBackupBaseName, isBindPath } from "./naming";
+
+const shEscape = (value: string | undefined): string => {
+	if (!value) return "''";
+	return `'${value.replace(/'/g, `'\\''`)}'`;
+};
 
 export const backupVolume = async (
 	volumeBackup: Awaited<ReturnType<typeof findVolumeBackupById>>,
@@ -12,7 +18,9 @@ export const backupVolume = async (
 		volumeBackup.application?.serverId || volumeBackup.compose?.serverId;
 	const { VOLUME_BACKUPS_PATH } = paths(!!serverId);
 	const destination = volumeBackup.destination;
-	const backupFileName = `${volumeName}-${new Date().toISOString()}.tar`;
+	const isBind = isBindPath(volumeName);
+	const backupBaseName = getBackupBaseName(volumeName);
+	const backupFileName = `${backupBaseName}-${new Date().toISOString()}.tar`;
 	const bucketDestination = `${normalizeS3Path(prefix)}${backupFileName}`;
 	const rcloneFlags = getS3Credentials(volumeBackup.destination);
 	const rcloneDestination = `:s3:${destination.bucket}/${bucketDestination}`;
@@ -20,18 +28,42 @@ export const backupVolume = async (
 
 	const rcloneCommand = `rclone copyto ${rcloneFlags.join(" ")} "${volumeBackupPath}/${backupFileName}" "${rcloneDestination}"`;
 
+	const dockerBackupCommand = isBind
+		? `SOURCE_PATH=${shEscape(volumeName)}
+  if [ -d "$SOURCE_PATH" ]; then
+    docker run --rm \
+      -v "$SOURCE_PATH":/source_data:ro \
+      -v ${shEscape(volumeBackupPath)}:/backup \
+      ubuntu \
+      bash -c "cd /source_data && tar cvf /backup/${backupFileName} ."
+  elif [ -f "$SOURCE_PATH" ]; then
+    SOURCE_DIR=$(dirname "$SOURCE_PATH")
+    SOURCE_FILE=$(basename "$SOURCE_PATH")
+    docker run --rm \
+      -v "$SOURCE_DIR":/source_dir:ro \
+      -v ${shEscape(volumeBackupPath)}:/backup \
+      ubuntu \
+      bash -c "cd /source_dir && tar cvf /backup/${backupFileName} \\"$SOURCE_FILE\\""
+  else
+    echo "Source path does not exist: $SOURCE_PATH"
+    exit 1
+  fi
+  `
+		: `docker run --rm \
+  -v ${shEscape(volumeName)}:/volume_data \
+  -v ${shEscape(volumeBackupPath)}:/backup \
+  ubuntu \
+  bash -c "cd /volume_data && tar cvf /backup/${backupFileName} ."
+  `;
+
 	const baseCommand = `
 	set -e
-	echo "Volume name: ${volumeName}"
+	echo "Source: ${volumeName}"
 	echo "Backup file name: ${backupFileName}"
 	echo "Turning off volume backup: ${turnOff ? "Yes" : "No"}"
 	echo "Starting volume backup" 
 	echo "Dir: ${volumeBackupPath}"
-    docker run --rm \
-  -v ${volumeName}:/volume_data \
-  -v ${volumeBackupPath}:/backup \
-  ubuntu \
-  bash -c "cd /volume_data && tar cvf /backup/${backupFileName} ."
+	${dockerBackupCommand}
   echo "Volume backup done ✅"
   echo "Starting upload to S3..."
   ${rcloneCommand}

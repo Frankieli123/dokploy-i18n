@@ -12,6 +12,7 @@ import {
 import { scheduledJobs, scheduleJob } from "node-schedule";
 import { getS3Credentials, normalizeS3Path } from "../backups/utils";
 import { backupVolume } from "./backup";
+import { getBackupBaseName } from "./naming";
 
 export const scheduleVolumeBackup = async (volumeBackupId: string) => {
 	const volumeBackup = await findVolumeBackupById(volumeBackupId);
@@ -37,7 +38,8 @@ const cleanupOldVolumeBackups = async (
 		const rcloneFlags = getS3Credentials(destination);
 		const normalizedPrefix = normalizeS3Path(prefix);
 		const backupFilesPath = `:s3:${destination.bucket}/${normalizedPrefix}`;
-		const listCommand = `rclone lsf ${rcloneFlags.join(" ")} --include \"${volumeName}-*.tar\" :s3:${destination.bucket}/${normalizedPrefix}`;
+		const backupBaseName = getBackupBaseName(volumeName);
+		const listCommand = `rclone lsf ${rcloneFlags.join(" ")} --include \"${backupBaseName}-*.tar\" :s3:${destination.bucket}/${normalizedPrefix}`;
 		const sortAndPick = `sort -r | tail -n +$((${keepLatestCount}+1)) | xargs -I{}`;
 		const deleteCommand = `rclone delete ${rcloneFlags.join(" ")} ${backupFilesPath}{}`;
 		const fullCommand = `${listCommand} | ${sortAndPick} ${deleteCommand}`;

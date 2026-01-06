@@ -6,6 +6,12 @@ import {
 	getS3Credentials,
 	paths,
 } from "../..";
+import { getBackupBaseName, isBindPath } from "./naming";
+
+const shEscape = (value: string | undefined): string => {
+	if (!value) return "''";
+	return `'${value.replace(/'/g, `'\\''`)}'`;
+};
 
 export const restoreVolume = async (
 	id: string,
@@ -17,13 +23,69 @@ export const restoreVolume = async (
 ) => {
 	const destination = await findDestinationById(destinationId);
 	const { VOLUME_BACKUPS_PATH } = paths(!!serverId);
-	const volumeBackupPath = path.join(VOLUME_BACKUPS_PATH, volumeName);
+	const isBind = isBindPath(volumeName);
+	const backupBaseName = getBackupBaseName(volumeName);
+	const volumeBackupPath = path.join(VOLUME_BACKUPS_PATH, backupBaseName);
 	const rcloneFlags = getS3Credentials(destination);
 	const bucketPath = `:s3:${destination.bucket}`;
 	const backupPath = `${bucketPath}/${backupFileName}`;
 
 	// Command to download backup file from S3
 	const downloadCommand = `rclone copyto ${rcloneFlags.join(" ")} "${backupPath}" "${volumeBackupPath}/${backupFileName}"`;
+
+	const bindRestoreCommand = `
+	set -e
+	echo "Target path: ${volumeName}"
+	echo "Backup file name: ${backupFileName}"
+	echo "Volume backup path: ${volumeBackupPath}"
+	echo "Downloading backup from S3..."
+	mkdir -p ${shEscape(volumeBackupPath)}
+	${downloadCommand}
+	echo "Download completed 鉁?
+	TARGET_PATH=${shEscape(volumeName)}
+	if [ -d "$TARGET_PATH" ] || [ "\${TARGET_PATH%/}" != "$TARGET_PATH" ]; then
+		echo "Restoring to directory: $TARGET_PATH"
+		mkdir -p "$TARGET_PATH"
+		docker run --rm \
+			-v "$TARGET_PATH":/target \
+			-v ${shEscape(volumeBackupPath)}:/backup \
+			ubuntu \
+			bash -c "tar xvf /backup/${backupFileName} -C /target --overwrite"
+	else
+		TARGET_DIR=$(dirname "$TARGET_PATH")
+		echo "Restoring to file directory: $TARGET_DIR"
+		mkdir -p "$TARGET_DIR"
+		docker run --rm \
+			-v "$TARGET_DIR":/target \
+			-v ${shEscape(volumeBackupPath)}:/backup \
+			ubuntu \
+			bash -c "tar xvf /backup/${backupFileName} -C /target --overwrite"
+	fi
+	echo "Bind restore completed 鉁?
+	`;
+
+	if (isBind) {
+		if (serviceType === "application") {
+			const application = await findApplicationById(id);
+			return `
+			echo "=== BIND RESTORE FOR APPLICATION ==="
+			echo "Application: ${application.appName}"
+			${bindRestoreCommand}
+			`;
+		}
+
+		if (serviceType === "compose") {
+			const compose = await findComposeById(id);
+			return `
+			echo "=== BIND RESTORE FOR COMPOSE ==="
+			echo "Compose: ${compose.appName}"
+			echo "Compose Type: ${compose.composeType}"
+			${bindRestoreCommand}
+			`;
+		}
+
+		return bindRestoreCommand;
+	}
 
 	// Base restore command that creates the volume and restores data
 	const baseRestoreCommand = `
@@ -32,13 +94,13 @@ export const restoreVolume = async (
 	echo "Backup file name: ${backupFileName}"
 	echo "Volume backup path: ${volumeBackupPath}"
 	echo "Downloading backup from S3..."
-	mkdir -p ${volumeBackupPath}
+	mkdir -p ${shEscape(volumeBackupPath)}
 	${downloadCommand}
 	echo "Download completed ✅"
 	echo "Creating new volume and restoring data..."
 	docker run --rm \
-		-v ${volumeName}:/volume_data \
-		-v ${volumeBackupPath}:/backup \
+		-v ${shEscape(volumeName)}:/volume_data \
+		-v ${shEscape(volumeBackupPath)}:/backup \
 		ubuntu \
 		bash -c "cd /volume_data && tar xvf /backup/${backupFileName} ."
 	echo "Volume restore completed ✅"

@@ -53,11 +53,7 @@ const createFormSchema = (t: (key: string) => string) =>
 				.min(1, t("volumeBackups.validation.cronRequired")),
 		volumeName: z
 			.string()
-				.min(1, t("volumeBackups.validation.volumeNameRequired"))
-			.regex(
-				/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/,
-					t("volumeBackups.validation.volumeNameInvalid"),
-			),
+				.min(1, t("volumeBackups.validation.volumeNameRequired")),
 		prefix: z.string(),
 		keepLatestCount: z.coerce
 			.number()
@@ -82,6 +78,19 @@ const createFormSchema = (t: (key: string) => string) =>
 				.min(1, t("volumeBackups.validation.destinationRequired")),
 	})
 	.superRefine((data, ctx) => {
+		const volumeName = data.volumeName.trim();
+		const isAbsolutePath =
+			volumeName.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(volumeName);
+		const isVolumeName = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(volumeName);
+
+		if (!isAbsolutePath && !isVolumeName) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: t("volumeBackups.validation.volumeNameInvalid"),
+				path: ["volumeName"],
+			});
+		}
+
 		if (data.serviceType === "compose" && !data.serviceName) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
@@ -496,21 +505,30 @@ export const HandleVolumeBackups = ({
 																)}
 															/>
 														</SelectTrigger>
-													</FormControl>
-													<SelectContent>
-														{mountsByService?.map((volume) => (
-															<SelectItem
-																key={volume.Name}
-																value={volume.Name || ""}
-															>
-																{volume.Name}
-															</SelectItem>
-														))}
-													</SelectContent>
-												</Select>
-												<FormDescription>
-													{t(
-														"volumeBackups.handle.field.volumeSelect.description",
+											</FormControl>
+											<SelectContent>
+												{mountsByService?.map((mount) => {
+													const value =
+														mount.Type === "bind" ? mount.Source : mount.Name;
+													if (!value) return null;
+													const label =
+														mount.Type === "bind"
+															? `${mount.Source} -> ${mount.Destination}`
+															: mount.Name;
+													return (
+														<SelectItem
+															key={`${mount.Type}-${value}-${mount.Destination || ""}`}
+															value={value}
+														>
+															{label}
+														</SelectItem>
+													);
+												})}
+											</SelectContent>
+										</Select>
+										<FormDescription>
+											{t(
+												"volumeBackups.handle.field.volumeSelect.description",
 													)}
 												</FormDescription>
 												<FormMessage />
@@ -543,11 +561,23 @@ export const HandleVolumeBackups = ({
 												</SelectTrigger>
 											</FormControl>
 											<SelectContent>
-												{mounts?.map((mount) => (
-													<SelectItem key={mount.Name} value={mount.Name || ""}>
-														{mount.Name}
-													</SelectItem>
-												))}
+												{mounts?.map((mount) => {
+													const value =
+														mount.Type === "bind" ? mount.Source : mount.Name;
+													if (!value) return null;
+													const label =
+														mount.Type === "bind"
+															? `${mount.Source} -> ${mount.Destination}`
+															: mount.Name;
+													return (
+														<SelectItem
+															key={`${mount.Type}-${value}-${mount.Destination || ""}`}
+															value={value}
+														>
+															{label}
+														</SelectItem>
+													);
+												})}
 											</SelectContent>
 										</Select>
 										<FormDescription>

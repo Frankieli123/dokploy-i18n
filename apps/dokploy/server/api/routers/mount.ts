@@ -66,9 +66,25 @@ export const mountRouter = createTRPCRouter({
 		.query(async ({ input }) => {
 			const app = await findApplicationById(input.applicationId);
 			const container = await getServiceContainer(app.appName, app.serverId);
-			const mounts = container?.Mounts.filter(
-				(mount) => mount.Type === "volume" && mount.Source !== "",
-			);
+			const excludedDestinations = new Set([
+				"/etc/hosts",
+				"/etc/hostname",
+				"/etc/resolv.conf",
+			]);
+			const mounts = container?.Mounts.filter((mount) => {
+				if (!mount?.Source) return false;
+
+				if (mount.Type === "volume") {
+					return mount.Name;
+				}
+
+				if (mount.Type !== "bind") return false;
+
+				if (excludedDestinations.has(mount.Destination)) return false;
+				if (mount.Source.startsWith("/var/lib/docker/containers/")) return false;
+
+				return true;
+			});
 			return mounts;
 		}),
 });

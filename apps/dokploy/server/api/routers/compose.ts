@@ -302,9 +302,25 @@ export const composeRouter = createTRPCRouter({
 				});
 			}
 			const container = await getComposeContainer(compose, input.serviceName);
-			const mounts = container?.Mounts.filter(
-				(mount) => mount.Type === "volume" && mount.Source !== "",
-			);
+			const excludedDestinations = new Set([
+				"/etc/hosts",
+				"/etc/hostname",
+				"/etc/resolv.conf",
+			]);
+			const mounts = container?.Mounts.filter((mount) => {
+				if (!mount?.Source) return false;
+
+				if (mount.Type === "volume") {
+					return mount.Name;
+				}
+
+				if (mount.Type !== "bind") return false;
+
+				if (excludedDestinations.has(mount.Destination)) return false;
+				if (mount.Source.startsWith("/var/lib/docker/containers/")) return false;
+
+				return true;
+			});
 			return mounts;
 		}),
 	fetchSourceType: protectedProcedure
