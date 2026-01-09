@@ -31,6 +31,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
 	Sheet,
 	SheetContent,
@@ -137,6 +138,8 @@ export function AIChatDrawer({
 		messages,
 		isLoading,
 		conversationId,
+		areToolApprovalsDisabled,
+		setToolApprovalsDisabled,
 		send,
 		reset,
 		retryMessage,
@@ -410,6 +413,20 @@ export function AIChatDrawer({
 							</SelectContent>
 						</Select>
 					)}
+					<div className="flex flex-row items-center justify-between rounded-lg border p-3 mt-2">
+						<div className="space-y-0.5 min-w-0">
+							<div className="text-sm font-medium truncate">
+								{t("ai.chat.autoApproveLabel")}
+							</div>
+							<div className="text-xs text-muted-foreground leading-snug">
+								{t("ai.chat.autoApproveDescription")}
+							</div>
+						</div>
+						<Switch
+							checked={areToolApprovalsDisabled}
+							onCheckedChange={setToolApprovalsDisabled}
+						/>
+					</div>
 				</SheetHeader>
 
 				<ScrollArea

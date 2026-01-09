@@ -10,6 +10,7 @@ import {
 	apiGetRun,
 	apiListConversations,
 	apiSendMessage,
+	apiSetToolApprovalsDisabled,
 	apiStartAgent,
 	apiUpdateAi,
 	apiUpdateConversation,
@@ -369,6 +370,34 @@ export const aiRouter = createTRPCRouter({
 				return await updateConversation(input.conversationId, {
 					title: input.title,
 					status: input.status,
+				});
+			}),
+
+		setToolApprovalsDisabled: protectedProcedure
+			.input(apiSetToolApprovalsDisabled)
+			.mutation(async ({ ctx, input }) => {
+				const conversation = await getConversationById(input.conversationId);
+				if (conversation.organizationId !== ctx.session.activeOrganizationId) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "settings.ai.errors.noAccessToConversation",
+					});
+				}
+
+				const nextMetadata = (() => {
+					const base =
+						conversation.metadata &&
+						typeof conversation.metadata === "object" &&
+						!Array.isArray(conversation.metadata)
+							? { ...(conversation.metadata as Record<string, unknown>) }
+							: {};
+					if (input.disabled) (base as any).toolApprovalsDisabled = true;
+					else delete (base as any).toolApprovalsDisabled;
+					return base;
+				})();
+
+				return await updateConversation(input.conversationId, {
+					metadata: nextMetadata,
 				});
 			}),
 

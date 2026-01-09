@@ -16,8 +16,6 @@ const truncate = (value: string, maxChars: number) => {
 	return `${value.slice(0, maxChars)}\n...[TRUNCATED to ${maxChars} chars]`;
 };
 
-const hasFileRedirection = (command: string) => />>?\s*(?!&)/.test(command);
-
 const matchesAny = (command: string, patterns: RegExp[]) =>
 	patterns.some((p) => p.test(command));
 
@@ -37,43 +35,6 @@ const DANGEROUS_PATTERNS: RegExp[] = [
 	/\bkill\b\s+-9\s+-1\b/i,
 	/\bcurl\b[\s\S]*\|\s*(bash|sh)\b/i,
 	/\bwget\b[\s\S]*\|\s*(bash|sh)\b/i,
-];
-
-const NETWORK_PATTERNS: RegExp[] = [
-	/\bcurl\b/i,
-	/\bwget\b/i,
-	/\bssh\b/i,
-	/\bscp\b/i,
-	/\brsync\b/i,
-	/\bnc\b/i,
-	/\bncat\b/i,
-	/\bsocat\b/i,
-	/\bgit\b\s+clone\b/i,
-	/\bapt\b/i,
-	/\bapt-get\b/i,
-	/\byum\b/i,
-	/\bdnf\b/i,
-	/\bapk\b/i,
-	/\bpip\b/i,
-	/\bnpm\b/i,
-	/\bpnpm\b/i,
-	/\byarn\b/i,
-	/\bdocker\b\s+login\b/i,
-];
-
-const WRITE_PATTERNS: RegExp[] = [
-	/\brm\b/i,
-	/\bmv\b/i,
-	/\bcp\b/i,
-	/\btee\b/i,
-	/\bsed\b\s+-i\b/i,
-	/\bperl\b\s+-pi\b/i,
-	/\bchmod\b/i,
-	/\bchown\b/i,
-	/\bmkdir\b/i,
-	/\btouch\b/i,
-	/\bln\b\s+-s\b/i,
-	/\btruncate\b/i,
 ];
 
 const normalizeCommand = (command: string) => command.trim();
@@ -140,7 +101,7 @@ const serverExec: Tool<
 > = {
 	name: "server_exec",
 	description:
-		"Execute a command on a target server. High-risk tool: requires approval and an explicit confirm token. Default mode blocks network, filesystem writes, and extremely dangerous commands unless allow* flags are enabled.",
+		"Execute a command on a target server. High-risk tool: requires approval and an explicit confirm token. Blocks extremely dangerous commands unless allowUnsafe=true + confirm=EXECUTE_UNSAFE.",
 	category: "server",
 	parameters: z
 		.object({
@@ -231,29 +192,6 @@ const serverExec: Tool<
 				message:
 					"Command blocked: extremely dangerous patterns detected. Use allowUnsafe=true and confirm=EXECUTE_UNSAFE if you really intend to run it.",
 				error: "DANGEROUS_COMMAND_BLOCKED",
-				data: { stdout: "", stderr: "" },
-			};
-		}
-
-		const isNetwork = matchesAny(command, NETWORK_PATTERNS);
-		if (isNetwork && !params.allowNetwork && !params.allowUnsafe) {
-			return {
-				success: false,
-				message:
-					"Command blocked: network activity detected. Set allowNetwork=true (or allowUnsafe=true) to proceed.",
-				error: "NETWORK_BLOCKED",
-				data: { stdout: "", stderr: "" },
-			};
-		}
-
-		const isWrite =
-			hasFileRedirection(command) || matchesAny(command, WRITE_PATTERNS);
-		if (isWrite && !params.allowWrite && !params.allowUnsafe) {
-			return {
-				success: false,
-				message:
-					"Command blocked: filesystem write detected. Set allowWrite=true (or allowUnsafe=true) to proceed.",
-				error: "WRITE_BLOCKED",
 				data: { stdout: "", stderr: "" },
 			};
 		}

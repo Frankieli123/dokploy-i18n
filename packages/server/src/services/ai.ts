@@ -1288,6 +1288,7 @@ function buildChatTools(params: {
 	conversationId: string;
 	toolContext: ToolContext;
 	messageId?: string;
+	toolApprovalsDisabled?: boolean;
 }): Record<string, any> {
 	return {
 		tool_suggest: tool({
@@ -1446,15 +1447,18 @@ function buildChatTools(params: {
 					unknown
 				>;
 
+				const requiresApproval =
+					t.requiresApproval && params.toolApprovalsDisabled !== true;
+
 				const execution = await createToolExecution({
 					conversationId: params.conversationId,
 					messageId: params.messageId,
 					toolName: t.name,
 					parameters: validatedParams,
-					requiresApproval: t.requiresApproval,
+					requiresApproval,
 				});
 
-				if (t.requiresApproval) {
+				if (requiresApproval) {
 					return {
 						success: true,
 						status: "pending_approval",
@@ -1608,6 +1612,24 @@ function safeJsonForPrompt(value: unknown, maxLen: number) {
 	}
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getToolApprovalsDisabledFromMetadata(metadata: unknown): boolean {
+	return isRecord(metadata) && metadata.toolApprovalsDisabled === true;
+}
+
+function setToolApprovalsDisabledInMetadata(
+	metadata: unknown,
+	disabled: boolean,
+): Record<string, unknown> {
+	const next = isRecord(metadata) ? { ...metadata } : {};
+	if (disabled) next.toolApprovalsDisabled = true;
+	else delete (next as { toolApprovalsDisabled?: unknown }).toolApprovalsDisabled;
+	return next;
+}
+
 function buildEmptyModelOutputFallback(userMessage: string): string {
 	const looksChinese = /[\u4e00-\u9fff]/.test(userMessage);
 	if (looksChinese) {
@@ -1622,94 +1644,14 @@ function buildEmptyModelOutputFallback(userMessage: string): string {
 	);
 }
 
-async function guessConversationLanguage(
-	conversationId: string,
-): Promise<"zh" | "en"> {
-	try {
-		const recent = await getMessages({ conversationId, limit: 12 });
-		for (let i = recent.length - 1; i >= 0; i--) {
-			const msg = recent[i];
-			if (msg?.role !== "user") continue;
-			const content = (msg.content ?? "").trim();
-			if (content.length === 0) continue;
-			return /[\u4e00-\u9fff]/.test(content) ? "zh" : "en";
-		}
-	} catch {
-		// Ignore language detection errors
-	}
-	return "en";
-}
-
-function formatToolOutcomeAssistantMessage(params: {
-	lang: "zh" | "en";
-	toolName: string;
-	executionId: string;
-	outcome: "completed" | "failed" | "rejected";
-	result?: { success: boolean; message?: string; error?: string };
-}): string {
-	const toolName = params.toolName.trim();
-	const executionId = params.executionId.trim();
-	if (!toolName || !executionId) return "";
-
-	const message = params.result?.message?.trim() ?? "";
-	const error = params.result?.error?.trim() ?? "";
-
-	const detailHint =
-		params.lang === "zh"
-			? "（详情见工具执行卡片）"
-			: "(See the tool execution card for details)";
-
-	if (params.outcome === "rejected") {
-		return params.lang === "zh"
-			? `已拒绝执行：${toolName}\n执行ID：${executionId}\n${detailHint}`
-			: `Rejected: ${toolName}\nExecution ID: ${executionId}\n${detailHint}`;
-	}
-
-	if (params.outcome === "failed") {
-		const reason = safeTruncateString(error || message || "Unknown error", 500);
-		return params.lang === "zh"
-			? `❌ 执行失败：${toolName}\n执行ID：${executionId}\n原因：${reason}\n${detailHint}`
-			: `❌ Failed: ${toolName}\nExecution ID: ${executionId}\nReason: ${reason}\n${detailHint}`;
-	}
-
-	const doneText = message ? safeTruncateString(message, 500) : "";
-	return params.lang === "zh"
-		? `✅ 已完成：${toolName}\n执行ID：${executionId}${doneText ? `\n结果：${doneText}` : ""}\n${detailHint}`
-		: `✅ Completed: ${toolName}\nExecution ID: ${executionId}${doneText ? `\nResult: ${doneText}` : ""}\n${detailHint}`;
-}
-
-async function appendToolOutcomeAssistantMessage(params: {
+async function appendToolOutcomeAssistantMessage(_params: {
 	conversationId?: string | null;
 	toolName: string;
 	executionId: string;
 	outcome: "completed" | "failed" | "rejected";
 	result?: { success: boolean; message?: string; error?: string };
 }) {
-	const conversationId =
-		typeof params.conversationId === "string" && params.conversationId.length > 0
-			? params.conversationId
-			: "";
-	if (!conversationId) return;
-
-	const lang = await guessConversationLanguage(conversationId);
-	const content = formatToolOutcomeAssistantMessage({
-		lang,
-		toolName: params.toolName,
-		executionId: params.executionId,
-		outcome: params.outcome,
-		result: params.result,
-	});
-	if (!content) return;
-
-	try {
-		await saveMessage({
-			conversationId,
-			role: "assistant",
-			content,
-		});
-	} catch {
-		// Best-effort: do not fail tool execution if chat message cannot be saved
-	}
+	return;
 }
 
 async function generateToolOutcomeSummary(params: {
@@ -1963,6 +1905,9 @@ export const chat = async ({
 		conversationId,
 		toolContext,
 		messageId: userMessage.messageId,
+		toolApprovalsDisabled: getToolApprovalsDisabledFromMetadata(
+			conversation.metadata,
+		),
 	});
 
 	const initialSystemMode = getInitialSystemMode(aiSettings);
@@ -2294,6 +2239,9 @@ export const chatStream = async (
 		conversationId,
 		toolContext,
 		messageId: userMessage.messageId,
+		toolApprovalsDisabled: getToolApprovalsDisabledFromMetadata(
+			conversation.metadata,
+		),
 	});
 
 	const initialSystemMode = getInitialSystemMode(aiSettings);
@@ -2543,10 +2491,18 @@ export const chatStream = async (
 	}
 
 	const executionIdByToolCallId = new Map<string, string>();
+	const invokedToolNameByToolCallId = new Map<string, string>();
 	for (const tr of streamed.toolResults) {
 		if (!tr || typeof tr !== "object") continue;
 		const resultValue = (tr as { result?: unknown }).result;
 		if (resultValue && typeof resultValue === "object") {
+			const invokedTool =
+				(resultValue as { invokedTool?: unknown }).invokedTool ??
+				(resultValue as { toolName?: unknown }).toolName;
+			if (typeof invokedTool === "string" && invokedTool.trim().length > 0) {
+				invokedToolNameByToolCallId.set(tr.toolCallId, invokedTool.trim());
+			}
+
 			const executionId = (resultValue as { executionId?: unknown })
 				.executionId;
 			const nestedExecutionId =
@@ -2568,11 +2524,46 @@ export const chatStream = async (
 	}
 
 	const toolCallsToPersist = streamed.toolCalls
-		.map((tc) => ({
-			...tc,
-			executionId: executionIdByToolCallId.get(tc.id),
-		}))
-		.filter((tc) => tc.function.name !== "tool_call");
+		.filter((tc) => tc.function.name === "tool_call")
+		.map((tc) => {
+			const parsed = (() => {
+				try {
+					return JSON.parse(tc.function.arguments) as unknown;
+				} catch {
+					return undefined;
+				}
+			})();
+
+			const raw = (() => {
+				if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+					return { toolName: "", params: {} as unknown };
+				}
+				const toolName =
+					typeof (parsed as { toolName?: unknown }).toolName === "string"
+						? String((parsed as { toolName?: unknown }).toolName).trim()
+						: "";
+				const params =
+					typeof (parsed as { params?: unknown }).params !== "undefined"
+						? (parsed as { params?: unknown }).params
+						: {};
+				return { toolName, params };
+			})();
+
+			const toolName =
+				invokedToolNameByToolCallId.get(tc.id) ||
+				raw.toolName ||
+				"tool_call";
+			const toolParams = raw.params ?? {};
+			return {
+				id: tc.id,
+				type: "function" as const,
+				executionId: executionIdByToolCallId.get(tc.id),
+				function: {
+					name: toolName,
+					arguments: JSON.stringify(toolParams),
+				},
+			};
+		});
 
 	const assistantMessage = await saveMessage({
 		conversationId,
@@ -2634,6 +2625,7 @@ function buildSystemPrompt(
 		context += `\nUser is on server: ${conversation.serverId}`;
 	}
 	context += `\nPlatform mode: ${IS_CLOUD ? "cloud" : "self-hosted"}`;
+	context += `\nTool approvals: ${getToolApprovalsDisabledFromMetadata(conversation.metadata) ? "disabled" : "manual"}`;
 
 	const memorySummary =
 		conversation.metadata &&
@@ -2653,7 +2645,7 @@ function buildSystemPrompt(
 	const guidelines = `Guidelines:
 - Be concise; ask at most 1-3 focused questions only if blocking.
 - Tools: if you know the exact tool + params, call tool_call directly; otherwise use tool_suggest/tool_search/tool_describe, then tool_call.
- - Approvals (critical): if requires approval, you MUST create a tool_call that returns status="pending_approval" (do not ask in natural language without a tool_call). Include ALL required params (including any confirm literal); do NOT send empty params as a placeholder. Tell the user to approve/reject in the UI (or type "批准/拒绝"). After the first approval in this conversation, assume auto-approval may be enabled and keep proceeding unless the user disables it.
+ - Approvals (critical): if a tool requires approval AND tool approvals are manual, you MUST create a tool_call that returns status="pending_approval" (do not ask in natural language without a tool_call). Include ALL required params (including any confirm literal); do NOT send empty params as a placeholder. Tell the user to approve/reject in the UI (or type "批准/拒绝"). If tool approvals are disabled for this conversation, proceed without asking for approval.
 - Context: reuse recent tool results; do not re-run the same read-only checks/config reads unnecessarily.
 - ServerId: self-hosted defaults to the local Dokploy host when serverId is missing; only require serverId for remote targets. Cloud mode requires serverId for server operations.
 - Safety: run low-risk read tools immediately; for medium/high-risk actions, explain before executing; if approval is required, create the pending_approval tool_call first.
@@ -3023,14 +3015,57 @@ export const approveToolExecution = async (
 		.where(eq(aiToolExecutions.executionId, executionId))
 		.returning();
 
-	if (updated && !approved) {
-		await appendToolOutcomeAssistantMessage({
-			conversationId: updated.conversationId,
-			toolName: updated.toolName,
-			executionId: updated.executionId,
-			outcome: "rejected",
-			result: { success: false, message: "Rejected" },
-		});
+	if (updated?.conversationId && approved) {
+		try {
+			const conversation = await getConversationById(updated.conversationId);
+			await updateConversation(updated.conversationId, {
+				metadata: setToolApprovalsDisabledInMetadata(conversation.metadata, true),
+			});
+		} catch {}
+	}
+
+	if (updated?.conversationId && updated?.messageId && approved) {
+		void (async () => {
+			try {
+				const conversation = await getConversationById(updated.conversationId!);
+				const ctx: ToolContext = {
+					organizationId: conversation.organizationId,
+					userId: approvedBy,
+					projectId: conversation.projectId || undefined,
+					serverId: conversation.serverId || undefined,
+				};
+
+				const pending = await db.query.aiToolExecutions.findMany({
+					where: and(
+						eq(aiToolExecutions.conversationId, updated.conversationId!),
+						eq(aiToolExecutions.messageId, updated.messageId!),
+						eq(aiToolExecutions.status, "pending"),
+					),
+					limit: 20,
+				});
+
+				for (const exec of pending) {
+					if (exec.executionId === updated.executionId) continue;
+					await db
+						.update(aiToolExecutions)
+						.set({
+							status: "approved",
+							approvedBy,
+							approvedAt: new Date().toISOString(),
+						})
+						.where(eq(aiToolExecutions.executionId, exec.executionId));
+					if (exec.runId) {
+						await resumeAgentRun({
+							runId: exec.runId,
+							organizationId: conversation.organizationId,
+							userId: approvedBy,
+						});
+						continue;
+					}
+					await executeApprovedTool(exec.executionId, ctx);
+				}
+			} catch {}
+		})();
 	}
 
 	return updated;
@@ -3159,6 +3194,9 @@ async function autoContinueAfterApprovedToolExecution(params: {
 		conversationId: params.conversationId,
 		toolContext,
 		messageId: undefined,
+		toolApprovalsDisabled: getToolApprovalsDisabledFromMetadata(
+			conversation.metadata,
+		),
 	});
 
 	const initialSystemMode = getInitialSystemMode(aiSettings);

@@ -719,6 +719,7 @@ const readTraefikConfig: Tool<
 			".json",
 			".log",
 			".txt",
+			".tmp",
 		]);
 		const ext = path.extname(baseName).toLowerCase();
 		if (!allowedExtensions.has(ext)) {

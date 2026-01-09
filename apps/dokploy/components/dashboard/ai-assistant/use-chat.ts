@@ -136,16 +136,17 @@ export function useChat(options: UseChatOptions = {}) {
 	const [toolCallMeta, setToolCallMeta] = useState<
 		Record<string, Pick<ToolCall, "status" | "executionId" | "result">>
 	>({});
-	const [isConversationAutoApproved, setIsConversationAutoApproved] =
+	const [areToolApprovalsDisabled, setAreToolApprovalsDisabled] =
 		useState(false);
-	const autoApprovedToolCallIdsRef = useRef<Set<string>>(new Set());
-	const isAutoApprovingRef = useRef(false);
+	const hasUserSetToolApprovalsDisabledRef = useRef(false);
 	const inFlightApprovalExecutionIdsRef = useRef<Set<string>>(new Set());
 	const [isLoading, setIsLoading] = useState(false);
 	const [abortController, setAbortController] =
 		useState<AbortController | null>(null);
 	const approveExecution = api.ai.agent.approve.useMutation();
 	const executeExecution = api.ai.agent.execute.useMutation();
+	const setToolApprovalsDisabledMutation =
+		api.ai.conversations.setToolApprovalsDisabled.useMutation();
 
 	useEffect(() => {
 		return () => {
@@ -214,6 +215,38 @@ export function useChat(options: UseChatOptions = {}) {
 				refetchOnWindowFocus: false,
 			},
 		);
+
+	const { data: conversationDetails } = api.ai.conversations.get.useQuery(
+		{ conversationId: conversationId || "" },
+		{
+			enabled: isEnabled && !!conversationId,
+			refetchOnWindowFocus: false,
+		},
+	);
+
+	useEffect(() => {
+		if (hasUserSetToolApprovalsDisabledRef.current) return;
+		const metadata = conversationDetails?.metadata;
+		const disabled = isRecord(metadata) && metadata.toolApprovalsDisabled === true;
+		setAreToolApprovalsDisabled(disabled);
+	}, [conversationDetails?.metadata]);
+
+	useEffect(() => {
+		if (!conversationId) return;
+		if (!areToolApprovalsDisabled) return;
+		const metadata = conversationDetails?.metadata;
+		const alreadyDisabled =
+			isRecord(metadata) && metadata.toolApprovalsDisabled === true;
+		if (alreadyDisabled) return;
+		void setToolApprovalsDisabledMutation
+			.mutateAsync({ conversationId, disabled: true })
+			.catch(() => {});
+	}, [
+		areToolApprovalsDisabled,
+		conversationDetails?.metadata,
+		conversationId,
+		setToolApprovalsDisabledMutation,
+	]);
 
 	const executionHydrationTargets = useMemo(() => {
 		const toolCalls = ((serverMessages || []) as Message[])
@@ -348,7 +381,8 @@ export function useChat(options: UseChatOptions = {}) {
 				return;
 			}
 
-			setIsConversationAutoApproved(true);
+			hasUserSetToolApprovalsDisabledRef.current = true;
+			setAreToolApprovalsDisabled(true);
 			const meta = toolCallMeta[toolCallId];
 			const fallbackToolCall = messages
 				.flatMap((m) => m.toolCalls || [])
@@ -465,41 +499,6 @@ export function useChat(options: UseChatOptions = {}) {
 		],
 	);
 
-	const enableConversationAutoApprove = useCallback(() => {
-		setIsConversationAutoApproved(true);
-	}, []);
-
-	useEffect(() => {
-		if (!conversationId) return;
-		if (!isConversationAutoApproved) return;
-		if (isAutoApprovingRef.current) return;
-
-		const pendingToolCallId = (() => {
-			for (const msg of messages) {
-				for (const tc of msg.toolCalls || []) {
-					const effectiveStatus =
-						tc.status ?? (tc.executionId ? "pending" : "completed");
-					if (effectiveStatus !== "pending") continue;
-					if (!tc.executionId) continue;
-					if (autoApprovedToolCallIdsRef.current.has(tc.id)) continue;
-					return tc.id;
-				}
-			}
-			return "";
-		})();
-
-		if (!pendingToolCallId) return;
-		autoApprovedToolCallIdsRef.current.add(pendingToolCallId);
-		isAutoApprovingRef.current = true;
-		(async () => {
-			try {
-				await approveToolCall(pendingToolCallId);
-			} finally {
-				isAutoApprovingRef.current = false;
-			}
-		})().catch(() => {});
-	}, [approveToolCall, conversationId, isConversationAutoApproved, messages]);
-
 	const rejectToolCall = useCallback(
 		async (toolCallId: string) => {
 			const currentStatus = toolCallMeta[toolCallId]?.status;
@@ -584,6 +583,29 @@ export function useChat(options: UseChatOptions = {}) {
 		setAbortController(null);
 		setIsLoading(false);
 	}, [abortController]);
+
+	const setToolApprovalsDisabled = useCallback(
+		async (disabled: boolean) => {
+			hasUserSetToolApprovalsDisabledRef.current = true;
+			setAreToolApprovalsDisabled(disabled);
+			if (!conversationId) return;
+			try {
+				await setToolApprovalsDisabledMutation.mutateAsync({
+					conversationId,
+					disabled,
+				});
+			} catch (error) {
+				setAreToolApprovalsDisabled(!disabled);
+				options.onError?.(error as Error);
+			}
+		},
+		[
+			conversationId,
+			options,
+			setToolApprovalsDisabledMutation,
+			setAreToolApprovalsDisabled,
+		],
+	);
 
 	const send = useCallback(
 		async (content: string, aiId: string) => {
@@ -965,9 +987,8 @@ export function useChat(options: UseChatOptions = {}) {
 		setPendingMessages([]);
 		setToolCallMeta({});
 		setToolOutcomes([]);
-		setIsConversationAutoApproved(false);
-		autoApprovedToolCallIdsRef.current.clear();
-		isAutoApprovingRef.current = false;
+		hasUserSetToolApprovalsDisabledRef.current = false;
+		setAreToolApprovalsDisabled(false);
 	}, [abortController]);
 
 	const retryMessage = useCallback(
@@ -993,9 +1014,8 @@ export function useChat(options: UseChatOptions = {}) {
 			setPendingMessages([]);
 			setToolCallMeta({});
 			setToolOutcomes([]);
-			setIsConversationAutoApproved(false);
-			autoApprovedToolCallIdsRef.current.clear();
-			isAutoApprovingRef.current = false;
+			hasUserSetToolApprovalsDisabledRef.current = false;
+			setAreToolApprovalsDisabled(false);
 			setConversationId(normalized);
 		},
 		[stopGeneration],
@@ -1018,8 +1038,8 @@ export function useChat(options: UseChatOptions = {}) {
 		conversationId,
 		messages,
 		isLoading,
-		isConversationAutoApproved,
-		enableConversationAutoApprove,
+		areToolApprovalsDisabled,
+		setToolApprovalsDisabled,
 		toolOutcomes,
 		send,
 		approveToolCall,

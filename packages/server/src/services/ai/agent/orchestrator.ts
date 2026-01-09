@@ -188,6 +188,7 @@ async function createExecutionForStep(
 	runId: string,
 	conversationId: string,
 	step: AgentPlanStep,
+	toolApprovalsDisabled: boolean,
 ) {
 	const t = toolRegistry.get(step.toolName);
 	if (!t) {
@@ -252,9 +253,8 @@ async function createExecutionForStep(
 	}
 
 	const validatedParams = validation.data as unknown as Record<string, unknown>;
-	const initialStatus: AiToolExecutionDbStatus = step.requiresApproval
-		? "pending"
-		: "approved";
+	const initialStatus: AiToolExecutionDbStatus =
+		step.requiresApproval && !toolApprovalsDisabled ? "pending" : "approved";
 
 	const [execution] = await db
 		.insert(aiToolExecutions)
@@ -354,6 +354,19 @@ export async function orchestrateRun(
 		});
 	}
 
+	const conversation = await db.query.aiConversations.findFirst({
+		where: eq(aiConversations.conversationId, run.conversationId),
+		columns: {
+			metadata: true,
+		},
+	});
+	const toolApprovalsDisabled =
+		!!conversation?.metadata &&
+		typeof conversation.metadata === "object" &&
+		!Array.isArray(conversation.metadata) &&
+		(conversation.metadata as { toolApprovalsDisabled?: unknown })
+			.toolApprovalsDisabled === true;
+
 	const executionsById = new Map<string, (typeof run.toolExecutions)[number]>();
 	for (const exec of run.toolExecutions || []) {
 		executionsById.set(exec.executionId, exec);
@@ -403,7 +416,12 @@ export async function orchestrateRun(
 
 		let exec = executionsById.get(step.id);
 		if (!exec) {
-			exec = await createExecutionForStep(runId, run.conversationId, step);
+			exec = await createExecutionForStep(
+				runId,
+				run.conversationId,
+				step,
+				toolApprovalsDisabled,
+			);
 			executionsById.set(exec.executionId, exec);
 			await saveAgentEventMessage({
 				conversationId: run.conversationId,
@@ -419,9 +437,15 @@ export async function orchestrateRun(
 			});
 		}
 
-		const execStatus = exec.status as AiToolExecutionDbStatus;
+		let execStatus = exec.status as AiToolExecutionDbStatus;
 
 		if (execStatus === "pending") {
+			if (toolApprovalsDisabled) {
+				await updateExecution(exec.executionId, {
+					status: "approved",
+				});
+				execStatus = "approved";
+			} else {
 			assertValidTransition("executing", "waiting_approval");
 			await updateRun(runId, { status: "waiting_approval" });
 			await saveAgentEventMessage({
@@ -444,6 +468,7 @@ export async function orchestrateRun(
 				executionId: exec.executionId,
 				toolName: exec.toolName,
 			};
+			}
 		}
 
 		if (execStatus === "rejected") {

@@ -381,6 +381,11 @@ export const apiUpdateConversation = z.object({
 	status: z.enum(["active", "archived"]).optional(),
 });
 
+export const apiSetToolApprovalsDisabled = z.object({
+	conversationId: z.string().min(1),
+	disabled: z.boolean(),
+});
+
 // ============================================
 // API Schemas for Chat
 // ============================================
