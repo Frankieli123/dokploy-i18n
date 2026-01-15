@@ -11,12 +11,89 @@ import {
 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { translateErrorMessage } from "@/utils/error-translation";
 import { ToolCallBlock } from "./tool-call-block";
 import { ToolGroup } from "./tool-call-group";
 import type { Message } from "./use-chat";
+
+const assistantMarkdownComponents: Components = {
+	p: ({ children }) => (
+		<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed mb-2 last:mb-0">
+			{children}
+		</p>
+	),
+	ul: ({ children }) => (
+		<ul className="list-disc pl-5 space-y-1 mb-2 last:mb-0">{children}</ul>
+	),
+	ol: ({ children }) => (
+		<ol className="list-decimal pl-5 space-y-1 mb-2 last:mb-0">{children}</ol>
+	),
+	li: ({ children }) => (
+		<li className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+			{children}
+		</li>
+	),
+	a: ({ href, children }) => (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className="underline underline-offset-4 break-words [overflow-wrap:anywhere]"
+		>
+			{children}
+		</a>
+	),
+	code: ({ className, children }) => {
+		const text =
+			typeof children === "string"
+				? children
+				: Array.isArray(children)
+					? children
+							.filter((c): c is string => typeof c === "string")
+							.join("")
+					: "";
+		const isProbablyBlock =
+			typeof className === "string" &&
+			className.toLowerCase().includes("language-");
+		const isBlock = isProbablyBlock || text.includes("\n");
+
+		if (!isBlock) {
+			return (
+				<code
+					className={cn(
+						"rounded bg-background/60 px-1 py-0.5 font-mono text-[0.85em] break-words [overflow-wrap:anywhere]",
+						className,
+					)}
+				>
+					{children}
+				</code>
+			);
+		}
+		return (
+			<code
+				className={cn(
+					"font-mono text-xs whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
+					className,
+				)}
+			>
+				{children}
+			</code>
+		);
+	},
+	pre: ({ children }) => (
+		<pre className="my-2 max-w-full overflow-x-auto rounded-md border border-border/50 bg-background/40 p-2 text-xs leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+			{children}
+		</pre>
+	),
+	blockquote: ({ children }) => (
+		<blockquote className="border-l-2 border-border/60 pl-3 italic text-muted-foreground mb-2 last:mb-0">
+			{children}
+		</blockquote>
+	),
+};
 
 interface MessageBubbleProps {
 	message: Message;
@@ -135,22 +212,31 @@ export function MessageBubble({
 							isSending && "animate-pulse",
 						)}
 					>
-						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed">
-							{shouldShowEmptyAssistantFallback
-								? t("common.unknownError")
-								: bubbleText}
-							{!isUser &&
-								isSending &&
-								(bubbleText.length === 0 ? (
-									<span className="inline-flex items-center gap-1 h-4 ml-1 align-middle">
-										<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
-										<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
-										<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" />
-									</span>
-								) : (
-									<span className="inline-block w-[2px] h-4 ml-1 bg-current align-middle animate-pulse" />
-								))}
-						</p>
+						{isUser || shouldShowEmptyAssistantFallback || isSending ? (
+							<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed">
+								{shouldShowEmptyAssistantFallback
+									? t("common.unknownError")
+									: bubbleText}
+								{!isUser &&
+									isSending &&
+									(bubbleText.length === 0 ? (
+										<span className="inline-flex items-center gap-1 h-4 ml-1 align-middle">
+											<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
+											<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
+											<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" />
+										</span>
+									) : (
+										<span className="inline-block w-[2px] h-4 ml-1 bg-current align-middle animate-pulse" />
+									))}
+							</p>
+						) : (
+							<ReactMarkdown
+								skipHtml
+								components={assistantMarkdownComponents}
+							>
+								{bubbleText}
+							</ReactMarkdown>
+						)}
 						{isError && message.error && (
 							<div className="mt-2 flex items-start gap-2 rounded bg-destructive/10 p-2 text-xs">
 								<AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
