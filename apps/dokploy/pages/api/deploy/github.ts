@@ -100,7 +100,8 @@ export default async function handler(
 		try {
 			const tagName = githubBody?.ref.replace("refs/tags/", "");
 			const repository = githubBody?.repository?.name;
-			const owner = githubBody?.repository?.owner?.name;
+			const owner =
+				githubBody?.repository?.owner?.login || githubBody?.repository?.owner?.name;
 			const deploymentTitle = `Tag created: ${tagName}`;
 			const deploymentHash = extractHash(req.headers, githubBody);
 
@@ -208,7 +209,8 @@ export default async function handler(
 
 			const deploymentTitle = extractCommitMessage(req.headers, req.body);
 			const deploymentHash = extractHash(req.headers, req.body);
-			const owner = githubBody?.repository?.owner?.name;
+			const owner =
+				githubBody?.repository?.owner?.login || githubBody?.repository?.owner?.name;
 			const normalizedCommits = githubBody?.commits?.flatMap(
 				(commit: any) => commit.modified,
 			);

@@ -1,6 +1,7 @@
 import { paths } from "@dokploy/server/constants";
 import { findAdmin } from "@dokploy/server/services/admin";
 import { updateUser } from "@dokploy/server/services/user";
+import { stat } from "node:fs/promises";
 import { scheduledJobs, scheduleJob } from "node-schedule";
 import { execAsync } from "../process/execAsync";
 
@@ -19,8 +20,15 @@ export const startLogCleanup = async (
 
 		scheduleJob(LOG_CLEANUP_JOB_NAME, cronExpression, async () => {
 			try {
+				const accessLogPath = `${DYNAMIC_TRAEFIK_PATH}/access.log`;
+				try {
+					await stat(accessLogPath);
+				} catch {
+					return;
+				}
+
 				await execAsync(
-					`tail -n 1000 ${DYNAMIC_TRAEFIK_PATH}/access.log > ${DYNAMIC_TRAEFIK_PATH}/access.log.tmp && mv ${DYNAMIC_TRAEFIK_PATH}/access.log.tmp ${DYNAMIC_TRAEFIK_PATH}/access.log`,
+					`tail -n 1000 ${accessLogPath} > ${DYNAMIC_TRAEFIK_PATH}/access.log.tmp && mv ${DYNAMIC_TRAEFIK_PATH}/access.log.tmp ${accessLogPath}`,
 				);
 
 				await execAsync("docker exec dokploy-traefik kill -USR1 1");

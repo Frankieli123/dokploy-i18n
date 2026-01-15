@@ -199,12 +199,20 @@ export const cloneGithubRepository = async ({
 	let cloneUrl = shouldUseMirror ? `${mirrorPrefixUrl}${canonical}` : canonical;
 	let gitConfigArgs = "";
 	if (forwardAuth || !shouldUseMirror) {
-		const octokit = authGithub(githubProvider);
-		const token = await getGithubToken(octokit);
-		const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
-		gitConfigArgs = `-c http.extraheader=${shSingleQuote(
-			`Authorization: Basic ${basic}`,
-		)} `;
+		try {
+			const octokit = authGithub(githubProvider);
+			const token = await getGithubToken(octokit);
+			const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
+			gitConfigArgs = `-c http.extraheader=${shSingleQuote(
+				`Authorization: Basic ${basic}`,
+			)} `;
+		} catch (error) {
+			if (error instanceof TRPCError) {
+				throw error;
+			}
+			command +=
+				'echo "[WARN] Failed to fetch GitHub token; trying unauthenticated clone (private repos may fail).";';
+		}
 	}
 
 	if (githubProvider.githubApiProxyUrl) {

@@ -15,6 +15,7 @@ import {
 import { config } from "dotenv";
 import next from "next";
 import { migration } from "@/server/db/migration";
+import { ensureAiChatPerformanceIndexes } from "@/server/db/ai-indexes";
 import { setupDockerContainerLogsWebSocketServer } from "./wss/docker-container-logs";
 import { setupDockerContainerTerminalWebSocketServer } from "./wss/docker-container-terminal";
 import { setupDockerStatsMonitoringSocketServer } from "./wss/docker-stats";
@@ -51,6 +52,7 @@ void app.prepare().then(async () => {
 			createDefaultTraefikConfig();
 			createDefaultServerTraefikConfig();
 			await migration();
+			void ensureAiChatPerformanceIndexes();
 			await initCronJobs();
 			await initSchedules();
 			await initCancelDeployments();
@@ -60,6 +62,7 @@ void app.prepare().then(async () => {
 
 		if (IS_CLOUD && process.env.NODE_ENV === "production") {
 			await migration();
+			void ensureAiChatPerformanceIndexes();
 		}
 
 		server.listen(PORT, HOST);

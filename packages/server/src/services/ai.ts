@@ -1605,8 +1605,132 @@ function safeTruncateString(value: string, maxLen: number) {
 }
 
 function safeJsonForPrompt(value: unknown, maxLen: number) {
+	const limits = {
+		maxDepth: 4,
+		maxArrayLength: 50,
+		maxObjectKeys: 50,
+		maxStringLength: 2000,
+	} as const;
+
+	const truncatedMarker = "\n... (truncated)";
+	let truncated = false;
+
+	const parts: string[] = [];
+	let remaining = Math.max(0, maxLen);
+
+	const push = (text: string) => {
+		if (remaining <= 0) return;
+		if (text.length <= remaining) {
+			parts.push(text);
+			remaining -= text.length;
+			return;
+		}
+		parts.push(text.slice(0, remaining));
+		remaining = 0;
+		truncated = true;
+	};
+
+	const seen = new WeakSet<object>();
+
+	const write = (input: unknown, depth: number) => {
+		if (remaining <= 0) return;
+		if (depth > limits.maxDepth) {
+			truncated = true;
+			push('"[MaxDepth]"');
+			return;
+		}
+
+		if (input === null) {
+			push("null");
+			return;
+		}
+
+		if (typeof input === "string") {
+			const s = input.length > limits.maxStringLength
+				? `${input.slice(0, limits.maxStringLength)}…`
+				: input;
+			if (input.length > limits.maxStringLength) truncated = true;
+			push(JSON.stringify(s));
+			return;
+		}
+		if (
+			typeof input === "number" ||
+			typeof input === "boolean" ||
+			typeof input === "bigint"
+		) {
+			push(String(input));
+			return;
+		}
+		if (input === undefined) {
+			push("null");
+			return;
+		}
+		if (typeof input === "function") {
+			push('"[Function]"');
+			return;
+		}
+		if (typeof input === "symbol") {
+			push(JSON.stringify(`[Symbol ${String(input)}]`));
+			return;
+		}
+
+		if (Array.isArray(input)) {
+			push("[");
+			const len = input.length;
+			const shown = Math.min(len, limits.maxArrayLength);
+			for (let i = 0; i < shown; i++) {
+				if (i > 0) push(", ");
+				write(input[i], depth + 1);
+				if (remaining <= 0) break;
+			}
+			if (len > shown && remaining > 0) {
+				truncated = true;
+				push(', "…"');
+			}
+			push("]");
+			return;
+		}
+
+		if (typeof input === "object") {
+			const obj = input as Record<string, unknown>;
+			if (seen.has(obj)) {
+				truncated = true;
+				push('"[Circular]"');
+				return;
+			}
+			seen.add(obj);
+
+			push("{");
+			let written = 0;
+			let hasMore = false;
+			for (const key in obj) {
+				if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+				if (written >= limits.maxObjectKeys) {
+					hasMore = true;
+					break;
+				}
+				if (written > 0) push(", ");
+				push(JSON.stringify(key));
+				push(": ");
+				write(obj[key], depth + 1);
+				written++;
+				if (remaining <= 0) break;
+			}
+			if (hasMore && remaining > 0) {
+				truncated = true;
+				push(', "_truncated": true');
+			}
+			push("}");
+			return;
+		}
+
+		push(JSON.stringify(String(input)));
+	};
+
 	try {
-		return safeTruncateString(JSON.stringify(value, null, 2), maxLen);
+		write(value, 0);
+		const out = parts.join("");
+		return truncated ? `${out}${truncatedMarker}` : out;
 	} catch {
 		return safeTruncateString(String(value), maxLen);
 	}
