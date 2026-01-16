@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 
+export const ALL_MOUNTS_VOLUME_NAME = "dokploy_all_mounts";
+
 export const isBindPath = (value: string) => {
 	return (
 		value.startsWith("/") ||

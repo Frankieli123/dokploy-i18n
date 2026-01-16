@@ -6,7 +6,7 @@ import {
 	getS3Credentials,
 	paths,
 } from "../..";
-import { getBackupBaseName, isBindPath } from "./naming";
+import { ALL_MOUNTS_VOLUME_NAME, getBackupBaseName, isBindPath } from "./naming";
 
 const shEscape = (value: string | undefined): string => {
 	if (!value) return "''";
@@ -32,6 +32,206 @@ export const restoreVolume = async (
 
 	// Command to download backup file from S3
 	const downloadCommand = `rclone copyto ${rcloneFlags.join(" ")} "${backupPath}" "${volumeBackupPath}/${backupFileName}"`;
+
+	if (volumeName.trim() === ALL_MOUNTS_VOLUME_NAME) {
+		const restoreAllMountsCommand = `
+		set -e
+		echo "=== ALL MOUNTS RESTORE ==="
+		echo "Backup file name: ${backupFileName}"
+		echo "Volume backup path: ${volumeBackupPath}"
+		echo "Downloading backup from S3..."
+		mkdir -p ${shEscape(volumeBackupPath)}
+		${downloadCommand}
+		echo "Download completed ✅"
+
+		MANIFEST_FILE=${shEscape(path.join(volumeBackupPath, ".dokploy_all_mounts_mounts.txt"))}
+		TAR_LIST_FILE=${shEscape(path.join(volumeBackupPath, ".dokploy_all_mounts_tar_list.txt"))}
+
+		echo "Extracting mounts manifest..."
+		docker run --rm \
+			-v ${shEscape(volumeBackupPath)}:/backup \
+			ubuntu \
+			bash -c "set -e; (tar -xOf /backup/${backupFileName} .dokploy_all_mounts_mounts.txt > /backup/.dokploy_all_mounts_mounts.txt 2>/dev/null || tar -xOf /backup/${backupFileName} ./.dokploy_all_mounts_mounts.txt > /backup/.dokploy_all_mounts_mounts.txt)"
+
+		if [ ! -s "$MANIFEST_FILE" ]; then
+			echo "Mounts manifest not found in archive: .dokploy_all_mounts_mounts.txt"
+			exit 1
+		fi
+
+		echo "Indexing archive..."
+		docker run --rm \
+			-v ${shEscape(volumeBackupPath)}:/backup \
+			ubuntu \
+			bash -c "set -e; tar -tf /backup/${backupFileName} > /backup/.dokploy_all_mounts_tar_list.txt"
+
+		if [ ! -s "$TAR_LIST_FILE" ]; then
+			echo "Failed to index archive contents."
+			exit 1
+		fi
+
+		INDEX=0
+		while IFS='|' read -r TYPE SOURCE NAME DEST RW; do
+			[ -n "$DEST" ] || continue
+			LABEL=$(basename "$DEST" | sed 's/[^a-zA-Z0-9_.-]/_/g')
+			PREFIX="${"$"}{INDEX}-${"$"}{LABEL}"
+
+			ENTRY_DIR=""
+			ENTRY_FILE=""
+			if grep -q "^${"$"}{PREFIX}/" "$TAR_LIST_FILE"; then
+				ENTRY_DIR="${"$"}PREFIX/"
+			elif grep -q "^\\./${"$"}{PREFIX}/" "$TAR_LIST_FILE"; then
+				ENTRY_DIR="./${"$"}PREFIX/"
+			elif grep -q "^${"$"}{PREFIX}$" "$TAR_LIST_FILE"; then
+				ENTRY_FILE="${"$"}PREFIX"
+			elif grep -q "^\\./${"$"}{PREFIX}$" "$TAR_LIST_FILE"; then
+				ENTRY_FILE="./${"$"}PREFIX"
+			else
+				echo "Skipping missing entry in archive: ${"$"}PREFIX"
+				INDEX=$((INDEX+1))
+				continue
+			fi
+			STRIP_COMPONENTS=1
+			if [ -n "$ENTRY_DIR" ]; then
+				case "$ENTRY_DIR" in
+					./*)
+						STRIP_COMPONENTS=2
+						;;
+					*)
+						STRIP_COMPONENTS=1
+						;;
+				esac
+			fi
+
+			if [ "$TYPE" = "volume" ]; then
+				VOLUME_NAME="$NAME"
+				if [ -z "$VOLUME_NAME" ]; then
+					echo "Skipping volume mount with empty name (dest: ${"$"}DEST)"
+					INDEX=$((INDEX+1))
+					continue
+				fi
+				echo "Restoring docker volume: ${"$"}VOLUME_NAME (${ "$"}DEST)"
+				if [ -z "$ENTRY_DIR" ]; then
+					echo "Unexpected file entry for volume mount: ${"$"}PREFIX"
+					exit 1
+				fi
+				docker run --rm \
+					-v "${"$"}VOLUME_NAME":/target \
+					-v ${shEscape(volumeBackupPath)}:/backup \
+					ubuntu \
+					bash -c "set -e; tar xvf /backup/${backupFileName} -C /target --overwrite --strip-components=${"$"}STRIP_COMPONENTS \\"${"$"}ENTRY_DIR\\""
+			elif [ "$TYPE" = "bind" ]; then
+				HOST_PATH="$SOURCE"
+				if [ -z "$HOST_PATH" ]; then
+					echo "Skipping bind mount with empty source (dest: ${"$"}DEST)"
+					INDEX=$((INDEX+1))
+					continue
+				fi
+
+				if [ -n "$ENTRY_DIR" ]; then
+					echo "Restoring bind directory: ${"$"}HOST_PATH (${ "$"}DEST)"
+					mkdir -p "${"$"}HOST_PATH"
+					docker run --rm \
+						--mount "type=bind,source=${"$"}HOST_PATH,target=/target" \
+						-v ${shEscape(volumeBackupPath)}:/backup \
+						ubuntu \
+						bash -c "set -e; tar xvf /backup/${backupFileName} -C /target --overwrite --strip-components=${"$"}STRIP_COMPONENTS \\"${"$"}ENTRY_DIR\\""
+				else
+					echo "Restoring bind file: ${"$"}HOST_PATH (${ "$"}DEST)"
+					HOST_DIR=$(dirname "${"$"}HOST_PATH")
+					HOST_FILE=$(basename "${"$"}HOST_PATH")
+					mkdir -p "${"$"}HOST_DIR"
+					docker run --rm \
+						--mount "type=bind,source=${"$"}HOST_DIR,target=/target" \
+						-v ${shEscape(volumeBackupPath)}:/backup \
+						ubuntu \
+						bash -c "set -e; tar xvf /backup/${backupFileName} -C /tmp --overwrite \\"${"$"}ENTRY_FILE\\"; cp -f \\"/tmp/${"$"}ENTRY_FILE\\" \\"/target/${"$"}HOST_FILE\\""
+				fi
+			else
+				echo "Skipping unknown mount type: ${"$"}TYPE"
+			fi
+
+			INDEX=$((INDEX+1))
+		done < "$MANIFEST_FILE"
+
+		echo "All mounts restore completed ✅"
+		`;
+
+		if (serviceType === "application") {
+			const application = await findApplicationById(id);
+			return `
+			echo "=== ALL MOUNTS RESTORE FOR APPLICATION ==="
+			SERVICE_NAME=${shEscape(application.appName)}
+			ACTUAL_REPLICAS=$(docker service inspect "$SERVICE_NAME" --format "{{.Spec.Mode.Replicated.Replicas}}")
+			echo "Actual replicas: $ACTUAL_REPLICAS"
+			echo "Stopping application to 0 replicas"
+			docker service scale "$SERVICE_NAME"=0
+			${restoreAllMountsCommand}
+			echo "Starting application to $ACTUAL_REPLICAS replicas"
+			docker service scale "$SERVICE_NAME"=$ACTUAL_REPLICAS
+			`;
+		}
+
+		if (serviceType === "compose") {
+			const compose = await findComposeById(id);
+			if (compose.composeType === "stack") {
+				return `
+				echo "=== ALL MOUNTS RESTORE FOR COMPOSE STACK ==="
+				STACK_NAME=${shEscape(compose.appName)}
+				echo "Stack: $STACK_NAME"
+				REPLICAS_FILE=${shEscape(
+					path.join(volumeBackupPath, ".dokploy_all_mounts_stack_replicas.txt"),
+				)}
+				: > "$REPLICAS_FILE"
+				SERVICES=$(docker service ls --filter "label=com.docker.stack.namespace=$STACK_NAME" --format "{{.Name}}")
+				if [ -z "$SERVICES" ]; then
+					echo "No services found for stack: $STACK_NAME"
+				else
+					echo "Stopping stack services..."
+					for svc in $SERVICES; do
+						REPLICAS=$(docker service inspect "$svc" --format "{{if .Spec.Mode.Replicated}}{{.Spec.Mode.Replicated.Replicas}}{{end}}")
+						if [ -z "$REPLICAS" ]; then
+							echo "Service is not replicated and cannot be auto-stopped: $svc"
+							exit 1
+						fi
+						echo "${"$"}svc|${"$"}REPLICAS" >> "$REPLICAS_FILE"
+						docker service scale "${"$"}svc"=0
+					done
+				fi
+				${restoreAllMountsCommand}
+				if [ -s "$REPLICAS_FILE" ]; then
+					echo "Starting stack services..."
+					while IFS='|' read -r svc replicas; do
+						[ -n "$svc" ] || continue
+						docker service scale "${"$"}svc"="${"$"}replicas"
+					done < "$REPLICAS_FILE"
+				fi
+				`;
+			}
+
+			return `
+			echo "=== ALL MOUNTS RESTORE FOR DOCKER-COMPOSE ==="
+			PROJECT_NAME=${shEscape(compose.appName)}
+			echo "Compose project: $PROJECT_NAME"
+			CONTAINERS=$(docker ps -a -q --filter "label=com.docker.compose.project=$PROJECT_NAME")
+			if [ -n "$CONTAINERS" ]; then
+				echo "Stopping compose containers..."
+				docker stop $CONTAINERS
+			else
+				echo "No compose containers found for project: $PROJECT_NAME"
+			fi
+			${restoreAllMountsCommand}
+			if [ -n "$CONTAINERS" ]; then
+				echo "Starting compose containers..."
+				docker start $CONTAINERS
+			fi
+			`;
+		}
+
+		return `
+		echo "ALL_MOUNTS restore is only supported for application and compose."
+		exit 1
+		`;
+	}
 
 	const bindRestoreCommand = `
 	set -e

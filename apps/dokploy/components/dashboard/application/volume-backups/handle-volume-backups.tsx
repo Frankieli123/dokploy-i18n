@@ -44,10 +44,12 @@ import { api } from "@/utils/api";
 import type { CacheType } from "../domains/handle-domain";
 import { ScheduleFormField } from "../schedules/handle-schedules";
 
+const ALL_MOUNTS_VOLUME_NAME = "dokploy_all_mounts";
+
 const createFormSchema = (t: (key: string) => string) =>
 	z
-	.object({
-			name: z.string().min(1, t("volumeBackups.validation.nameRequired")),
+		.object({
+				name: z.string().min(1, t("volumeBackups.validation.nameRequired")),
 			cronExpression: z
 				.string()
 				.min(1, t("volumeBackups.validation.cronRequired")),
@@ -493,39 +495,46 @@ export const HandleVolumeBackups = ({
 												<FormLabel>
 													{t("volumeBackups.handle.field.volumeSelect.label")}
 												</FormLabel>
-												<Select
-													onValueChange={field.onChange}
-													defaultValue={field.value || ""}
-												>
-													<FormControl>
-														<SelectTrigger>
-															<SelectValue
-																placeholder={t(
-																	"volumeBackups.handle.field.volumeSelect.placeholder",
-																)}
-															/>
-														</SelectTrigger>
-											</FormControl>
-											<SelectContent>
-												{mountsByService?.map((mount) => {
-													const value =
-														mount.Type === "bind" ? mount.Source : mount.Name;
-													if (!value) return null;
-													const label =
-														mount.Type === "bind"
-															? `${mount.Source} -> ${mount.Destination}`
-															: mount.Name;
-													return (
-														<SelectItem
-															key={`${mount.Type}-${value}-${mount.Destination || ""}`}
-															value={value}
-														>
-															{label}
-														</SelectItem>
-													);
-												})}
-											</SelectContent>
-										</Select>
+													<Select
+														onValueChange={field.onChange}
+														defaultValue={field.value || ""}
+													>
+														<FormControl>
+															<SelectTrigger className="text-left">
+																<SelectValue
+																	placeholder={t(
+																		"volumeBackups.handle.field.volumeSelect.placeholder",
+																	)}
+																/>
+															</SelectTrigger>
+												</FormControl>
+												<SelectContent>
+													<SelectItem value={ALL_MOUNTS_VOLUME_NAME}>
+														<span className="whitespace-normal break-all text-left">
+															{t("filter.all")}
+														</span>
+													</SelectItem>
+													{mountsByService?.map((mount) => {
+														const value =
+															mount.Type === "bind" ? mount.Source : mount.Name;
+														if (!value) return null;
+														const label =
+															mount.Type === "bind"
+																? `${mount.Source} -> ${mount.Destination}`
+																: mount.Name;
+														return (
+															<SelectItem
+																key={`${mount.Type}-${value}-${mount.Destination || ""}`}
+																value={value}
+															>
+																<span className="whitespace-normal break-all text-left">
+																	{label}
+																</span>
+															</SelectItem>
+														);
+													})}
+												</SelectContent>
+											</Select>
 										<FormDescription>
 											{t(
 												"volumeBackups.handle.field.volumeSelect.description",
@@ -547,39 +556,46 @@ export const HandleVolumeBackups = ({
 										<FormLabel>
 											{t("volumeBackups.handle.field.volumeSelect.label")}
 										</FormLabel>
-										<Select
-											onValueChange={field.onChange}
-											defaultValue={field.value || ""}
-										>
-											<FormControl>
-												<SelectTrigger>
-													<SelectValue
-														placeholder={t(
-															"volumeBackups.handle.field.volumeSelect.placeholder",
-														)}
-													/>
-												</SelectTrigger>
-											</FormControl>
-											<SelectContent>
-												{mounts?.map((mount) => {
-													const value =
-														mount.Type === "bind" ? mount.Source : mount.Name;
-													if (!value) return null;
-													const label =
-														mount.Type === "bind"
-															? `${mount.Source} -> ${mount.Destination}`
-															: mount.Name;
-													return (
-														<SelectItem
-															key={`${mount.Type}-${value}-${mount.Destination || ""}`}
-															value={value}
-														>
-															{label}
-														</SelectItem>
-													);
-												})}
-											</SelectContent>
-										</Select>
+											<Select
+												onValueChange={field.onChange}
+												defaultValue={field.value || ""}
+											>
+												<FormControl>
+													<SelectTrigger className="text-left">
+														<SelectValue
+															placeholder={t(
+																"volumeBackups.handle.field.volumeSelect.placeholder",
+															)}
+														/>
+													</SelectTrigger>
+												</FormControl>
+												<SelectContent>
+													<SelectItem value={ALL_MOUNTS_VOLUME_NAME}>
+														<span className="whitespace-normal break-all text-left">
+															{t("filter.all")}
+														</span>
+													</SelectItem>
+													{mounts?.map((mount) => {
+														const value =
+															mount.Type === "bind" ? mount.Source : mount.Name;
+														if (!value) return null;
+														const label =
+															mount.Type === "bind"
+																? `${mount.Source} -> ${mount.Destination}`
+																: mount.Name;
+														return (
+															<SelectItem
+																key={`${mount.Type}-${value}-${mount.Destination || ""}`}
+																value={value}
+															>
+																<span className="whitespace-normal break-all text-left">
+																	{label}
+																</span>
+															</SelectItem>
+														);
+													})}
+												</SelectContent>
+											</Select>
 										<FormDescription>
 											{t("volumeBackups.handle.field.volumeSelect.description")}
 										</FormDescription>

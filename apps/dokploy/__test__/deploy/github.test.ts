@@ -5,6 +5,7 @@ import {
 	extractImageTag,
 	extractImageTagFromRequest,
 } from "@/pages/api/deploy/[refreshToken]";
+import { matchesGithubRepository } from "@/pages/api/deploy/github";
 
 describe("GitHub Webhook Skip CI", () => {
 	const mockGithubHeaders = {
@@ -322,6 +323,65 @@ describe("GitHub Packages Docker Image Tag Extraction", () => {
 
 		const message = extractCommitMessage(headers, body);
 		expect(message).toBe("NEW COMMIT");
+	});
+});
+
+describe("GitHub Webhook Repository Matching", () => {
+	it("matches plain repo name + owner", () => {
+		expect(matchesGithubRepository("Dokploy", "examples", "dokploy", "examples")).toBe(
+			true,
+		);
+	});
+
+	it("matches full https clone URL", () => {
+		expect(
+			matchesGithubRepository(
+				"Dokploy",
+				"https://github.com/Dokploy/examples.git",
+				"dokploy",
+				"examples",
+			),
+		).toBe(true);
+	});
+
+	it("matches ssh clone URL", () => {
+		expect(
+			matchesGithubRepository(
+				"Dokploy",
+				"git@github.com:Dokploy/examples.git",
+				"dokploy",
+				"examples",
+			),
+		).toBe(true);
+	});
+
+	it("matches mirror-prefixed clone URL", () => {
+		expect(
+			matchesGithubRepository(
+				"Dokploy",
+				"https://git.lvli.de/https://github.com/Dokploy/examples.git",
+				"dokploy",
+				"examples",
+			),
+		).toBe(true);
+	});
+
+	it("matches owner/repo string", () => {
+		expect(
+			matchesGithubRepository("Dokploy", "Dokploy/examples", "dokploy", "examples"),
+		).toBe(true);
+	});
+
+	it("does not match different owner", () => {
+		expect(matchesGithubRepository("Other", "examples", "dokploy", "examples")).toBe(
+			false,
+		);
+	});
+
+	it("does not match different repo", () => {
+		expect(matchesGithubRepository("dokploy", "other", "dokploy", "examples")).toBe(
+			false,
+		);
 	});
 });
 

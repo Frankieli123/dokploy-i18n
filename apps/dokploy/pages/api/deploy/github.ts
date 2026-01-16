@@ -19,6 +19,64 @@ import { myQueue } from "@/server/queues/queueSetup";
 import { deploy } from "@/server/utils/deploy";
 import { extractCommitMessage, extractHash } from "./[refreshToken]";
 
+export const normalizeGithubName = (value: string) =>
+	value.trim().replace(/\.git$/i, "").toLowerCase();
+
+export const parseGithubOwnerRepoFromString = (
+	value: string,
+): { owner: string; repo: string } | null => {
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+
+	const githubUrl = /github\.com[:/]+([^/\s]+)\/([^/\s?#]+?)(?:\.git)?(?=$|[?#])/gi;
+	let match: RegExpExecArray | null = null;
+	let last: { owner: string; repo: string } | null = null;
+	while ((match = githubUrl.exec(trimmed))) {
+		const owner = match[1];
+		const repo = match[2];
+		if (owner && repo) {
+			last = { owner, repo };
+		}
+	}
+	if (last) return last;
+
+	const ownerRepo = trimmed.match(
+		/^([^/\s]+)\/([^/\s?#]+?)(?:\.git)?(?:[?#].*)?$/i,
+	);
+	if (ownerRepo) {
+		const owner = ownerRepo[1];
+		const repo = ownerRepo[2];
+		if (owner && repo) {
+			return { owner, repo };
+		}
+	}
+
+	return null;
+};
+
+export const matchesGithubRepository = (
+	storedOwner: string | null,
+	storedRepository: string | null,
+	payloadOwner: string,
+	payloadRepository: string,
+) => {
+	if (!storedRepository) return false;
+	if (!payloadOwner || !payloadRepository) return false;
+
+	const payloadOwnerNorm = normalizeGithubName(payloadOwner);
+	const payloadRepoNorm = normalizeGithubName(payloadRepository);
+
+	const parsed = parseGithubOwnerRepoFromString(storedRepository);
+	const owner = parsed?.owner ?? storedOwner;
+	const repo = parsed?.repo ?? storedRepository;
+	if (!owner) return false;
+
+	return (
+		normalizeGithubName(owner) === payloadOwnerNorm &&
+		normalizeGithubName(repo) === payloadRepoNorm
+	);
+};
+
 export default async function handler(
 	req: NextApiRequest,
 	res: NextApiResponse,
@@ -111,13 +169,15 @@ export default async function handler(
 					eq(applications.sourceType, "github"),
 					eq(applications.autoDeploy, true),
 					eq(applications.triggerType, "tag"),
-					eq(applications.repository, repository),
-					eq(applications.owner, owner),
 					eq(applications.githubId, githubResult.githubId),
 				),
 			});
 
-			for (const app of apps) {
+			const matchedApps = apps.filter((app) =>
+				matchesGithubRepository(app.owner, app.repository, owner, repository),
+			);
+
+			for (const app of matchedApps) {
 				const jobData: DeploymentJob = {
 					applicationId: app.applicationId as string,
 					titleLog: deploymentTitle,
@@ -148,13 +208,20 @@ export default async function handler(
 					eq(compose.sourceType, "github"),
 					eq(compose.autoDeploy, true),
 					eq(compose.triggerType, "tag"),
-					eq(compose.repository, repository),
-					eq(compose.owner, owner),
 					eq(compose.githubId, githubResult.githubId),
 				),
 			});
 
-			for (const composeApp of composeApps) {
+			const matchedComposeApps = composeApps.filter((composeApp) =>
+				matchesGithubRepository(
+					composeApp.owner,
+					composeApp.repository,
+					owner,
+					repository,
+				),
+			);
+
+			for (const composeApp of matchedComposeApps) {
 				const jobData: DeploymentJob = {
 					composeId: composeApp.composeId as string,
 					titleLog: deploymentTitle,
@@ -180,7 +247,7 @@ export default async function handler(
 				);
 			}
 
-			const totalApps = apps.length + composeApps.length;
+			const totalApps = matchedApps.length + matchedComposeApps.length;
 
 			if (totalApps === 0) {
 				res
@@ -221,13 +288,15 @@ export default async function handler(
 					eq(applications.autoDeploy, true),
 					eq(applications.triggerType, "push"),
 					eq(applications.branch, branchName),
-					eq(applications.repository, repository),
-					eq(applications.owner, owner),
 					eq(applications.githubId, githubResult.githubId),
 				),
 			});
 
-			for (const app of apps) {
+			const matchedApps = apps.filter((app) =>
+				matchesGithubRepository(app.owner, app.repository, owner, repository),
+			);
+
+			for (const app of matchedApps) {
 				const jobData: DeploymentJob = {
 					applicationId: app.applicationId as string,
 					titleLog: deploymentTitle,
@@ -267,13 +336,20 @@ export default async function handler(
 					eq(compose.autoDeploy, true),
 					eq(compose.triggerType, "push"),
 					eq(compose.branch, branchName),
-					eq(compose.repository, repository),
-					eq(compose.owner, owner),
 					eq(compose.githubId, githubResult.githubId),
 				),
 			});
 
-			for (const composeApp of composeApps) {
+			const matchedComposeApps = composeApps.filter((composeApp) =>
+				matchesGithubRepository(
+					composeApp.owner,
+					composeApp.repository,
+					owner,
+					repository,
+				),
+			);
+
+			for (const composeApp of matchedComposeApps) {
 				const jobData: DeploymentJob = {
 					composeId: composeApp.composeId as string,
 					titleLog: deploymentTitle,
@@ -307,7 +383,7 @@ export default async function handler(
 				);
 			}
 
-			const totalApps = apps.length + composeApps.length;
+			const totalApps = matchedApps.length + matchedComposeApps.length;
 			const emptyApps = totalApps === 0;
 
 			if (emptyApps) {
@@ -369,10 +445,8 @@ export default async function handler(
 			const apps = await db.query.applications.findMany({
 				where: and(
 					eq(applications.sourceType, "github"),
-					eq(applications.repository, repository),
 					eq(applications.branch, branch),
 					eq(applications.isPreviewDeploymentsActive, true),
-					eq(applications.owner, owner),
 					eq(applications.githubId, githubResult.githubId),
 				),
 				with: {
@@ -380,12 +454,16 @@ export default async function handler(
 				},
 			});
 
+			const matchedApps = apps.filter((app) =>
+				matchesGithubRepository(app.owner, app.repository, owner, repository),
+			);
+
 			// SECURITY: Check collaborator permissions per application setting
-			const secureApps: typeof apps = [];
+			const secureApps: typeof matchedApps = [];
 			const blockedApps: string[] = [];
 			let userPermission: string | null = null;
 
-			for (const app of apps) {
+			for (const app of matchedApps) {
 				// If the app requires collaborator permissions, verify them
 				if (app.previewRequireCollaboratorPermissions !== false) {
 					try {
