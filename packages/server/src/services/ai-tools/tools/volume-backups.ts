@@ -20,9 +20,17 @@ import {
 	updateVolumeBackup,
 } from "@dokploy/server/services/volume-backups";
 import {
+	getS3Credentials,
+	normalizeS3Path,
+} from "@dokploy/server/utils/backups/utils";
+import {
 	execAsync,
 	execAsyncRemote,
 } from "@dokploy/server/utils/process/execAsync";
+import {
+	ALL_MOUNTS_VOLUME_NAME,
+	getBackupBaseName,
+} from "@dokploy/server/utils/volume-backups/naming";
 import { restoreVolume } from "@dokploy/server/utils/volume-backups/restore";
 import {
 	removeVolumeBackupJob,
@@ -364,21 +372,31 @@ const createVolumeBackupTool: Tool<
 	{ volumeBackupId: string }
 > = {
 	name: "volume_backup_create",
-	description: "Create a volume backup schedule (requires approval + confirm)",
+	description:
+		"Create a volume backup schedule for a named volume, bind path, or all mounts (volumeName=dokploy_all_mounts). Requires approval + confirm.",
 	category: "backup",
 	parameters: z
 		.object({
 			serviceType: z.enum(["application", "compose"]),
 			serviceId: z.string().min(1),
 			name: z.string().min(1),
-			volumeName: z.string().min(1),
+			volumeName: z
+				.string()
+				.min(1)
+				.describe(
+					"Named volume (e.g. my_volume), bind path (e.g. /var/lib/... or /data/...), or dokploy_all_mounts to backup all mounts of the service",
+				),
 			prefix: z.string().optional().default("volume-backup"),
 			destinationId: z.string().min(1),
 			cronExpression: z.string().min(1),
 			keepLatestCount: z.number().int().min(1).optional(),
 			enabled: z.boolean().optional().default(true),
 			turnOff: z.boolean().optional().default(false),
-			serviceName: z.string().min(1).optional(),
+			serviceName: z
+				.string()
+				.min(1)
+				.describe("Required when serviceType=compose")
+				.optional(),
 			confirm: z.literal("CONFIRM_VOLUME_BACKUP_CHANGE"),
 		})
 		.superRefine((v, ctx2) => {
@@ -450,6 +468,296 @@ const createVolumeBackupTool: Tool<
 	},
 };
 
+const createAndRunVolumeBackupTool: Tool<
+	{
+		serviceType: "application" | "compose";
+		serviceId: string;
+		name: string;
+		volumeName: string;
+		prefix?: string;
+		destinationId: string;
+		cronExpression: string;
+		keepLatestCount?: number;
+		enabled?: boolean;
+		turnOff?: boolean;
+		serviceName?: string;
+		runNow?: boolean;
+		confirm: "CONFIRM_VOLUME_BACKUP_CHANGE";
+	},
+	{ volumeBackupId: string; triggered: boolean }
+> = {
+	name: "volume_backup_create_and_run_now",
+	description:
+		"Create a volume backup schedule and optionally run it immediately (runNow=true). Requires approval + confirm.",
+	category: "backup",
+	parameters: z
+		.object({
+			serviceType: z.enum(["application", "compose"]),
+			serviceId: z.string().min(1),
+			name: z.string().min(1),
+			volumeName: z
+				.string()
+				.min(1)
+				.describe(
+					"Named volume, bind path, or dokploy_all_mounts to backup all mounts",
+				),
+			prefix: z.string().optional().default("volume-backup"),
+			destinationId: z.string().min(1),
+			cronExpression: z.string().min(1),
+			keepLatestCount: z.number().int().min(1).optional(),
+			enabled: z.boolean().optional().default(true),
+			turnOff: z.boolean().optional().default(false),
+			serviceName: z.string().min(1).optional(),
+			runNow: z.boolean().optional().default(false),
+			confirm: z.literal("CONFIRM_VOLUME_BACKUP_CHANGE"),
+		})
+		.superRefine((v, ctx2) => {
+			if (v.serviceType === "compose" && !v.serviceName) {
+				ctx2.addIssue({
+					code: "custom",
+					message: "serviceName is required for compose volume backups",
+				});
+			}
+		}),
+	riskLevel: "high",
+	requiresApproval: true,
+	execute: async (params, ctx) => {
+		await findMemberById(ctx.userId, ctx.organizationId);
+		const svc = await loadServiceForOrg(params.serviceType, params.serviceId, ctx);
+		const destination = await findDestinationById(params.destinationId);
+		if (destination.organizationId !== ctx.organizationId) {
+			return {
+				success: false,
+				message: "Destination access denied",
+				error: "UNAUTHORIZED",
+				data: { volumeBackupId: "", triggered: false },
+			};
+		}
+
+		const created = await createVolumeBackup({
+			name: params.name,
+			volumeName: params.volumeName,
+			prefix: params.prefix ?? "volume-backup",
+			serviceType: params.serviceType,
+			serviceName:
+				params.serviceType === "compose" ? (params.serviceName ?? null) : null,
+			turnOff: params.turnOff ?? false,
+			cronExpression: params.cronExpression,
+			keepLatestCount: params.keepLatestCount,
+			enabled: params.enabled ?? true,
+			destinationId: params.destinationId,
+			applicationId:
+				params.serviceType === "application" ? params.serviceId : null,
+			composeId: params.serviceType === "compose" ? params.serviceId : null,
+		});
+
+		if (!created) {
+			return {
+				success: false,
+				message: "Failed to create volume backup",
+				error: "INTERNAL_ERROR",
+				data: { volumeBackupId: "", triggered: false },
+			};
+		}
+
+		if (created.enabled) {
+			if (IS_CLOUD) {
+				await createJob({
+					type: "volume-backup",
+					cronSchedule: created.cronExpression,
+					volumeBackupId: created.volumeBackupId,
+				});
+			} else {
+				await scheduleVolumeBackup(created.volumeBackupId);
+			}
+		}
+
+		if (params.runNow) {
+			await runVolumeBackup(created.volumeBackupId);
+			return {
+				success: true,
+				message: "Volume backup created and triggered",
+				data: { volumeBackupId: created.volumeBackupId, triggered: true },
+			};
+		}
+
+		return {
+			success: true,
+			message: "Volume backup created",
+			data: { volumeBackupId: created.volumeBackupId, triggered: false },
+		};
+	},
+};
+
+const runAllMountsBackupNowTool: Tool<
+	{
+		serviceType: "application" | "compose";
+		serviceId: string;
+		name?: string;
+		prefix?: string;
+		destinationId: string;
+		cronExpression?: string;
+		keepLatestCount?: number;
+		enabled?: boolean;
+		turnOff?: boolean;
+		serviceName?: string;
+		confirm: "CONFIRM_VOLUME_BACKUP_CHANGE";
+	},
+	{
+		volumeBackupId: string;
+		triggered: boolean;
+		deploymentId: string;
+		status: string;
+		log: string;
+	}
+> = {
+	name: "volume_backup_run_all_mounts_now",
+	description:
+		"One-click: backup ALL mounts for an application/compose service and run it now (volumeName=dokploy_all_mounts). Creates a (disabled by default) schedule and triggers it immediately. Requires approval + confirm.",
+	category: "backup",
+	aliases: [
+		"backup all mounts now",
+		"one-click volume backup",
+		"一键备份挂载",
+		"全挂载备份",
+		"一键卷备份",
+	],
+	tags: ["backup", "volume", "mount", "all", "一键", "备份", "挂载", "全选"],
+	parameters: z
+		.object({
+			serviceType: z.enum(["application", "compose"]),
+			serviceId: z.string().min(1),
+			name: z.string().min(1).optional(),
+			prefix: z.string().optional().default("volume-backup"),
+			destinationId: z.string().min(1),
+			cronExpression: z
+				.string()
+				.min(1)
+				.optional()
+				.default("0 0 * * *")
+				.describe("Cron expression for the created schedule (default daily)"),
+			keepLatestCount: z.number().int().min(1).optional(),
+			enabled: z
+				.boolean()
+				.optional()
+				.default(false)
+				.describe("Whether to keep the schedule enabled after this run"),
+			turnOff: z
+				.boolean()
+				.optional()
+				.default(false)
+				.describe("Stop service before backup (downtime)"),
+			serviceName: z
+				.string()
+				.min(1)
+				.optional()
+				.describe("Required when serviceType=compose"),
+			confirm: z.literal("CONFIRM_VOLUME_BACKUP_CHANGE"),
+		})
+		.superRefine((v, ctx2) => {
+			if (v.serviceType === "compose" && !v.serviceName) {
+				ctx2.addIssue({
+					code: "custom",
+					message: "serviceName is required for compose volume backups",
+					path: ["serviceName"],
+				});
+			}
+		}),
+	riskLevel: "high",
+	requiresApproval: true,
+	execute: async (params, ctx) => {
+		await findMemberById(ctx.userId, ctx.organizationId);
+		const svc = await loadServiceForOrg(params.serviceType, params.serviceId, ctx);
+		const destination = await findDestinationById(params.destinationId);
+		if (destination.organizationId !== ctx.organizationId) {
+			return {
+				success: false,
+				message: "Destination access denied",
+				error: "UNAUTHORIZED",
+				data: {
+					volumeBackupId: "",
+					triggered: false,
+					deploymentId: "",
+					status: "error",
+					log: "",
+				},
+			};
+		}
+
+		const created = await createVolumeBackup({
+			name: params.name ?? "All mounts backup",
+			volumeName: ALL_MOUNTS_VOLUME_NAME,
+			prefix: params.prefix ?? "volume-backup",
+			serviceType: params.serviceType,
+			serviceName:
+				params.serviceType === "compose" ? (params.serviceName ?? null) : null,
+			turnOff: params.turnOff ?? false,
+			cronExpression: params.cronExpression ?? "0 0 * * *",
+			keepLatestCount: params.keepLatestCount,
+			enabled: params.enabled ?? false,
+			destinationId: params.destinationId,
+			applicationId:
+				params.serviceType === "application" ? params.serviceId : null,
+			composeId: params.serviceType === "compose" ? params.serviceId : null,
+		});
+
+		if (!created) {
+			return {
+				success: false,
+				message: "Failed to create volume backup",
+				error: "INTERNAL_ERROR",
+				data: {
+					volumeBackupId: "",
+					triggered: false,
+					deploymentId: "",
+					status: "error",
+					log: "",
+				},
+			};
+		}
+
+		if (created.enabled) {
+			if (IS_CLOUD) {
+				await createJob({
+					type: "volume-backup",
+					cronSchedule: created.cronExpression,
+					volumeBackupId: created.volumeBackupId,
+				});
+			} else {
+				await scheduleVolumeBackup(created.volumeBackupId);
+			}
+		}
+
+		await runVolumeBackup(created.volumeBackupId);
+		const last = await db.query.deployments.findFirst({
+			where: eq(deployments.volumeBackupId, created.volumeBackupId),
+			orderBy: desc(deployments.createdAt),
+		});
+
+		const log =
+			last?.logPath && last.status
+				? await readLogLimited({
+						serverId: svc.serverId ?? null,
+						logPath: last.logPath,
+						direction: "end",
+						maxBytes: 200000,
+					})
+				: "";
+
+		return {
+			success: true,
+			message: "All mounts volume backup triggered",
+			data: {
+				volumeBackupId: created.volumeBackupId,
+				triggered: true,
+				deploymentId: last?.deploymentId ?? "",
+				status: last?.status ?? "unknown",
+				log,
+			},
+		};
+	},
+};
+
 const updateVolumeBackupTool: Tool<
 	{
 		volumeBackupId: string;
@@ -467,13 +775,20 @@ const updateVolumeBackupTool: Tool<
 	{ updated: boolean }
 > = {
 	name: "volume_backup_update",
-	description: "Update a volume backup schedule (requires approval + confirm)",
+	description:
+		"Update a volume backup schedule (supports named volumes, bind paths, and dokploy_all_mounts). Requires approval + confirm.",
 	category: "backup",
 	parameters: z
 		.object({
 			volumeBackupId: z.string().min(1),
 			name: z.string().min(1).optional(),
-			volumeName: z.string().min(1).optional(),
+			volumeName: z
+				.string()
+				.min(1)
+				.describe(
+					"Named volume (e.g. my_volume), bind path (e.g. /var/lib/... or /data/...), or dokploy_all_mounts to backup all mounts of the service",
+				)
+				.optional(),
 			prefix: z.string().min(1).optional(),
 			destinationId: z.string().min(1).optional(),
 			cronExpression: z.string().min(1).optional(),
@@ -749,6 +1064,142 @@ const volumeBackupLastResultTool: Tool<
 	},
 };
 
+const restoreLatestVolumeBackupTool: Tool<
+	{
+		volumeBackupId: string;
+		confirm: "RESTORE_LATEST";
+	},
+	{
+		restored: boolean;
+		backupFileName: string;
+		deploymentId: string;
+		logPath: string;
+		log: string;
+	}
+> = {
+	name: "volume_backup_restore_latest",
+	description:
+		"Restore the latest backup file for a volume backup schedule (named volumes, bind paths, or dokploy_all_mounts). Destructive operation. Requires confirm=RESTORE_LATEST.",
+	category: "backup",
+	aliases: [
+		"restore latest volume backup",
+		"restore latest backup file",
+		"一键恢复最新备份",
+		"恢复最新卷备份",
+	],
+	tags: ["restore", "backup", "latest", "一键", "恢复", "最新"],
+	parameters: z.object({
+		volumeBackupId: z.string().min(1),
+		confirm: z.literal("RESTORE_LATEST"),
+	}),
+	riskLevel: "high",
+	requiresApproval: true,
+	execute: async (params, ctx) => {
+		let deploymentId = "";
+		let logPath = "";
+		let pickedKey = "";
+		try {
+			const loaded = await loadVolumeBackupForOrg(params.volumeBackupId, ctx);
+			const destination = loaded.volumeBackup.destination
+				? loaded.volumeBackup.destination
+				: await findDestinationById(loaded.volumeBackup.destinationId);
+
+			const rcloneFlags = getS3Credentials(destination);
+			const normalizedPrefix = normalizeS3Path(loaded.volumeBackup.prefix);
+			const backupBaseName = getBackupBaseName(loaded.volumeBackup.volumeName);
+			const listPath = `:s3:${destination.bucket}/${normalizedPrefix}`;
+			const pickLatestCommand = `rclone lsf ${rcloneFlags.join(" ")} --include "${backupBaseName}-*.tar" "${listPath}" | sort -r | head -n 1`;
+
+			const picked = loaded.serverId
+				? await execAsyncRemote(loaded.serverId, pickLatestCommand)
+				: await execAsync(pickLatestCommand);
+
+			const fileName = (picked.stdout || "").trim().split(/\r?\n/)[0]?.trim() ?? "";
+			if (!fileName) {
+				return {
+					success: false,
+					message: "No backup files found for this volume backup",
+					error: "NOT_FOUND",
+					data: {
+						restored: false,
+						backupFileName: "",
+						deploymentId: "",
+						logPath: "",
+						log: "",
+					},
+				};
+			}
+
+			pickedKey = `${normalizedPrefix}${fileName}`;
+
+			const deployment = await createDeploymentVolumeBackup({
+				volumeBackupId: params.volumeBackupId,
+				title: "Volume Restore (Latest)",
+				description: "Volume Restore (Latest)",
+			});
+			deploymentId = deployment.deploymentId;
+			logPath = deployment.logPath;
+
+			const cmd = await restoreVolume(
+				loaded.serviceId,
+				loaded.volumeBackup.destinationId,
+				loaded.volumeBackup.volumeName,
+				pickedKey,
+				loaded.serverId || "",
+				loaded.serviceType,
+			);
+			const cmdWithLog = `(${cmd}) >> ${logPath} 2>&1`;
+			if (loaded.serverId) {
+				await execAsyncRemote(loaded.serverId, cmdWithLog);
+			} else {
+				await execAsync(cmdWithLog);
+			}
+
+			await updateDeploymentStatus(deploymentId, "done");
+
+			const log = await readLogLimited({
+				serverId: loaded.serverId,
+				logPath,
+				direction: "end",
+				maxBytes: 200000,
+			});
+
+			return {
+				success: true,
+				message: "Restore completed",
+				data: {
+					restored: true,
+					backupFileName: pickedKey,
+					deploymentId,
+					logPath,
+					log,
+				},
+			};
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			if (deploymentId) {
+				try {
+					await updateDeploymentStatus(deploymentId, "error");
+				} catch {
+					// ignore
+				}
+			}
+			return {
+				success: false,
+				message: "Restore latest failed",
+				error: msg,
+				data: {
+					restored: false,
+					backupFileName: pickedKey,
+					deploymentId,
+					logPath,
+					log: "",
+				},
+			};
+		}
+	},
+};
+
 const restoreVolumeBackupTool: Tool<
 	{
 		volumeBackupId: string;
@@ -759,7 +1210,7 @@ const restoreVolumeBackupTool: Tool<
 > = {
 	name: "volume_backup_restore",
 	description:
-		"Restore a docker volume from a stored backup file. Destructive operation. Requires confirm=RESTORE.",
+		"Restore from a stored backup file (supports named volumes, bind paths, and dokploy_all_mounts). Destructive operation. Requires confirm=RESTORE.",
 	category: "backup",
 	parameters: z.object({
 		volumeBackupId: z.string().min(1),
@@ -834,9 +1285,12 @@ export function registerVolumeBackupTools() {
 	toolRegistry.register(listVolumeBackups);
 	toolRegistry.register(getVolumeBackup);
 	toolRegistry.register(createVolumeBackupTool);
+	toolRegistry.register(createAndRunVolumeBackupTool);
+	toolRegistry.register(runAllMountsBackupNowTool);
 	toolRegistry.register(updateVolumeBackupTool);
 	toolRegistry.register(deleteVolumeBackupTool);
 	toolRegistry.register(runVolumeBackupNowTool);
 	toolRegistry.register(volumeBackupLastResultTool);
+	toolRegistry.register(restoreLatestVolumeBackupTool);
 	toolRegistry.register(restoreVolumeBackupTool);
 }

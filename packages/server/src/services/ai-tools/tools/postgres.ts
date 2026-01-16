@@ -1,4 +1,9 @@
 import { db } from "@dokploy/server/db";
+import {
+	deployApplication,
+	findApplicationById,
+	updateApplication,
+} from "@dokploy/server/services/application";
 import { findEnvironmentById } from "@dokploy/server/services/environment";
 import { findDestinationById } from "@dokploy/server/services/destination";
 import {
@@ -7,6 +12,7 @@ import {
 	findPostgresById,
 	removePostgresById,
 } from "@dokploy/server/services/postgres";
+import { findMemberById } from "@dokploy/server/services/user";
 import { generatePassword } from "@dokploy/server/templates";
 
 import {
@@ -29,6 +35,81 @@ const containsPsqlMetaCommand = (sql: string) => /^\s*\\/m.test(sql);
 const truncateString = (value: string, maxChars: number) => {
 	if (value.length <= maxChars) return value;
 	return `${value.slice(0, maxChars)}\n...(truncated to ${maxChars} chars)`;
+};
+
+const ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+const listEnvKeysFromText = (envText: string | null): Set<string> => {
+	const keys = new Set<string>();
+	const raw = envText ?? "";
+	for (const line of raw.split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (!trimmed || trimmed.startsWith("#")) continue;
+		const idx = line.indexOf("=");
+		if (idx <= 0) continue;
+		const key = line.slice(0, idx).trim();
+		if (ENV_KEY_REGEX.test(key)) keys.add(key);
+	}
+	return keys;
+};
+
+const validateEnvUpdates = (updates: Record<string, string>) => {
+	for (const [key, value] of Object.entries(updates)) {
+		if (!ENV_KEY_REGEX.test(key)) {
+			throw new Error(`Invalid env var key: ${key}`);
+		}
+		if (value.includes("\n") || value.includes("\r")) {
+			throw new Error(`Env var value for ${key} must not contain newlines`);
+		}
+	}
+};
+
+const getLineEnding = (raw: string) => (raw.includes("\r\n") ? "\r\n" : "\n");
+
+const applyEnvUpdatesToText = (
+	envText: string | null,
+	updates: Record<string, string>,
+): { nextEnvText: string; updatedKeys: string[]; addedKeys: string[] } => {
+	validateEnvUpdates(updates);
+
+	const raw = envText ?? "";
+	const eol = getLineEnding(raw);
+	const endedWithEol = raw.endsWith("\n") || raw.endsWith("\r\n");
+	const originalLines = raw.split(/\r?\n/);
+	const lines =
+		originalLines.length > 0 && originalLines[originalLines.length - 1] === ""
+			? originalLines.slice(0, -1)
+			: originalLines;
+
+	const remaining = new Map(Object.entries(updates));
+	const updatedKeys = new Set<string>();
+
+	const nextLines = lines.map((line) => {
+		const trimmedStart = line.trimStart();
+		if (trimmedStart.startsWith("#") || !line.includes("=")) return line;
+
+		const idx = line.indexOf("=");
+		const key = line.slice(0, idx).trim();
+		if (!remaining.has(key)) return line;
+
+		updatedKeys.add(key);
+		const v = remaining.get(key) ?? "";
+		remaining.delete(key);
+		return `${key}=${v}`;
+	});
+
+	const addedKeys: string[] = [];
+	for (const [key, value] of remaining.entries()) {
+		addedKeys.push(key);
+		nextLines.push(`${key}=${value}`);
+	}
+
+	const nextEnvText = nextLines.join(eol) + (endedWithEol ? eol : "");
+	return {
+		nextEnvText,
+		updatedKeys: [...updatedKeys],
+		addedKeys,
+	};
 };
 
 const execOnServer = async (
@@ -915,6 +996,361 @@ const deployPostgresDatabase: Tool<
 	},
 };
 
+const createAndDeployPostgresDatabase: Tool<
+	{
+		name: string;
+		appName: string;
+		databaseName: string;
+		databaseUser: string;
+		environmentId: string;
+		dockerImage?: string;
+		description?: string;
+		serverId?: string;
+		deployNow?: boolean;
+	},
+	{ postgresId: string; name: string; deployed: boolean }
+> = {
+	name: "postgres_create_and_deploy",
+	description:
+		"Create a new PostgreSQL database and deploy it immediately. Requires environment ID.",
+	category: "database",
+	aliases: [
+		"postgres provision",
+		"create and deploy postgres",
+		"one-click postgres",
+		"一键创建Postgres",
+		"创建并部署Postgres",
+	],
+	tags: ["postgres", "create", "deploy", "provision", "一键", "创建", "部署"],
+	parameters: z.object({
+		name: z.string().describe("Display name for the database"),
+		appName: z.string().describe("Unique app name (used in container naming)"),
+		databaseName: z.string().describe("PostgreSQL database name"),
+		databaseUser: z.string().describe("PostgreSQL username"),
+		environmentId: z.string().describe("Environment ID to create database in"),
+		dockerImage: z
+			.string()
+			.optional()
+			.default("postgres:16")
+			.describe("Docker image"),
+		description: z.string().optional().describe("Description"),
+		serverId: z.string().optional().describe("Server ID for remote deployment"),
+		deployNow: z
+			.boolean()
+			.optional()
+			.default(true)
+			.describe("Deploy/start immediately after creation"),
+	}),
+	riskLevel: "medium",
+	requiresApproval: true,
+	execute: async (params, ctx) => {
+		const env = await ensureEnvironmentAccess(params.environmentId, ctx);
+		if (!env) {
+			return {
+				success: false,
+				message: "Environment access denied",
+				data: { postgresId: "", name: "", deployed: false },
+			};
+		}
+
+		const newPg = await createPostgres({
+			name: params.name,
+			appName: params.appName,
+			databaseName: params.databaseName,
+			databaseUser: params.databaseUser,
+			databasePassword: generatePassword(),
+			environmentId: params.environmentId,
+			dockerImage: params.dockerImage || "postgres:16",
+			description: params.description ?? null,
+			serverId: params.serverId ?? ctx.serverId ?? null,
+		});
+
+		if (!params.deployNow) {
+			return {
+				success: true,
+				message: `PostgreSQL database "${newPg.name}" created successfully`,
+				data: {
+					postgresId: newPg.postgresId,
+					name: newPg.name,
+					deployed: false,
+				},
+			};
+		}
+
+		try {
+			await deployPostgres(newPg.postgresId);
+			return {
+				success: true,
+				message: `PostgreSQL "${newPg.name}" created and deployed successfully`,
+				data: {
+					postgresId: newPg.postgresId,
+					name: newPg.name,
+					deployed: true,
+				},
+			};
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			return {
+				success: false,
+				message: `PostgreSQL "${newPg.name}" created but deployment failed`,
+				error: errorMessage,
+				data: {
+					postgresId: newPg.postgresId,
+					name: newPg.name,
+					deployed: false,
+				},
+			};
+		}
+	},
+};
+
+const provisionPostgresForApplication: Tool<
+	{
+		applicationId: string;
+		name?: string;
+		appName?: string;
+		databaseName?: string;
+		databaseUser?: string;
+		dockerImage?: string;
+		description?: string;
+		serverId?: string;
+		deployNow?: boolean;
+		setEnv?: boolean;
+		overwriteEnv?: boolean;
+		apply?: boolean;
+		confirm: "CONFIRM_POSTGRES_PROVISION_FOR_APPLICATION";
+	},
+	{
+		postgresId: string;
+		postgresAppName: string;
+		databaseName: string;
+		databaseUser: string;
+		deployed: boolean;
+		applicationId: string;
+		envKeys: Array<{ key: string; writtenAs: string }>;
+		databaseUrlKey: string;
+		databaseUrlMasked: string;
+		applied: boolean;
+	}
+> = {
+	name: "postgres_provision_for_application",
+	description:
+		"One-click: create a PostgreSQL database for an existing application, deploy it, and write connection env vars into the application.",
+	category: "database",
+	aliases: [
+		"postgres attach",
+		"create postgres and set env",
+		"provision postgres for app",
+		"创建Postgres并写入env",
+		"一键创建数据库并写入应用环境变量",
+	],
+	tags: ["postgres", "provision", "attach", "env", "一键", "创建", "写入", "环境变量"],
+	parameters: z.object({
+		applicationId: z.string().min(1).describe("Target application ID"),
+		name: z.string().optional().describe("Display name for the database"),
+		appName: z
+			.string()
+			.optional()
+			.describe("Base app name for the postgres service (optional)"),
+		databaseName: z.string().optional().describe("PostgreSQL database name"),
+		databaseUser: z.string().optional().describe("PostgreSQL username"),
+		dockerImage: z
+			.string()
+			.optional()
+			.default("postgres:16")
+			.describe("Docker image"),
+		description: z.string().optional().describe("Description"),
+		serverId: z.string().optional().describe("Server ID override (optional)"),
+		deployNow: z
+			.boolean()
+			.optional()
+			.default(true)
+			.describe("Deploy/start immediately after creation"),
+		setEnv: z
+			.boolean()
+			.optional()
+			.default(true)
+			.describe("Write env vars into the application"),
+		overwriteEnv: z
+			.boolean()
+			.optional()
+			.default(false)
+			.describe(
+				"Overwrite existing standard keys (DATABASE_URL/PG*) instead of writing to DOKPLOY_* fallback keys",
+			),
+		apply: z
+			.boolean()
+			.optional()
+			.default(false)
+			.describe("Trigger an application deploy after env update"),
+		confirm: z.literal("CONFIRM_POSTGRES_PROVISION_FOR_APPLICATION"),
+	}),
+	riskLevel: "high",
+	requiresApproval: true,
+	execute: async (params, ctx) => {
+		await findMemberById(ctx.userId, ctx.organizationId);
+
+		const app = await findApplicationById(params.applicationId);
+		if (app.environment?.project?.organizationId !== ctx.organizationId) {
+			return {
+				success: false,
+				message: "Application access denied",
+				error: "UNAUTHORIZED",
+				data: {
+					postgresId: "",
+					postgresAppName: "",
+					databaseName: "",
+					databaseUser: "",
+					deployed: false,
+					applicationId: params.applicationId,
+					envKeys: [],
+					databaseUrlKey: "",
+					databaseUrlMasked: "",
+					applied: false,
+				},
+			};
+		}
+
+		const baseAppName = app.appName.replace(/-[a-z0-9]{6}$/i, "") || app.appName;
+		const normalizeIdent = (value: string, fallback: string) => {
+			const slug = value
+				.trim()
+				.toLowerCase()
+				.replace(/[^a-z0-9]+/g, "_")
+				.replace(/^_+|_+$/g, "");
+			const next = slug || fallback;
+			return /^[a-z_]/.test(next) ? next : `db_${next}`;
+		};
+
+		const dbSlug = normalizeIdent(baseAppName, "app");
+		const databaseName = params.databaseName
+			? normalizeIdent(params.databaseName, dbSlug)
+			: dbSlug;
+		const databaseUser = params.databaseUser
+			? normalizeIdent(params.databaseUser, dbSlug)
+			: dbSlug;
+		const postgresDisplayName = params.name ?? `Postgres for ${app.name}`;
+		const postgresBaseName = params.appName ?? `${baseAppName}-pg`;
+		const databasePassword = generatePassword();
+
+		const newPg = await createPostgres({
+			name: postgresDisplayName,
+			appName: postgresBaseName,
+			databaseName,
+			databaseUser,
+			databasePassword,
+			environmentId: app.environmentId,
+			dockerImage: params.dockerImage || "postgres:16",
+			description: params.description ?? null,
+			serverId: params.serverId ?? app.serverId ?? null,
+		});
+
+		let deployed = false;
+		let deployError: string | undefined;
+		if (params.deployNow) {
+			try {
+				await deployPostgres(newPg.postgresId);
+				deployed = true;
+			} catch (error) {
+				deployError = error instanceof Error ? error.message : String(error);
+			}
+		}
+
+		const host = newPg.appName;
+		const port = "5432";
+		const databaseUrl = `postgresql://${databaseUser}:${databasePassword}@${host}:${port}/${databaseName}`;
+		const databaseUrlMasked = `postgresql://${databaseUser}:***@${host}:${port}/${databaseName}`;
+
+		let written: Array<{ key: string; writtenAs: string }> = [];
+		let databaseUrlKey = "";
+
+		if (params.setEnv) {
+			const existing = listEnvKeysFromText(app.env);
+			const reserved = new Set(existing);
+			const pickKey = (preferred: string) => {
+				if (!reserved.has(preferred)) {
+					reserved.add(preferred);
+					return preferred;
+				}
+				let i = 2;
+				while (reserved.has(`${preferred}_${i}`)) i += 1;
+				const next = `${preferred}_${i}`;
+				reserved.add(next);
+				return next;
+			};
+
+			const standard: Record<string, string> = {
+				DATABASE_URL: databaseUrl,
+				PGHOST: host,
+				PGPORT: port,
+				PGUSER: databaseUser,
+				PGPASSWORD: databasePassword,
+				PGDATABASE: databaseName,
+			};
+
+			const updates: Record<string, string> = {};
+			for (const [key, value] of Object.entries(standard)) {
+				const chosen = params.overwriteEnv
+					? key
+					: existing.has(key)
+						? pickKey(`DOKPLOY_${key}`)
+						: pickKey(key);
+				updates[chosen] = value;
+				written.push({ key, writtenAs: chosen });
+				if (key === "DATABASE_URL") databaseUrlKey = chosen;
+			}
+
+			const { nextEnvText } = applyEnvUpdatesToText(app.env, updates);
+			await updateApplication(params.applicationId, { env: nextEnvText });
+
+			if (params.apply) {
+				await deployApplication({
+					applicationId: params.applicationId,
+					titleLog: "AI-triggered deploy after postgres provision",
+					descriptionLog: "PostgreSQL provisioned and env updated by AI tool",
+				});
+			}
+		}
+
+		if (deployError) {
+			return {
+				success: false,
+				message: `PostgreSQL "${newPg.name}" created but deployment failed`,
+				error: deployError,
+				data: {
+					postgresId: newPg.postgresId,
+					postgresAppName: newPg.appName,
+					databaseName,
+					databaseUser,
+					deployed: false,
+					applicationId: params.applicationId,
+					envKeys: written,
+					databaseUrlKey,
+					databaseUrlMasked,
+					applied: Boolean(params.apply),
+				},
+			};
+		}
+
+		return {
+			success: true,
+			message: `PostgreSQL "${newPg.name}" provisioned${params.setEnv ? " and app env updated" : ""}`,
+			data: {
+				postgresId: newPg.postgresId,
+				postgresAppName: newPg.appName,
+				databaseName,
+				databaseUser,
+				deployed,
+				applicationId: params.applicationId,
+				envKeys: written,
+				databaseUrlKey,
+				databaseUrlMasked,
+				applied: Boolean(params.apply),
+			},
+		};
+	},
+};
+
 const deletePostgresDatabase: Tool<
 	{ postgresId: string },
 	{ deleted: boolean }
@@ -949,6 +1385,8 @@ export function registerPostgresTools() {
 	toolRegistry.register(getPostgresDetails);
 	toolRegistry.register(createPostgresDatabase);
 	toolRegistry.register(deployPostgresDatabase);
+	toolRegistry.register(createAndDeployPostgresDatabase);
+	toolRegistry.register(provisionPostgresForApplication);
 	toolRegistry.register(deletePostgresDatabase);
 	toolRegistry.register(postgresSqlQuery);
 	toolRegistry.register(postgresSqlExecuteDml);

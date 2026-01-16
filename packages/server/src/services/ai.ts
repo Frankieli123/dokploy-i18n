@@ -411,6 +411,41 @@ let toolDescribeCache:
 	  }
 	| undefined;
 
+let aiWarmupPromise: Promise<void> | undefined;
+
+export function warmupAi(options?: {
+	toolSearchIndex?: boolean;
+	toolDescribeCache?: boolean;
+}): Promise<void> {
+	if (aiWarmupPromise) return aiWarmupPromise;
+
+	aiWarmupPromise = (async () => {
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		initializeTools();
+
+		if (options?.toolSearchIndex !== false) {
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
+			getToolSearchIndex();
+		}
+
+		if (options?.toolDescribeCache) {
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
+			const all = toolRegistry.getAll();
+			for (const t of all) {
+				getToolDescribeData(t);
+			}
+		}
+	})().catch((error) => {
+		aiWarmupPromise = undefined;
+		console.warn(
+			"[AI warmup] Failed to warm up AI tool runtime:",
+			error instanceof Error ? error.message : String(error),
+		);
+	});
+
+	return aiWarmupPromise;
+}
+
 function getToolDescribeData(t: Tool): ToolDescribeData {
 	const revision = toolRegistry.getRevision();
 	if (!toolDescribeCache || toolDescribeCache.revision !== revision) {

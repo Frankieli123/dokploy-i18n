@@ -10,9 +10,26 @@ import {
 	containerRestart,
 	getContainersByAppLabel,
 } from "@dokploy/server/services/docker";
+import { findEnvironmentById } from "@dokploy/server/services/environment";
+import { findGithubById } from "@dokploy/server/services/github";
+import { findMemberById } from "@dokploy/server/services/user";
 import { z } from "zod";
 import { toolRegistry } from "../registry";
 import type { Tool } from "../types";
+
+const parseGithubRepoUrl = (
+	repoUrl: string,
+): { owner: string; repository: string } | null => {
+	const trimmed = repoUrl.trim();
+	if (!trimmed) return null;
+	const m1 = trimmed.match(
+		/^https?:\/\/github\.com\/([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i,
+	);
+	if (m1?.[1] && m1[2]) return { owner: m1[1], repository: m1[2] };
+	const m2 = trimmed.match(/^git@github\.com:([^/]+)\/([^/#?]+?)(?:\.git)?$/i);
+	if (m2?.[1] && m2[2]) return { owner: m2[1], repository: m2[2] };
+	return null;
+};
 
 const listApplications: Tool<
 	{ projectId?: string },
@@ -461,6 +478,293 @@ const createNewApplication: Tool<
 	},
 };
 
+const createGithubSiteAndDeploy: Tool<
+	{
+		name: string;
+		appName: string;
+		environmentId: string;
+		repoUrl?: string;
+		owner?: string;
+		repository?: string;
+		branch?: string;
+		githubId?: string;
+		buildPath?: string;
+		enableSubmodules?: boolean;
+		buildType?:
+			| "dockerfile"
+			| "heroku_buildpacks"
+			| "paketo_buildpacks"
+			| "nixpacks"
+			| "static"
+			| "railpack";
+		dockerfile?: string;
+		dockerContextPath?: string;
+		dockerBuildStage?: string;
+		herokuVersion?: string;
+		railpackVersion?: string;
+		publishDirectory?: string;
+		isStaticSpa?: boolean;
+		description?: string;
+		serverId?: string;
+		deployNow?: boolean;
+		confirm: "CONFIRM_GITHUB_SITE_CREATE";
+	},
+	{ applicationId: string; name: string; appName: string; deployed: boolean }
+> = {
+	name: "application_github_create_and_deploy",
+	description:
+		"One-click: create an application from a GitHub repo and deploy it. Creates the app, configures GitHub source, optional build config, then deploys.",
+	category: "application",
+	aliases: [
+		"github site",
+		"github deploy site",
+		"create github app and deploy",
+		"one-click github deploy",
+		"GitHub建站",
+		"一键建站",
+		"GitHub建站并上线",
+		"一键部署GitHub项目",
+	],
+	tags: ["github", "site", "deploy", "create", "建站", "上线", "一键", "部署"],
+	parameters: z
+		.object({
+			name: z.string().min(1).describe("Display name for the application"),
+			appName: z
+				.string()
+				.min(1)
+				.describe("Unique app name (used in container naming)"),
+			environmentId: z
+				.string()
+				.min(1)
+				.describe("Environment ID to create the app in"),
+			repoUrl: z
+				.string()
+				.optional()
+				.describe("GitHub repo URL (https://github.com/owner/repo or git@...)"),
+			owner: z.string().optional().describe("Repository owner"),
+			repository: z.string().optional().describe("Repository name"),
+			branch: z.string().optional().default("main").describe("Branch name"),
+			githubId: z
+				.string()
+				.optional()
+				.describe("GitHub provider ID (optional if only 1 exists)"),
+			buildPath: z
+				.string()
+				.optional()
+				.default("/")
+				.describe("Build path within repo (default /)"),
+			enableSubmodules: z
+				.boolean()
+				.optional()
+				.default(false)
+				.describe("Whether to clone submodules"),
+			buildType: z
+				.enum([
+					"dockerfile",
+					"heroku_buildpacks",
+					"paketo_buildpacks",
+					"nixpacks",
+					"static",
+					"railpack",
+				])
+				.optional()
+				.describe("Optional build type override"),
+			dockerfile: z.string().optional().describe("Dockerfile path (default Dockerfile)"),
+			dockerContextPath: z
+				.string()
+				.optional()
+				.describe("Docker build context path relative to repo"),
+			dockerBuildStage: z.string().optional().describe("Optional multi-stage build target"),
+			herokuVersion: z.string().optional().describe("Heroku stack version"),
+			railpackVersion: z.string().optional().describe("Railpack version"),
+			publishDirectory: z.string().optional().describe("Publish directory for static builds"),
+			isStaticSpa: z.boolean().optional().describe("Treat static output as SPA"),
+			description: z.string().optional().describe("Description"),
+			serverId: z.string().optional().describe("Server ID for remote deployment"),
+			deployNow: z
+				.boolean()
+				.optional()
+				.default(true)
+				.describe("Deploy/start immediately after creation"),
+			confirm: z.literal("CONFIRM_GITHUB_SITE_CREATE"),
+		})
+		.superRefine((val, ctx2) => {
+			const hasOwnerRepo = Boolean(val.owner?.trim()) && Boolean(val.repository?.trim());
+			const hasUrl = Boolean(val.repoUrl?.trim());
+			if (!hasOwnerRepo && !hasUrl) {
+				ctx2.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "Provide either repoUrl or (owner + repository)",
+					path: ["repoUrl"],
+				});
+			}
+			if (val.buildType === "dockerfile") {
+				const dockerfile = (val.dockerfile ?? "Dockerfile").trim();
+				if (dockerfile.length === 0) {
+					ctx2.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: "dockerfile is required when buildType=dockerfile",
+						path: ["dockerfile"],
+					});
+				}
+			}
+		}),
+	riskLevel: "high",
+	requiresApproval: true,
+	execute: async (params, ctx) => {
+		await findMemberById(ctx.userId, ctx.organizationId);
+
+		const env = await findEnvironmentById(params.environmentId);
+		if (env.project?.organizationId !== ctx.organizationId) {
+			return {
+				success: false,
+				message: "Environment access denied",
+				error: "UNAUTHORIZED",
+				data: { applicationId: "", name: "", appName: "", deployed: false },
+			};
+		}
+
+		let githubId = params.githubId?.trim() ?? "";
+		if (githubId) {
+			const provider = await findGithubById(githubId);
+			if (provider.gitProvider?.organizationId !== ctx.organizationId) {
+				return {
+					success: false,
+					message: "GitHub provider access denied",
+					error: "UNAUTHORIZED",
+					data: { applicationId: "", name: "", appName: "", deployed: false },
+				};
+			}
+		} else {
+			const providers = await db.query.github.findMany({
+				with: { gitProvider: true },
+			});
+			const filtered = providers.filter(
+				(p) => p.gitProvider?.organizationId === ctx.organizationId,
+			);
+			if (filtered.length !== 1) {
+				return {
+					success: false,
+					message:
+						filtered.length === 0
+							? "No GitHub provider found. Connect GitHub first."
+							: "Multiple GitHub providers found. Specify githubId.",
+					error: "MISSING_GITHUB_PROVIDER",
+					data: { applicationId: "", name: "", appName: "", deployed: false },
+				};
+			}
+			githubId = filtered[0]?.githubId ?? "";
+		}
+
+		let owner = params.owner?.trim() ?? "";
+		let repository = params.repository?.trim() ?? "";
+		if ((!owner || !repository) && params.repoUrl) {
+			const parsed = parseGithubRepoUrl(params.repoUrl);
+			if (parsed) {
+				owner = parsed.owner;
+				repository = parsed.repository;
+			}
+		}
+		if (!owner || !repository) {
+			return {
+				success: false,
+				message: "Invalid repo parameters (missing owner/repository)",
+				error: "INVALID_REPO",
+				data: { applicationId: "", name: "", appName: "", deployed: false },
+			};
+		}
+
+		const app = await createApplication({
+			name: params.name,
+			appName: params.appName,
+			environmentId: params.environmentId,
+			description: params.description,
+			serverId: params.serverId ?? ctx.serverId,
+		});
+
+		await updateApplication(app.applicationId, {
+			sourceType: "github",
+			githubId,
+			owner,
+			repository,
+			branch: (params.branch ?? "main").trim() || "main",
+			buildPath: params.buildPath ?? "/",
+			enableSubmodules: params.enableSubmodules ?? false,
+		});
+
+		if (params.buildType) {
+			await updateApplication(app.applicationId, {
+				buildType: params.buildType,
+				...(params.buildType === "dockerfile"
+					? { dockerfile: (params.dockerfile ?? "Dockerfile").trim() }
+					: {}),
+				...(typeof params.dockerContextPath === "string"
+					? { dockerContextPath: params.dockerContextPath }
+					: {}),
+				...(typeof params.dockerBuildStage === "string"
+					? { dockerBuildStage: params.dockerBuildStage }
+					: {}),
+				...(typeof params.publishDirectory === "string"
+					? { publishDirectory: params.publishDirectory }
+					: {}),
+				...(typeof params.isStaticSpa === "boolean"
+					? { isStaticSpa: params.isStaticSpa }
+					: {}),
+				...(typeof params.herokuVersion === "string"
+					? { herokuVersion: params.herokuVersion }
+					: {}),
+				...(typeof params.railpackVersion === "string"
+					? { railpackVersion: params.railpackVersion }
+					: {}),
+			});
+		}
+
+		if (!params.deployNow) {
+			return {
+				success: true,
+				message: `Application "${app.name}" created and configured`,
+				data: {
+					applicationId: app.applicationId,
+					name: app.name,
+					appName: app.appName,
+					deployed: false,
+				},
+			};
+		}
+
+		try {
+			await deployApplication({
+				applicationId: app.applicationId,
+				titleLog: "AI one-click GitHub deploy",
+				descriptionLog: `Repo: ${owner}/${repository} (${params.branch ?? "main"})`,
+			});
+			return {
+				success: true,
+				message: `Application "${app.name}" created and deployed`,
+				data: {
+					applicationId: app.applicationId,
+					name: app.name,
+					appName: app.appName,
+					deployed: true,
+				},
+			};
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			return {
+				success: false,
+				message: `Application "${app.name}" created but deployment failed`,
+				error: msg,
+				data: {
+					applicationId: app.applicationId,
+					name: app.name,
+					appName: app.appName,
+					deployed: false,
+				},
+			};
+		}
+	},
+};
+
 const deployApp: Tool<
 	{ applicationId: string },
 	{ applicationId: string; status: string }
@@ -561,6 +865,7 @@ export function registerApplicationTools() {
 	toolRegistry.register(getApplicationDetails);
 	toolRegistry.register(findApplications);
 	toolRegistry.register(createNewApplication);
+	toolRegistry.register(createGithubSiteAndDeploy);
 	toolRegistry.register(updateApplicationGithubSource);
 	toolRegistry.register(updateApplicationBuildConfig);
 	toolRegistry.register(deployApp);

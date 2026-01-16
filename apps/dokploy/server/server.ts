@@ -12,6 +12,7 @@ import {
 	sendDokployRestartNotifications,
 	setupDirectories,
 } from "@dokploy/server";
+import { warmupAi } from "@dokploy/server/services/ai";
 import { config } from "dotenv";
 import next from "next";
 import { migration } from "@/server/db/migration";
@@ -67,6 +68,7 @@ void app.prepare().then(async () => {
 
 		server.listen(PORT, HOST);
 		console.log(`Server Started on: http://${HOST}:${PORT}`);
+		void warmupAi();
 		if (!IS_CLOUD) {
 			console.log("Starting Deployment Worker");
 			const { deploymentWorker } = await import("./queues/deployments-queue");
