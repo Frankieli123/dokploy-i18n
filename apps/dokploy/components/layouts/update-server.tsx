@@ -104,6 +104,13 @@ export const UpdateServerButton = () => {
 		return null;
 	}
 
+	const updateAvailableLabelKey =
+		"settings.server.webServer.update.buttonAvailable";
+	const updateAvailableLabel = t(updateAvailableLabelKey);
+	if (updateAvailableLabel === updateAvailableLabelKey) {
+		return null;
+	}
+
 	return (
 		<div className="border-t pt-4">
 			<UpdateServer
@@ -121,7 +128,7 @@ export const UpdateServerButton = () => {
 							>
 								<Download className="h-4 w-4 flex-shrink-0" />
 								<span className="font-medium truncate group-data-[collapsible=icon]:hidden">
-									{t("settings.server.webServer.update.buttonAvailable")}
+									{updateAvailableLabel}
 								</span>
 								<span className="absolute right-2 flex h-2 w-2 group-data-[collapsible=icon]:hidden">
 									<span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
@@ -130,7 +137,7 @@ export const UpdateServerButton = () => {
 							</Button>
 						</TooltipTrigger>
 						<TooltipContent side="right" sideOffset={10}>
-							<p>{t("settings.server.webServer.update.buttonAvailable")}</p>
+							<p>{updateAvailableLabel}</p>
 						</TooltipContent>
 					</Tooltip>
 				</TooltipProvider>
