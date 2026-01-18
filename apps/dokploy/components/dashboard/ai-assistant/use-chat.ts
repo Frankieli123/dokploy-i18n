@@ -381,8 +381,6 @@ export function useChat(options: UseChatOptions = {}) {
 				return;
 			}
 
-			hasUserSetToolApprovalsDisabledRef.current = true;
-			setAreToolApprovalsDisabled(true);
 			const meta = toolCallMeta[toolCallId];
 			const fallbackToolCall = messages
 				.flatMap((m) => m.toolCalls || [])
@@ -408,6 +406,18 @@ export function useChat(options: UseChatOptions = {}) {
 			type NormalizedToolResult = NonNullable<ToolCall["result"]>;
 
 			try {
+				if (
+					conversationId &&
+					!areToolApprovalsDisabled &&
+					!hasUserSetToolApprovalsDisabledRef.current
+				) {
+					hasUserSetToolApprovalsDisabledRef.current = true;
+					setAreToolApprovalsDisabled(true);
+					void setToolApprovalsDisabledMutation
+						.mutateAsync({ conversationId, disabled: true })
+						.catch(() => {});
+				}
+
 				setToolCallMeta((prev) => ({
 					...prev,
 					[toolCallId]: { ...(prev[toolCallId] ?? {}), status: "approved" },
@@ -492,6 +502,8 @@ export function useChat(options: UseChatOptions = {}) {
 			approveExecution,
 			executeExecution,
 			conversationId,
+			areToolApprovalsDisabled,
+			setToolApprovalsDisabledMutation,
 			messages,
 			refetchMessages,
 			toolCallMeta,

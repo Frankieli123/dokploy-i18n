@@ -1820,6 +1820,24 @@ async function generateToolOutcomeSummary(params: {
 	toolResults: Array<{ toolCallId: string; toolName: string; result: unknown }>;
 	streamError?: string | null;
 }): Promise<string> {
+	const buildFallback = () => {
+		const looksChinese = /[\u4e00-\u9fff]/.test(params.userMessage);
+		const toolNames = params.toolCalls
+			.map((tc) => tc.name)
+			.filter((name) => typeof name === "string" && name.trim().length > 0)
+			.slice(0, 6)
+			.join(", ");
+
+		if (looksChinese) {
+			return toolNames.length > 0
+				? `已执行工具：${toolNames}。请查看工具执行结果。`
+				: "已执行相关工具操作。请查看工具执行结果。";
+		}
+		return toolNames.length > 0
+			? `Executed tool(s): ${toolNames}. Please review the tool results above.`
+			: "Executed the requested tool actions. Please review the tool results above.";
+	};
+
 	const toolCallsText = params.toolCalls
 		.map((tc) => {
 			return `tool_call_id: ${tc.id}\ntool: ${tc.name}\nargs:\n${safeJsonForPrompt(tc.arguments, 2000)}`;
@@ -1857,15 +1875,20 @@ ${toolResultsText || "(none)"}
 
 ${streamErrorText ? `Model streaming error (non-fatal):\n${safeTruncateString(streamErrorText, 1200)}\n` : ""}
 
-Return ONLY the reply.`;
+	Return ONLY the reply.`;
 
-	const text = await generatePromptText({
-		model: params.model,
-		prompt,
-		maxOutputTokens: 260,
-	});
-
-	return text.trim();
+	try {
+		const text = await generatePromptText({
+			model: params.model,
+			prompt,
+			maxOutputTokens: 260,
+		});
+		const trimmed = text.trim();
+		return trimmed.length > 0 ? trimmed : buildFallback();
+	} catch (error) {
+		console.error("Failed to generate tool outcome summary:", error);
+		return buildFallback();
+	}
 }
 
 function injectToolExecutionContextMessage(
@@ -2434,6 +2457,7 @@ export const chatStream = async (
 			id: string;
 			type: "function";
 			function: { name: string; arguments: string };
+			sourceToolName: string;
 		}> = [];
 		const toolNameByToolCallId = new Map<string, string>();
 		let usage: { promptTokens?: number; completionTokens?: number } = {};
@@ -2487,6 +2511,7 @@ export const chatStream = async (
 							name: normalizedToolName,
 							arguments: JSON.stringify(normalizedArgs ?? {}),
 						},
+						sourceToolName: chunk.toolName,
 					});
 					try {
 						options.onToolCall?.(
@@ -2683,43 +2708,17 @@ export const chatStream = async (
 	}
 
 	const toolCallsToPersist = streamed.toolCalls
-		.filter((tc) => tc.function.name === "tool_call")
+		.filter((tc) => tc.sourceToolName === "tool_call")
 		.map((tc) => {
-			const parsed = (() => {
-				try {
-					return JSON.parse(tc.function.arguments) as unknown;
-				} catch {
-					return undefined;
-				}
-			})();
-
-			const raw = (() => {
-				if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-					return { toolName: "", params: {} as unknown };
-				}
-				const toolName =
-					typeof (parsed as { toolName?: unknown }).toolName === "string"
-						? String((parsed as { toolName?: unknown }).toolName).trim()
-						: "";
-				const params =
-					typeof (parsed as { params?: unknown }).params !== "undefined"
-						? (parsed as { params?: unknown }).params
-						: {};
-				return { toolName, params };
-			})();
-
 			const toolName =
-				invokedToolNameByToolCallId.get(tc.id) ||
-				raw.toolName ||
-				"tool_call";
-			const toolParams = raw.params ?? {};
+				invokedToolNameByToolCallId.get(tc.id) || tc.function.name || "tool_call";
 			return {
 				id: tc.id,
 				type: "function" as const,
 				executionId: executionIdByToolCallId.get(tc.id),
 				function: {
 					name: toolName,
-					arguments: JSON.stringify(toolParams),
+					arguments: tc.function.arguments,
 				},
 			};
 		});
@@ -3181,50 +3180,6 @@ export const approveToolExecution = async (
 				metadata: setToolApprovalsDisabledInMetadata(conversation.metadata, true),
 			});
 		} catch {}
-	}
-
-	if (updated?.conversationId && updated?.messageId && approved) {
-		void (async () => {
-			try {
-				const conversation = await getConversationById(updated.conversationId!);
-				const ctx: ToolContext = {
-					organizationId: conversation.organizationId,
-					userId: approvedBy,
-					projectId: conversation.projectId || undefined,
-					serverId: conversation.serverId || undefined,
-				};
-
-				const pending = await db.query.aiToolExecutions.findMany({
-					where: and(
-						eq(aiToolExecutions.conversationId, updated.conversationId!),
-						eq(aiToolExecutions.messageId, updated.messageId!),
-						eq(aiToolExecutions.status, "pending"),
-					),
-					limit: 20,
-				});
-
-				for (const exec of pending) {
-					if (exec.executionId === updated.executionId) continue;
-					await db
-						.update(aiToolExecutions)
-						.set({
-							status: "approved",
-							approvedBy,
-							approvedAt: new Date().toISOString(),
-						})
-						.where(eq(aiToolExecutions.executionId, exec.executionId));
-					if (exec.runId) {
-						await resumeAgentRun({
-							runId: exec.runId,
-							organizationId: conversation.organizationId,
-							userId: approvedBy,
-						});
-						continue;
-					}
-					await executeApprovedTool(exec.executionId, ctx);
-				}
-			} catch {}
-		})();
 	}
 
 	return updated;

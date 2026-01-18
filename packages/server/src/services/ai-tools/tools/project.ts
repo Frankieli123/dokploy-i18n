@@ -186,9 +186,18 @@ const createNewProject: Tool<
 			};
 		}
 
+		const normalizedName = String(params.name ?? "").trim();
+		if (normalizedName.length === 0) {
+			return {
+				success: false,
+				message: "Project name is required",
+				data: { projectId: "", name: "", environmentId: "" },
+			};
+		}
+
 		const result = await createProject(
 			{
-				name: params.name,
+				name: normalizedName,
 				description: params.description || null,
 			},
 			ctx.organizationId,

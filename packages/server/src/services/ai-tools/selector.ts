@@ -4,6 +4,7 @@ import type { Tool } from "./types";
 export type ToolIntent =
 	| "query"
 	| "application"
+	| "backup"
 	| "database"
 	| "domain"
 	| "server";
@@ -25,8 +26,20 @@ const DB_PREFIXES = [
 ] as const;
 
 function classifyIntent(messageLower: string): ToolIntent {
+	const isBackupRequest =
+		/(backup|restore|snapshot)/i.test(messageLower) ||
+		/(备份|恢复|还原)/i.test(messageLower);
+	const isVolumeBackupRequest =
+		/(volume[_\s-]?backup|volume\s+backup|volume-backup|volume_backup|dokploy_all_mounts|mount|volumes?\b|s3|minio|destination|bucket|cron|keep(latest)?count)/i.test(
+			messageLower,
+		) || /(挂载|卷|对象存储|minio|定时)/i.test(messageLower);
+
+	if (isBackupRequest && isVolumeBackupRequest) {
+		return "backup";
+	}
+
 	if (
-		/(postgres|mysql|mariadb|mongo|mongodb|redis|database|db\b|schema|query|migration|backup|restore)/i.test(
+		/(postgres|mysql|mariadb|mongo|mongodb|redis|database|db\b|schema|query|migration)/i.test(
 			messageLower,
 		)
 	) {
@@ -63,7 +76,10 @@ function classifyIntent(messageLower: string): ToolIntent {
 	) {
 		return "application";
 	}
-	if (/(数据库|迁移|备份|恢复)/i.test(messageLower)) {
+	if (/(数据库|迁移)/i.test(messageLower)) {
+		return "database";
+	}
+	if (isBackupRequest) {
 		return "database";
 	}
 	if (/(域名|证书|ssl|https)/i.test(messageLower)) {
@@ -112,7 +128,27 @@ function wantsDatabaseDeleteOperation(
 
 function scoreTool(tool: Tool, messageLower: string): number {
 	const nameLower = tool.name.toLowerCase();
-	const [ns = "", action = ""] = nameLower.split("_");
+	const [ns = "", ...rest] = nameLower.split("_");
+	const verbs = new Set([
+		"list",
+		"get",
+		"find",
+		"create",
+		"update",
+		"delete",
+		"remove",
+		"deploy",
+		"start",
+		"stop",
+		"restart",
+		"run",
+		"restore",
+		"status",
+		"retry",
+		"cancel",
+		"tail",
+	]);
+	const action = rest.find((p) => verbs.has(p)) ?? rest[0] ?? "";
 	let score = 0;
 
 	if (messageLower.includes(ns)) score += 8;
@@ -180,6 +216,12 @@ export function selectRelevantTools(
 			prefixes.add("environment_");
 		if (/(server|servers|服务器)/i.test(messageLower)) prefixes.add("server_");
 		if (/(database|db\b|数据库)/i.test(messageLower)) prefixes.add("database_");
+		if (/(backup|restore|备份|恢复)/i.test(messageLower)) {
+			prefixes.add("backup_");
+			prefixes.add("volume_backup_");
+			prefixes.add("destination_");
+			prefixes.add("mount_");
+		}
 		if (wantsTraefik) prefixes.add("traefik_");
 	}
 
@@ -188,6 +230,15 @@ export function selectRelevantTools(
 	}
 
 	if (intent === "application") {
+		prefixes.add("application_");
+		prefixes.add("compose_");
+	}
+
+	if (intent === "backup") {
+		prefixes.add("backup_");
+		prefixes.add("volume_backup_");
+		prefixes.add("destination_");
+		prefixes.add("mount_");
 		prefixes.add("application_");
 		prefixes.add("compose_");
 	}

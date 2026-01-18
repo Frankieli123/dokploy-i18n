@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import { applications } from "@dokploy/server/db/schema";
 import {
 	createApplication,
 	deployApplication,
@@ -6,6 +7,7 @@ import {
 	getApplicationStats,
 	updateApplication,
 } from "@dokploy/server/services/application";
+import { removeDeployments } from "@dokploy/server/services/deployment";
 import {
 	containerRestart,
 	getContainersByAppLabel,
@@ -13,9 +15,18 @@ import {
 import { findEnvironmentById } from "@dokploy/server/services/environment";
 import { findGithubById } from "@dokploy/server/services/github";
 import { findMemberById } from "@dokploy/server/services/user";
+import { removeService } from "@dokploy/server/utils/docker/utils";
+import {
+	removeDirectoryCode,
+	removeMonitoringDirectory,
+} from "@dokploy/server/utils/filesystem/directory";
+import { removeTraefikConfig } from "@dokploy/server/utils/traefik/application";
+import { deleteAllMiddlewares } from "@dokploy/server/utils/traefik/middleware";
+import type { ApplicationNested } from "@dokploy/server/utils/builders";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { toolRegistry } from "../registry";
-import type { Tool } from "../types";
+import type { Tool, ToolContext, ToolResult } from "../types";
 
 const parseGithubRepoUrl = (
 	repoUrl: string,
@@ -30,6 +41,20 @@ const parseGithubRepoUrl = (
 	if (m2?.[1] && m2[2]) return { owner: m2[1], repository: m2[2] };
 	return null;
 };
+
+const requireOrgMember = async (ctx: ToolContext) => {
+	await findMemberById(ctx.userId, ctx.organizationId);
+};
+
+const applicationAccessDenied = <T>(
+	message: string,
+	data: T,
+): ToolResult<T> => ({
+	success: false,
+	message,
+	error: "UNAUTHORIZED",
+	data,
+});
 
 const listApplications: Tool<
 	{ projectId?: string },
@@ -78,6 +103,59 @@ const listApplications: Tool<
 				status: app.applicationStatus || "idle",
 				sourceType: app.sourceType,
 			})),
+		};
+	},
+};
+
+const deleteApplication: Tool<
+	{ applicationId: string },
+	{ applicationId: string; deleted: boolean }
+> = {
+	name: "application_delete",
+	description: "Delete an application and clean up its runtime resources.",
+	category: "application",
+	aliases: ["delete application", "remove application", "删除应用", "删除应用程序"],
+	parameters: z.object({
+		applicationId: z.string().min(1).describe("Application ID"),
+	}),
+	riskLevel: "high",
+	requiresApproval: true,
+	execute: async (params, ctx) => {
+		await requireOrgMember(ctx);
+		const application = await findApplicationById(params.applicationId);
+		if (application.environment?.project?.organizationId !== ctx.organizationId) {
+			return applicationAccessDenied("Application access denied", {
+				applicationId: params.applicationId,
+				deleted: false,
+			});
+		}
+
+		await db
+			.delete(applications)
+			.where(eq(applications.applicationId, params.applicationId))
+			.returning();
+
+		const nested = application as unknown as ApplicationNested;
+		const cleanupOperations = [
+			async () => await deleteAllMiddlewares(nested),
+			async () => await removeDeployments(application),
+			async () => await removeDirectoryCode(application.appName, application.serverId),
+			async () =>
+				await removeMonitoringDirectory(application.appName, application.serverId),
+			async () => await removeTraefikConfig(application.appName, application.serverId),
+			async () => await removeService(application.appName, application.serverId),
+		];
+
+		for (const operation of cleanupOperations) {
+			try {
+				await operation();
+			} catch {}
+		}
+
+		return {
+			success: true,
+			message: `Application "${application.name}" deleted`,
+			data: { applicationId: params.applicationId, deleted: true },
 		};
 	},
 };
@@ -459,6 +537,18 @@ const createNewApplication: Tool<
 	riskLevel: "medium",
 	requiresApproval: true,
 	execute: async (params, ctx) => {
+		await findMemberById(ctx.userId, ctx.organizationId);
+
+		const env = await findEnvironmentById(params.environmentId);
+		if (env.project?.organizationId !== ctx.organizationId) {
+			return {
+				success: false,
+				message: "Environment access denied",
+				error: "UNAUTHORIZED",
+				data: { applicationId: "", name: "" },
+			};
+		}
+
 		const app = await createApplication({
 			name: params.name,
 			appName: params.appName,
@@ -864,6 +954,7 @@ export function registerApplicationTools() {
 	toolRegistry.register(listApplications);
 	toolRegistry.register(getApplicationDetails);
 	toolRegistry.register(findApplications);
+	toolRegistry.register(deleteApplication);
 	toolRegistry.register(createNewApplication);
 	toolRegistry.register(createGithubSiteAndDeploy);
 	toolRegistry.register(updateApplicationGithubSource);
