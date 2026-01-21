@@ -1595,7 +1595,7 @@
     "database.customCommand.argumentsLabel": "參數（Args）",
     "database.customCommand.addArgument": "新增參數",
     "database.customCommand.emptyArgs": "尚未新增任何參數。點擊「新增參數」以新增。",
-    "database.customCommand.dockerImagePlaceholder": "postgres:15",
+    "database.customCommand.dockerImagePlaceholder": "postgres:17",
     "database.customCommand.commandPlaceholder": "/bin/sh",
     "database.customCommand.firstArgumentPlaceholder": "-c",
     "database.customCommand.otherArgumentPlaceholder": "redis-server --port 6379",

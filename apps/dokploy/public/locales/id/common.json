@@ -1506,7 +1506,7 @@
     "database.customCommand.argumentsLabel": "Argumen (Args)",
     "database.customCommand.addArgument": "Tambah Argumen",
     "database.customCommand.emptyArgs": "Belum ada argumen yang ditambahkan. Klik \"Tambah Argumen\" untuk menambahkan.",
-    "database.customCommand.dockerImagePlaceholder": "postgres:15",
+    "database.customCommand.dockerImagePlaceholder": "postgres:17",
     "database.customCommand.commandPlaceholder": "/bin/sh",
     "database.customCommand.firstArgumentPlaceholder": "-c",
     "database.customCommand.otherArgumentPlaceholder": "redis-server --port 6379",

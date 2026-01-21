@@ -88,7 +88,7 @@ const dockerImageDefaultPlaceholder: Record<DbType, string> = {
 	mongo: "mongo:7",
 	mariadb: "mariadb:11",
 	mysql: "mysql:8",
-	postgres: "postgres:15",
+	postgres: "postgres:17",
 	redis: "redis:7",
 };
 

@@ -1506,7 +1506,7 @@
     "database.customCommand.argumentsLabel": "인수 (Args)",
     "database.customCommand.addArgument": "인수 추가",
     "database.customCommand.emptyArgs": "아직 인수가 추가되지 않았습니다. \"인수 추가\"를 클릭하여 추가하세요.",
-    "database.customCommand.dockerImagePlaceholder": "postgres:15",
+    "database.customCommand.dockerImagePlaceholder": "postgres:17",
     "database.customCommand.commandPlaceholder": "/bin/sh",
     "database.customCommand.firstArgumentPlaceholder": "-c",
     "database.customCommand.otherArgumentPlaceholder": "redis-server --port 6379",

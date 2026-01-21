@@ -925,7 +925,7 @@ const createPostgresDatabase: Tool<
 		dockerImage: z
 			.string()
 			.optional()
-			.default("postgres:16")
+			.default("postgres:17")
 			.describe("Docker image"),
 		description: z.string().optional().describe("Description"),
 		serverId: z.string().optional().describe("Server ID for remote deployment"),
@@ -948,7 +948,7 @@ const createPostgresDatabase: Tool<
 			databaseUser: params.databaseUser,
 			databasePassword: generatePassword(),
 			environmentId: params.environmentId,
-			dockerImage: params.dockerImage || "postgres:16",
+			dockerImage: params.dockerImage || "postgres:17",
 			description: params.description ?? null,
 			serverId: params.serverId ?? ctx.serverId ?? null,
 		});
@@ -1031,7 +1031,7 @@ const createAndDeployPostgresDatabase: Tool<
 		dockerImage: z
 			.string()
 			.optional()
-			.default("postgres:16")
+			.default("postgres:17")
 			.describe("Docker image"),
 		description: z.string().optional().describe("Description"),
 		serverId: z.string().optional().describe("Server ID for remote deployment"),
@@ -1060,7 +1060,7 @@ const createAndDeployPostgresDatabase: Tool<
 			databaseUser: params.databaseUser,
 			databasePassword: generatePassword(),
 			environmentId: params.environmentId,
-			dockerImage: params.dockerImage || "postgres:16",
+			dockerImage: params.dockerImage || "postgres:17",
 			description: params.description ?? null,
 			serverId: params.serverId ?? ctx.serverId ?? null,
 		});
@@ -1157,7 +1157,7 @@ const provisionPostgresForApplication: Tool<
 		dockerImage: z
 			.string()
 			.optional()
-			.default("postgres:16")
+			.default("postgres:17")
 			.describe("Docker image"),
 		description: z.string().optional().describe("Description"),
 		serverId: z.string().optional().describe("Server ID override (optional)"),
@@ -1240,7 +1240,7 @@ const provisionPostgresForApplication: Tool<
 			databaseUser,
 			databasePassword,
 			environmentId: app.environmentId,
-			dockerImage: params.dockerImage || "postgres:16",
+			dockerImage: params.dockerImage || "postgres:17",
 			description: params.description ?? null,
 			serverId: params.serverId ?? app.serverId ?? null,
 		});

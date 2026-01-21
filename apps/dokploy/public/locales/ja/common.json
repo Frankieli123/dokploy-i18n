@@ -1502,7 +1502,7 @@
     "database.customCommand.argumentsLabel": "Arguments (Args)",
     "database.customCommand.addArgument": "Add Argument",
     "database.customCommand.emptyArgs": "No arguments added yet. Click \"Add Argument\" to add one.",
-    "database.customCommand.dockerImagePlaceholder": "postgres:15",
+    "database.customCommand.dockerImagePlaceholder": "postgres:17",
     "database.customCommand.commandPlaceholder": "/bin/sh",
     "database.customCommand.firstArgumentPlaceholder": "-c",
     "database.customCommand.otherArgumentPlaceholder": "redis-server --port 6379",

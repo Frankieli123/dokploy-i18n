@@ -1609,7 +1609,7 @@
     "database.customCommand.argumentsLabel": "参数（Args）",
     "database.customCommand.addArgument": "添加参数",
     "database.customCommand.emptyArgs": "当前还没有添加任何参数，点击“添加参数”开始配置。",
-    "database.customCommand.dockerImagePlaceholder": "postgres:15",
+    "database.customCommand.dockerImagePlaceholder": "postgres:17",
     "database.customCommand.commandPlaceholder": "/bin/sh",
     "database.customCommand.firstArgumentPlaceholder": "-c",
     "database.customCommand.otherArgumentPlaceholder": "redis-server --port 6379",
