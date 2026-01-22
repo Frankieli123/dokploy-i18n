@@ -4,6 +4,7 @@ import {
 	createProject,
 	deleteProjectWithCleanup,
 	findProjectById,
+	updateProjectById,
 } from "@dokploy/server/services/project";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -215,6 +216,90 @@ const createNewProject: Tool<
 	},
 };
 
+const updateProjectTool: Tool<
+	{ projectId: string; name?: string; description?: string | null },
+	{ projectId: string; name: string; description: string | null }
+> = {
+	name: "project_update",
+	description: "Update a project's name and/or description",
+	category: "project",
+	parameters: z
+		.object({
+			projectId: z.string().min(1).describe("The project ID to update"),
+			name: z.string().optional().describe("New project name"),
+			description: z
+				.string()
+				.optional()
+				.nullable()
+				.describe("New project description (empty/null clears)"),
+		})
+		.refine((v) => Boolean(v.name?.trim()) || typeof v.description !== "undefined", {
+			message: "Provide at least one field to update: name or description",
+		}),
+	riskLevel: "medium",
+	requiresApproval: true,
+	execute: async (params, ctx) => {
+		if (!ctx?.organizationId) {
+			return {
+				success: false,
+				message: "Organization ID is required",
+				data: { projectId: "", name: "", description: null },
+			};
+		}
+
+		const project = await findProjectById(params.projectId);
+		if (project.organizationId !== ctx.organizationId) {
+			return {
+				success: false,
+				message: "Project access denied",
+				data: { projectId: "", name: "", description: null },
+			};
+		}
+
+		const updates: { name?: string; description?: string | null } = {};
+
+		if (typeof params.name === "string") {
+			const normalizedName = params.name.trim();
+			if (normalizedName.length === 0) {
+				return {
+					success: false,
+					message: "Project name cannot be empty",
+					data: { projectId: project.projectId, name: project.name, description: project.description },
+				};
+			}
+			updates.name = normalizedName;
+		}
+
+		if (typeof params.description !== "undefined") {
+			if (params.description == null) {
+				updates.description = null;
+			} else {
+				const normalized = params.description.trim();
+				updates.description = normalized.length > 0 ? normalized : null;
+			}
+		}
+
+		const updated = await updateProjectById(params.projectId, updates);
+		if (!updated) {
+			return {
+				success: false,
+				message: "Failed to update project",
+				data: { projectId: project.projectId, name: project.name, description: project.description },
+			};
+		}
+
+		return {
+			success: true,
+			message: `Project "${updated.name}" updated`,
+			data: {
+				projectId: updated.projectId,
+				name: updated.name,
+				description: updated.description,
+			},
+		};
+	},
+};
+
 const deleteProjectTool: Tool<
 	{ projectId: string },
 	{ projectId: string; deleted: boolean }
@@ -260,5 +345,6 @@ export function registerProjectTools() {
 	toolRegistry.register(getProjectDetails);
 	toolRegistry.register(findProjects);
 	toolRegistry.register(createNewProject);
+	toolRegistry.register(updateProjectTool);
 	toolRegistry.register(deleteProjectTool);
 }

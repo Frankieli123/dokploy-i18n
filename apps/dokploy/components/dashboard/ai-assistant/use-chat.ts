@@ -29,35 +29,45 @@ async function* readSseStream(stream: ReadableStream<Uint8Array>) {
 	const decoder = new TextDecoder();
 	let buffer = "";
 
-	while (true) {
-		const { value, done } = await reader.read();
-		if (done) break;
-		buffer += decoder.decode(value, { stream: true });
-
+	try {
 		while (true) {
-			const lfIndex = buffer.indexOf("\n\n");
-			const crlfIndex = buffer.indexOf("\r\n\r\n");
-			const useCrlf =
-				crlfIndex !== -1 && (lfIndex === -1 || crlfIndex < lfIndex);
-			const splitIndex = useCrlf ? crlfIndex : lfIndex;
-			if (splitIndex === -1) break;
+			const { value, done } = await reader.read();
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
 
-			const raw = buffer.slice(0, splitIndex);
-			buffer = buffer.slice(splitIndex + (useCrlf ? 4 : 2));
+			while (true) {
+				const lfIndex = buffer.indexOf("\n\n");
+				const crlfIndex = buffer.indexOf("\r\n\r\n");
+				const useCrlf =
+					crlfIndex !== -1 && (lfIndex === -1 || crlfIndex < lfIndex);
+				const splitIndex = useCrlf ? crlfIndex : lfIndex;
+				if (splitIndex === -1) break;
 
-			const lines = raw.split(/\r?\n/);
-			let event = "message";
-			const dataLines: string[] = [];
+				const raw = buffer.slice(0, splitIndex);
+				buffer = buffer.slice(splitIndex + (useCrlf ? 4 : 2));
 
-			for (const line of lines) {
-				if (line.startsWith("event:")) event = line.slice(6).trim();
-				if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+				const lines = raw.split(/\r?\n/);
+				let event = "message";
+				const dataLines: string[] = [];
+
+				for (const line of lines) {
+					if (line.startsWith("event:")) event = line.slice(6).trim();
+					if (line.startsWith("data:"))
+						dataLines.push(line.slice(5).trimStart());
+				}
+
+				const data = dataLines.join("\n");
+				if (data.length === 0) continue;
+				yield { event, data };
 			}
-
-			const data = dataLines.join("\n");
-			if (data.length === 0) continue;
-			yield { event, data };
 		}
+	} finally {
+		try {
+			await reader.cancel();
+		} catch {}
+		try {
+			reader.releaseLock();
+		} catch {}
 	}
 }
 
@@ -128,6 +138,7 @@ export interface UseChatOptions {
 }
 
 export function useChat(options: UseChatOptions = {}) {
+	const utils = api.useUtils();
 	const [conversationId, setConversationId] = useState<string | undefined>(
 		options.conversationId,
 	);
@@ -147,6 +158,33 @@ export function useChat(options: UseChatOptions = {}) {
 	const executeExecution = api.ai.agent.execute.useMutation();
 	const setToolApprovalsDisabledMutation =
 		api.ai.conversations.setToolApprovalsDisabled.useMutation();
+
+	const maybeInvalidateProjectQueries = useCallback(
+		(toolName: string, rawResult: unknown) => {
+			if (
+				toolName !== "project_create" &&
+				toolName !== "project_update" &&
+				toolName !== "project_delete"
+			) {
+				return;
+			}
+
+			const result = isRecord(rawResult) ? rawResult : undefined;
+			if (!result) return;
+			if (result.status === "pending_approval") return;
+			if (typeof result.success !== "boolean" || !result.success) return;
+
+			void utils.project.all.invalidate();
+
+			const data = result.data;
+			const projectId =
+				isRecord(data) && typeof data.projectId === "string" ? data.projectId : "";
+			if (projectId.trim().length > 0) {
+				void utils.project.one.invalidate({ projectId });
+			}
+		},
+		[utils],
+	);
 
 	useEffect(() => {
 		return () => {
@@ -287,10 +325,12 @@ export function useChat(options: UseChatOptions = {}) {
 	const getExecutions = api.ai.agent.getExecutions.useQuery(
 		{ executionIds: executionHydrationTargets.executionIds },
 		{
-			enabled: executionHydrationTargets.executionIds.length > 0,
+			enabled: isEnabled && executionHydrationTargets.executionIds.length > 0,
 			refetchOnWindowFocus: false,
 			refetchInterval:
-				executionHydrationTargets.executionIds.length > 0 ? 2000 : false,
+				isEnabled && executionHydrationTargets.executionIds.length > 0
+					? 2000
+					: false,
 		},
 	);
 
@@ -458,6 +498,7 @@ export function useChat(options: UseChatOptions = {}) {
 						result: normalizedResult,
 					},
 				}));
+				maybeInvalidateProjectQueries(toolName, normalizedResult);
 				setToolOutcomes((prev) => {
 					const outcome: ToolOutcome = {
 						toolCallId,
@@ -504,6 +545,7 @@ export function useChat(options: UseChatOptions = {}) {
 			conversationId,
 			areToolApprovalsDisabled,
 			setToolApprovalsDisabledMutation,
+			maybeInvalidateProjectQueries,
 			messages,
 			refetchMessages,
 			toolCallMeta,
@@ -706,6 +748,8 @@ export function useChat(options: UseChatOptions = {}) {
 				}
 			}
 
+			let abortedBySafetyTimer = false;
+
 			try {
 				const controller = new AbortController();
 				setAbortController(controller);
@@ -740,189 +784,238 @@ export function useChat(options: UseChatOptions = {}) {
 				);
 
 				let receivedDone = false;
+				const activeToolCallIds = new Set<string>();
+				const streamStartTime = Date.now();
+				let lastNonPingEventTime = streamStartTime;
+				const IDLE_NO_TOOLS_MS = 30 * 1000;
+				const IDLE_WITH_TOOLS_MS = 10 * 60 * 1000;
+				const MAX_DURATION_MS = 15 * 60 * 1000;
 
-				for await (const evt of readSseStream(response.body)) {
-					if (controller.signal.aborted) break;
-
-					if (evt.event === "delta") {
-						const payload = JSON.parse(evt.data) as { delta?: unknown };
-						const delta =
-							typeof payload.delta === "string" ? payload.delta : "";
-						if (delta.length === 0) continue;
-
-						setPendingMessages((prev) =>
-							prev.map((m) =>
-								m.messageId === assistantTempId
-									? {
-											...m,
-											content: (m.content ?? "") + delta,
-											status: "sending" as const,
-										}
-									: m,
-							),
-						);
+				const safetyInterval = setInterval(() => {
+					const now = Date.now();
+					const idleMs = now - lastNonPingEventTime;
+					const idleLimit =
+						activeToolCallIds.size > 0 ? IDLE_WITH_TOOLS_MS : IDLE_NO_TOOLS_MS;
+					if (idleMs <= idleLimit && now - streamStartTime <= MAX_DURATION_MS) {
+						return;
 					}
+					abortedBySafetyTimer = true;
+					clearInterval(safetyInterval);
+					controller.abort();
+				}, 1000);
 
-					if (evt.event === "tool-call") {
-						const payload = JSON.parse(evt.data) as {
-							toolCallId: string;
-							toolName: string;
-							arguments?: unknown;
-						};
-						const argsString =
-							typeof payload.arguments === "string"
-								? payload.arguments
-								: JSON.stringify(payload.arguments ?? {});
-						setPendingMessages((prev) =>
-							prev.map((m) =>
-								m.messageId === assistantTempId
-									? {
-											...m,
-											toolCalls: [
-												...(m.toolCalls || []),
-												{
-													id: payload.toolCallId,
-													type: "function" as const,
-													status: "executing" as const,
-													function: {
-														name: payload.toolName,
-														arguments: argsString,
-													},
-												},
-											],
-										}
-									: m,
-							),
-						);
-						setToolCallMeta((prev) => {
-							if (prev[payload.toolCallId]?.status) return prev;
-							return {
-								...prev,
-								[payload.toolCallId]: {
-									...(prev[payload.toolCallId] ?? {}),
-									status: "executing",
-								},
+				try {
+					for await (const evt of readSseStream(response.body)) {
+						if (controller.signal.aborted) break;
+						if (evt.event !== "ping") {
+							lastNonPingEventTime = Date.now();
+						}
+
+						if (evt.event === "delta") {
+							const payload = JSON.parse(evt.data) as { delta?: unknown };
+							const delta =
+								typeof payload.delta === "string" ? payload.delta : "";
+							if (delta.length === 0) continue;
+
+							setPendingMessages((prev) =>
+								prev.map((m) =>
+									m.messageId === assistantTempId
+										? {
+												...m,
+												content: (m.content ?? "") + delta,
+												status: "sending" as const,
+											}
+										: m,
+								),
+							);
+						}
+
+						if (evt.event === "tool-call") {
+							const payload = JSON.parse(evt.data) as {
+								toolCallId: string;
+								toolName: string;
+								arguments?: unknown;
 							};
-						});
-					}
-
-					if (evt.event === "tool-result") {
-						const payload = JSON.parse(evt.data) as {
-							toolCallId: string;
-							toolName: string;
-							result?: unknown;
-						};
-
-						setPendingMessages((prev) =>
-							prev.map((m) => {
-								if (m.messageId !== assistantTempId) return m;
-								const toolCalls = [...(m.toolCalls || [])];
-								const existingIndex = toolCalls.findIndex(
-									(tc) => tc.id === payload.toolCallId,
-								);
-
-								const existingToolCall =
-									existingIndex >= 0 ? toolCalls[existingIndex] : undefined;
-								const base: ToolCall = existingToolCall ?? {
-									id: payload.toolCallId,
-									type: "function" as const,
-									function: { name: payload.toolName, arguments: "{}" },
-								};
-
-								// Determine status and result from payload
-								let status: ToolCall["status"] = "completed";
-								let executionId: string | undefined;
-								let result: ToolCall["result"] | undefined;
-
-								const payloadResult = isRecord(payload.result)
-									? payload.result
-									: undefined;
-								if (
-									payloadResult &&
-									payloadResult.status === "pending_approval" &&
-									getExecutionIdFromResultPayload(payloadResult)
-								) {
-									status = "pending";
-									executionId = getExecutionIdFromResultPayload(payloadResult);
-									result = {
-										success: true,
-										message:
-											typeof payloadResult.message === "string"
-												? payloadResult.message
-												: undefined,
-										data: payloadResult.data,
-									};
-								} else if (
-									payloadResult &&
-									typeof payloadResult.success === "boolean"
-								) {
-									status = payloadResult.success ? "completed" : "failed";
-									executionId = getExecutionIdFromResultPayload(payloadResult);
-									result = {
-										success: payloadResult.success,
-										message: payloadResult.message as string | undefined,
-										data: payloadResult.data,
-										error: payloadResult.error as string | undefined,
-									};
-								}
-
-								const updated: ToolCall = {
-									...base,
-									executionId: executionId ?? base.executionId,
-									status,
-									result: result ?? base.result,
-									function: {
-										...base.function,
-										name: payload.toolName || base.function.name,
-									},
-								};
-
-								setToolCallMeta((prev) => ({
+							activeToolCallIds.add(payload.toolCallId);
+							const argsString =
+								typeof payload.arguments === "string"
+									? payload.arguments
+									: JSON.stringify(payload.arguments ?? {});
+							setPendingMessages((prev) =>
+								prev.map((m) =>
+									m.messageId === assistantTempId
+										? {
+												...m,
+												toolCalls: [
+													...(m.toolCalls || []),
+													{
+														id: payload.toolCallId,
+														type: "function" as const,
+														status: "executing" as const,
+														function: {
+															name: payload.toolName,
+															arguments: argsString,
+														},
+													},
+												],
+											}
+										: m,
+								),
+							);
+							setToolCallMeta((prev) => {
+								if (prev[payload.toolCallId]?.status) return prev;
+								return {
 									...prev,
 									[payload.toolCallId]: {
-										status: updated.status,
-										executionId: updated.executionId,
-										result: updated.result,
+										...(prev[payload.toolCallId] ?? {}),
+										status: "executing",
 									},
-								}));
+								};
+							});
+						}
 
-								if (existingIndex >= 0 && existingToolCall) {
-									toolCalls[existingIndex] = updated;
-								} else {
-									toolCalls.push(updated);
-								}
+						if (evt.event === "tool-result") {
+							const payload = JSON.parse(evt.data) as {
+								toolCallId: string;
+								toolName: string;
+								result?: unknown;
+							};
+							activeToolCallIds.delete(payload.toolCallId);
+							try {
+								maybeInvalidateProjectQueries(payload.toolName, payload.result);
+							} catch {}
 
-								return { ...m, toolCalls };
-							}),
-						);
+							setPendingMessages((prev) =>
+								prev.map((m) => {
+									if (m.messageId !== assistantTempId) return m;
+									const toolCalls = [...(m.toolCalls || [])];
+									const existingIndex = toolCalls.findIndex(
+										(tc) => tc.id === payload.toolCallId,
+									);
+
+									const existingToolCall =
+										existingIndex >= 0 ? toolCalls[existingIndex] : undefined;
+									const base: ToolCall = existingToolCall ?? {
+										id: payload.toolCallId,
+										type: "function" as const,
+										function: { name: payload.toolName, arguments: "{}" },
+									};
+
+									// Determine status and result from payload
+									let status: ToolCall["status"] = "completed";
+									let executionId: string | undefined;
+									let result: ToolCall["result"] | undefined;
+
+									const payloadResult = isRecord(payload.result)
+										? payload.result
+										: undefined;
+									if (
+										payloadResult &&
+										payloadResult.status === "pending_approval" &&
+										getExecutionIdFromResultPayload(payloadResult)
+									) {
+										status = "pending";
+										executionId =
+											getExecutionIdFromResultPayload(payloadResult);
+										result = {
+											success: true,
+											message:
+												typeof payloadResult.message === "string"
+													? payloadResult.message
+													: undefined,
+											data: payloadResult.data,
+										};
+									} else if (
+										payloadResult &&
+										typeof payloadResult.success === "boolean"
+									) {
+										status = payloadResult.success ? "completed" : "failed";
+										executionId =
+											getExecutionIdFromResultPayload(payloadResult);
+										result = {
+											success: payloadResult.success,
+											message: payloadResult.message as string | undefined,
+											data: payloadResult.data,
+											error: payloadResult.error as string | undefined,
+										};
+									}
+
+									const updated: ToolCall = {
+										...base,
+										executionId: executionId ?? base.executionId,
+										status,
+										result: result ?? base.result,
+										function: {
+											...base.function,
+											name: payload.toolName || base.function.name,
+										},
+									};
+
+									setToolCallMeta((prev) => ({
+										...prev,
+										[payload.toolCallId]: {
+											status: updated.status,
+											executionId: updated.executionId,
+											result: updated.result,
+										},
+									}));
+
+									if (existingIndex >= 0 && existingToolCall) {
+										toolCalls[existingIndex] = updated;
+									} else {
+										toolCalls.push(updated);
+									}
+
+									return { ...m, toolCalls };
+								}),
+							);
+						}
+
+						if (evt.event === "done") {
+							receivedDone = true;
+							activeToolCallIds.clear();
+							finalizeExecutingToolCalls(
+								"settings.ai.errors.toolExecutionDidNotReturnResult",
+							);
+							setPendingMessages((prev) =>
+								prev.map((m) =>
+									m.messageId === userTempId || m.messageId === assistantTempId
+										? { ...m, status: "sent" as const }
+										: m,
+								),
+							);
+							break;
+						}
+
+						if (evt.event === "error" || evt.event === "stream-error") {
+							const payload = JSON.parse(evt.data) as {
+								message?: string;
+								error?: string;
+							};
+							throw new Error(
+								payload.message ||
+									payload.error ||
+									"settings.ai.errors.streamingError",
+							);
+						}
 					}
+				} finally {
+					clearInterval(safetyInterval);
+				}
 
-					if (evt.event === "done") {
-						receivedDone = true;
-						finalizeExecutingToolCalls(
-							"settings.ai.errors.toolExecutionDidNotReturnResult",
-						);
-						setPendingMessages((prev) =>
-							prev.map((m) =>
-								m.messageId === userTempId || m.messageId === assistantTempId
-									? { ...m, status: "sent" as const }
-									: m,
-							),
-						);
-						break;
-					}
-
-					if (evt.event === "error" || evt.event === "stream-error") {
-						const payload = JSON.parse(evt.data) as {
-							message?: string;
-							error?: string;
-						};
-						throw new Error(
-							payload.message ||
-								payload.error ||
-								"settings.ai.errors.streamingError",
-						);
-					}
+				if (controller.signal.aborted && !receivedDone) {
+					finalizeExecutingToolCalls(
+						abortedBySafetyTimer
+							? "settings.ai.errors.streamingEndedWithoutDone"
+							: "settings.ai.errors.streamingAborted",
+					);
+					setPendingMessages((prev) =>
+						prev.map((m) =>
+							m.messageId === userTempId || m.messageId === assistantTempId
+								? { ...m, status: "sent" as const }
+								: m,
+						),
+					);
 				}
 
 				if (!controller.signal.aborted && !receivedDone) {
@@ -942,7 +1035,11 @@ export function useChat(options: UseChatOptions = {}) {
 			} catch (error) {
 				setAbortController(null);
 				if ((error as Error).name === "AbortError") {
-					finalizeExecutingToolCalls("settings.ai.errors.streamingAborted");
+					finalizeExecutingToolCalls(
+						abortedBySafetyTimer
+							? "settings.ai.errors.streamingEndedWithoutDone"
+							: "settings.ai.errors.streamingAborted",
+					);
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === userTempId || m.messageId === assistantTempId
@@ -970,7 +1067,11 @@ export function useChat(options: UseChatOptions = {}) {
 			}
 
 			try {
-				await refetchMessages();
+				const refetchPromise = refetchMessages().catch(() => {});
+				await Promise.race([
+					refetchPromise,
+					new Promise((resolve) => setTimeout(resolve, 10000)),
+				]);
 			} finally {
 				setPendingMessages((prev) =>
 					prev.filter(
@@ -988,6 +1089,7 @@ export function useChat(options: UseChatOptions = {}) {
 			options.projectId,
 			options.serverId,
 			options,
+			maybeInvalidateProjectQueries,
 		],
 	);
 

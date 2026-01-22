@@ -9,6 +9,123 @@ import { z } from "zod";
 import { toolRegistry } from "../registry";
 import type { Tool } from "../types";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const PUBLIC_GITHUB_API_BASE = "https://api.github.com";
+const PUBLIC_GITHUB_RAW_HOSTS = new Set(["raw.githubusercontent.com"]);
+
+const buildPublicGithubHeaders = (accept = "application/vnd.github+json") => ({
+	Accept: accept,
+	"X-GitHub-Api-Version": "2022-11-28",
+	"User-Agent": "dokploy-ai",
+});
+
+async function readResponseTextWithLimit(
+	response: Response,
+	maxBytes: number,
+): Promise<string> {
+	const header = response.headers.get("content-length");
+	const contentLength = header ? Number(header) : NaN;
+	if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+		throw new Error(`Response too large (${contentLength} bytes)`);
+	}
+
+	const reader = response.body?.getReader();
+	if (!reader) {
+		const text = await response.text();
+		if (text.length > maxBytes) throw new Error("Response too large");
+		return text;
+	}
+
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	while (true) {
+		const { value, done } = await reader.read();
+		if (done) break;
+		if (!value) continue;
+		total += value.byteLength;
+		if (total > maxBytes) {
+			try {
+				await reader.cancel();
+			} catch {}
+			throw new Error(`Response too large (> ${maxBytes} bytes)`);
+		}
+		chunks.push(value);
+	}
+
+	const merged = new Uint8Array(total);
+	let offset = 0;
+	for (const c of chunks) {
+		merged.set(c, offset);
+		offset += c.byteLength;
+	}
+	return new TextDecoder().decode(merged);
+}
+
+async function fetchPublicGithubJson(url: string, options?: {
+	timeoutMs?: number;
+	maxBytes?: number;
+}): Promise<unknown> {
+	const timeoutMs = options?.timeoutMs ?? 10_000;
+	const maxBytes = options?.maxBytes ?? 800_000;
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const res = await fetch(url, {
+			headers: buildPublicGithubHeaders(),
+			signal: controller.signal,
+		});
+		const text = await readResponseTextWithLimit(res, maxBytes);
+		if (!res.ok) {
+			throw new Error(text || `GitHub request failed (${res.status})`);
+		}
+		try {
+			return JSON.parse(text);
+		} catch {
+			throw new Error("Invalid JSON response from GitHub");
+		}
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+async function fetchPublicGithubRawText(url: string, options?: {
+	timeoutMs?: number;
+	maxBytes?: number;
+}): Promise<string> {
+	const timeoutMs = options?.timeoutMs ?? 10_000;
+	const maxBytes = options?.maxBytes ?? 1_000_000;
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const res = await fetch(url, {
+			headers: buildPublicGithubHeaders("application/vnd.github.raw"),
+			signal: controller.signal,
+		});
+		const text = await readResponseTextWithLimit(res, maxBytes);
+		if (!res.ok) {
+			throw new Error(text || `GitHub request failed (${res.status})`);
+		}
+		return text;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+function normalizeRepoPath(path?: string): string {
+	return String(path ?? "").replace(/^\/+|\/+$/g, "");
+}
+
+function encodeRepoPath(path: string): string {
+	return normalizeRepoPath(path)
+		.split("/")
+		.filter((p) => p.length > 0)
+		.map((p) => encodeURIComponent(p))
+		.join("/");
+}
+
 const listGithubProviders: Tool<
 	Record<string, never>,
 	Array<{ githubId: string; name: string; gitProviderId: string }>
@@ -247,6 +364,537 @@ const createRepoBranch: Tool<
 			success: true,
 			message: `Branch "${params.branch}" created from "${params.fromBranch}"`,
 			data: { branch: params.branch },
+		};
+	},
+};
+
+const listRepoPath: Tool<
+	{
+		githubId: string;
+		owner: string;
+		repo: string;
+		path?: string;
+		ref?: string;
+		limit?: number;
+	},
+	Array<{
+		name: string;
+		path: string;
+		type: "file" | "dir" | "symlink" | "submodule" | "unknown";
+		sha: string;
+		size?: number;
+	}>
+> = {
+	name: "github_path_list",
+	description:
+		"List directory contents for a GitHub repository path at a given ref. Use this to discover file paths before calling github_file_get.",
+	category: "github",
+	aliases: [
+		"list repo files",
+		"list files",
+		"list directory",
+		"github tree",
+		"目录列表",
+		"列出文件",
+		"仓库文件列表",
+	],
+	tags: ["github", "repo", "path", "directory", "list", "目录", "文件", "列表"],
+	parameters: z.object({
+		githubId: z.string().min(1).describe("GitHub provider ID"),
+		owner: z.string().min(1).describe("Repository owner"),
+		repo: z.string().min(1).describe("Repository name"),
+		path: z
+			.string()
+			.optional()
+			.default("")
+			.describe("Directory path in repository (empty for repo root)"),
+		ref: z.string().optional().describe("Branch name or commit SHA"),
+		limit: z
+			.number()
+			.min(1)
+			.max(200)
+			.optional()
+			.default(200)
+			.describe("Maximum number of entries to return"),
+	}),
+	riskLevel: "low",
+	requiresApproval: false,
+	execute: async (params, ctx) => {
+		const provider = await findGithubById(params.githubId);
+		if (provider.gitProvider?.organizationId !== ctx.organizationId) {
+			return {
+				success: false,
+				message: "GitHub provider access denied",
+				data: [],
+			};
+		}
+
+		const octokit = authGithub(provider);
+		const normalizedPath = (params.path ?? "").replace(/^\/+|\/+$/g, "");
+
+		const res = await octokit.rest.repos.getContent({
+			owner: params.owner,
+			repo: params.repo,
+			path: normalizedPath,
+			ref: params.ref,
+		});
+
+		if (!Array.isArray(res.data)) {
+			const type = res.data.type;
+			return {
+				success: false,
+				message:
+					type === "file"
+						? "Path is a file; use github_file_get"
+						: "Path is not a directory",
+				data: [],
+			};
+		}
+
+		const limit = params.limit ?? 200;
+		const items = res.data
+			.map((item) => {
+				const type = (
+					item.type === "file" ||
+					item.type === "dir" ||
+					item.type === "symlink" ||
+					item.type === "submodule"
+						? item.type
+						: "unknown"
+				) as "file" | "dir" | "symlink" | "submodule" | "unknown";
+				return {
+					name: item.name ?? "",
+					path: item.path ?? "",
+					type,
+					sha: item.sha ?? "",
+					size: typeof item.size === "number" ? item.size : undefined,
+				};
+			})
+			.filter((x) => x.path.length > 0)
+			.slice(0, limit);
+
+		const label = normalizedPath.length > 0 ? normalizedPath : "/";
+		return {
+			success: true,
+			message: `Found ${items.length} item(s) under "${label}"`,
+			data: items,
+		};
+	},
+};
+
+const searchPublicGithubRepositories: Tool<
+	{ query: string; limit?: number },
+	Array<{
+		owner: string;
+		repository: string;
+		fullName: string;
+		description: string | null;
+		stars: number;
+		defaultBranch: string;
+		updatedAt: string;
+		htmlUrl: string;
+	}>
+> = {
+	name: "github_public_repository_search",
+	description:
+		"Search public GitHub repositories by keyword. Useful for finding other people's open-source repos.",
+	category: "github",
+	aliases: [
+		"search github repos",
+		"find repo",
+		"search public repo",
+		"搜索公开仓库",
+		"搜索开源仓库",
+	],
+	tags: ["github", "public", "search", "repo", "开源", "公开", "搜索", "仓库"],
+	parameters: z.object({
+		query: z.string().min(1).describe("Search query (GitHub search syntax)"),
+		limit: z
+			.number()
+			.min(1)
+			.max(30)
+			.optional()
+			.default(10)
+			.describe("Maximum number of repositories to return"),
+	}),
+	riskLevel: "low",
+	requiresApproval: false,
+	execute: async (params) => {
+		const limit = params.limit ?? 10;
+		const perPage = Math.min(30, Math.max(1, limit));
+		const url = `${PUBLIC_GITHUB_API_BASE}/search/repositories?${new URLSearchParams({
+			q: params.query,
+			per_page: String(perPage),
+		}).toString()}`;
+
+		let json: unknown;
+		try {
+			json = await fetchPublicGithubJson(url, { maxBytes: 1_200_000 });
+		} catch (e) {
+			return {
+				success: false,
+				message: "Failed to search public GitHub repositories",
+				error: e instanceof Error ? e.message : String(e),
+				data: [],
+			};
+		}
+
+		const items = isRecord(json) && Array.isArray(json.items) ? json.items : [];
+		const mapped = items
+			.slice(0, limit)
+			.map((r) => {
+				const owner =
+					isRecord(r) && isRecord(r.owner) && typeof r.owner.login === "string"
+						? r.owner.login
+						: "";
+				const repository = isRecord(r) && typeof r.name === "string" ? r.name : "";
+				return {
+					owner,
+					repository,
+					fullName:
+						isRecord(r) && typeof r.full_name === "string" ? r.full_name : "",
+					description:
+						isRecord(r) && typeof r.description === "string"
+							? r.description
+							: null,
+					stars:
+						isRecord(r) && typeof r.stargazers_count === "number"
+							? r.stargazers_count
+							: 0,
+					defaultBranch:
+						isRecord(r) && typeof r.default_branch === "string"
+							? r.default_branch
+							: "main",
+					updatedAt:
+						isRecord(r) && typeof r.updated_at === "string" ? r.updated_at : "",
+					htmlUrl:
+						isRecord(r) && typeof r.html_url === "string" ? r.html_url : "",
+				};
+			})
+			.filter((x) => x.owner && x.repository);
+
+		return {
+			success: true,
+			message: `Found ${mapped.length} public repositor${mapped.length === 1 ? "y" : "ies"}`,
+			data: mapped,
+		};
+	},
+};
+
+const getPublicGithubRepository: Tool<
+	{ owner: string; repo: string },
+	{
+		owner: string;
+		repository: string;
+		fullName: string;
+		description: string | null;
+		private: boolean;
+		defaultBranch: string;
+		htmlUrl: string;
+	}
+> = {
+	name: "github_public_repository_get",
+	description:
+		"Get basic information for a public GitHub repository (no provider required).",
+	category: "github",
+	aliases: ["repo info", "github repo info", "公开仓库信息", "仓库详情"],
+	tags: ["github", "public", "repo", "get", "info", "公开", "仓库", "详情"],
+	parameters: z.object({
+		owner: z.string().min(1).describe("Repository owner"),
+		repo: z.string().min(1).describe("Repository name"),
+	}),
+	riskLevel: "low",
+	requiresApproval: false,
+	execute: async (params) => {
+		const url = `${PUBLIC_GITHUB_API_BASE}/repos/${encodeURIComponent(
+			params.owner,
+		)}/${encodeURIComponent(params.repo)}`;
+
+		let json: unknown;
+		try {
+			json = await fetchPublicGithubJson(url, { maxBytes: 500_000 });
+		} catch (e) {
+			return {
+				success: false,
+				message: "Failed to fetch public GitHub repository info",
+				error: e instanceof Error ? e.message : String(e),
+				data: {
+					owner: "",
+					repository: "",
+					fullName: "",
+					description: null,
+					private: false,
+					defaultBranch: "main",
+					htmlUrl: "",
+				},
+			};
+		}
+
+		const ownerLogin =
+			isRecord(json) &&
+			isRecord(json.owner) &&
+			typeof json.owner.login === "string"
+				? json.owner.login
+				: params.owner;
+		const repoName =
+			isRecord(json) && typeof json.name === "string" ? json.name : params.repo;
+
+		return {
+			success: true,
+			message: `Repository "${ownerLogin}/${repoName}" fetched`,
+			data: {
+				owner: ownerLogin,
+				repository: repoName,
+				fullName:
+					isRecord(json) && typeof json.full_name === "string"
+						? json.full_name
+						: `${ownerLogin}/${repoName}`,
+				description:
+					isRecord(json) && typeof json.description === "string"
+						? json.description
+						: null,
+				private: Boolean(isRecord(json) ? json.private : false),
+				defaultBranch:
+					isRecord(json) && typeof json.default_branch === "string"
+						? json.default_branch
+						: "main",
+				htmlUrl:
+					isRecord(json) && typeof json.html_url === "string" ? json.html_url : "",
+			},
+		};
+	},
+};
+
+const listPublicGithubRepoPath: Tool<
+	{ owner: string; repo: string; path?: string; ref?: string; limit?: number },
+	Array<{
+		name: string;
+		path: string;
+		type: "file" | "dir" | "symlink" | "submodule" | "unknown";
+		sha: string;
+		size?: number;
+	}>
+> = {
+	name: "github_public_path_list",
+	description:
+		"List directory contents for a public GitHub repository path at a given ref.",
+	category: "github",
+	aliases: [
+		"list public repo files",
+		"public repo directory",
+		"公开仓库目录列表",
+		"公开仓库文件列表",
+	],
+	tags: ["github", "public", "path", "directory", "list", "公开", "目录", "文件"],
+	parameters: z.object({
+		owner: z.string().min(1).describe("Repository owner"),
+		repo: z.string().min(1).describe("Repository name"),
+		path: z
+			.string()
+			.optional()
+			.default("")
+			.describe("Directory path (empty for repo root)"),
+		ref: z.string().optional().describe("Branch name or commit SHA"),
+		limit: z
+			.number()
+			.min(1)
+			.max(200)
+			.optional()
+			.default(200)
+			.describe("Maximum number of entries to return"),
+	}),
+	riskLevel: "low",
+	requiresApproval: false,
+	execute: async (params) => {
+		const normalizedPath = normalizeRepoPath(params.path);
+		const encodedPath = normalizedPath ? `/${encodeRepoPath(normalizedPath)}` : "";
+		const qs = params.ref ? `?ref=${encodeURIComponent(params.ref)}` : "";
+		const url = `${PUBLIC_GITHUB_API_BASE}/repos/${encodeURIComponent(
+			params.owner,
+		)}/${encodeURIComponent(params.repo)}/contents${encodedPath}${qs}`;
+
+		let json: unknown;
+		try {
+			json = await fetchPublicGithubJson(url, { maxBytes: 2_000_000 });
+		} catch (e) {
+			return {
+				success: false,
+				message: "Failed to list public GitHub repository path",
+				error: e instanceof Error ? e.message : String(e),
+				data: [],
+			};
+		}
+
+		if (!Array.isArray(json)) {
+			const type = isRecord(json) && typeof json.type === "string" ? json.type : "";
+			return {
+				success: false,
+				message:
+					type === "file"
+						? "Path is a file; use github_public_file_get"
+						: "Path is not a directory",
+				data: [],
+			};
+		}
+
+		const limit = params.limit ?? 200;
+		const items = json
+			.map((item) => {
+				const type = (
+					isRecord(item) &&
+					(item.type === "file" ||
+						item.type === "dir" ||
+						item.type === "symlink" ||
+						item.type === "submodule")
+						? item.type
+						: "unknown"
+				) as "file" | "dir" | "symlink" | "submodule" | "unknown";
+				return {
+					name: isRecord(item) && typeof item.name === "string" ? item.name : "",
+					path: isRecord(item) && typeof item.path === "string" ? item.path : "",
+					type,
+					sha: isRecord(item) && typeof item.sha === "string" ? item.sha : "",
+					size:
+						isRecord(item) && typeof item.size === "number" ? item.size : undefined,
+				};
+			})
+			.filter((x) => x.path.length > 0)
+			.slice(0, limit);
+
+		const label = normalizedPath.length > 0 ? normalizedPath : "/";
+		return {
+			success: true,
+			message: `Found ${items.length} item(s) under "${label}"`,
+			data: items,
+		};
+	},
+};
+
+const getPublicGithubRepoFile: Tool<
+	{
+		owner: string;
+		repo: string;
+		path: string;
+		ref?: string;
+		maxBytes?: number;
+	},
+	{ path: string; content: string; sha: string }
+> = {
+	name: "github_public_file_get",
+	description:
+		"Get a file's content from a public GitHub repository at a given ref (no provider required).",
+	category: "github",
+	aliases: ["read public github file", "公开仓库读取文件", "开源仓库读取文件"],
+	tags: ["github", "public", "file", "read", "get", "公开", "文件", "读取"],
+	parameters: z.object({
+		owner: z.string().min(1).describe("Repository owner"),
+		repo: z.string().min(1).describe("Repository name"),
+		path: z.string().min(1).describe("File path in repository"),
+		ref: z.string().optional().describe("Branch name or commit SHA"),
+		maxBytes: z
+			.number()
+			.min(1_000)
+			.max(1_000_000)
+			.optional()
+			.default(400_000)
+			.describe("Maximum bytes to read from the file"),
+	}),
+	riskLevel: "low",
+	requiresApproval: false,
+	execute: async (params) => {
+		const normalizedPath = normalizeRepoPath(params.path);
+		const qs = params.ref ? `?ref=${encodeURIComponent(params.ref)}` : "";
+		const url = `${PUBLIC_GITHUB_API_BASE}/repos/${encodeURIComponent(
+			params.owner,
+		)}/${encodeURIComponent(params.repo)}/contents/${encodeRepoPath(
+			normalizedPath,
+		)}${qs}`;
+
+		let json: unknown;
+		try {
+			json = await fetchPublicGithubJson(url, { maxBytes: 2_500_000 });
+		} catch (e) {
+			return {
+				success: false,
+				message: "Failed to fetch public GitHub file",
+				error: e instanceof Error ? e.message : String(e),
+				data: { path: normalizedPath, content: "", sha: "" },
+			};
+		}
+
+		if (Array.isArray(json)) {
+			return {
+				success: false,
+				message: "Path is a directory; use github_public_path_list",
+				data: { path: normalizedPath, content: "", sha: "" },
+			};
+		}
+
+		const type = isRecord(json) && typeof json.type === "string" ? json.type : "";
+		if (type !== "file") {
+			return {
+				success: false,
+				message: "Path is not a file",
+				data: { path: normalizedPath, content: "", sha: "" },
+			};
+		}
+
+		const sha = isRecord(json) && typeof json.sha === "string" ? json.sha : "";
+		const maxBytes = params.maxBytes ?? 400_000;
+
+		const downloadUrl =
+			isRecord(json) && typeof json.download_url === "string"
+				? json.download_url
+				: "";
+		if (downloadUrl) {
+			try {
+				const u = new URL(downloadUrl);
+				if (!PUBLIC_GITHUB_RAW_HOSTS.has(u.hostname)) {
+					throw new Error("download_url host not allowed");
+				}
+				const content = await fetchPublicGithubRawText(downloadUrl, {
+					maxBytes,
+					timeoutMs: 15_000,
+				});
+				return {
+					success: true,
+					message: `File "${normalizedPath}" fetched`,
+					data: { path: normalizedPath, content, sha },
+				};
+			} catch (e) {
+				return {
+					success: false,
+					message: "Failed to download public GitHub file content",
+					error: e instanceof Error ? e.message : String(e),
+					data: { path: normalizedPath, content: "", sha },
+				};
+			}
+		}
+
+		const encoded = isRecord(json) && typeof json.content === "string" ? json.content : "";
+		const encoding =
+			isRecord(json) && typeof json.encoding === "string" ? json.encoding : "";
+		if (!encoded || encoding !== "base64") {
+			return {
+				success: false,
+				message: "File content is not available via GitHub API",
+				data: { path: normalizedPath, content: "", sha },
+			};
+		}
+
+		const decoded = Buffer.from(encoded, "base64").toString("utf8");
+		if (decoded.length > maxBytes) {
+			return {
+				success: false,
+				message: `File too large (> ${maxBytes} bytes)`,
+				data: { path: normalizedPath, content: "", sha },
+			};
+		}
+
+		return {
+			success: true,
+			message: `File "${normalizedPath}" fetched`,
+			data: { path: normalizedPath, content: decoded, sha },
 		};
 	},
 };
@@ -497,8 +1145,13 @@ const createPullRequest: Tool<
 export function registerGithubTools() {
 	toolRegistry.register(listGithubProviders);
 	toolRegistry.register(listGithubRepositories);
+	toolRegistry.register(searchPublicGithubRepositories);
+	toolRegistry.register(getPublicGithubRepository);
+	toolRegistry.register(listPublicGithubRepoPath);
+	toolRegistry.register(getPublicGithubRepoFile);
 	toolRegistry.register(listGithubBranches);
 	toolRegistry.register(createRepoBranch);
+	toolRegistry.register(listRepoPath);
 	toolRegistry.register(getRepoFile);
 	toolRegistry.register(upsertRepoFile);
 	toolRegistry.register(createPullRequest);

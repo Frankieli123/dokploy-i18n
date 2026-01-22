@@ -7,6 +7,7 @@ export type ToolIntent =
 	| "backup"
 	| "database"
 	| "domain"
+	| "github"
 	| "server";
 
 export type ToolSelectionContext = {
@@ -44,6 +45,13 @@ function classifyIntent(messageLower: string): ToolIntent {
 		)
 	) {
 		return "database";
+	}
+	if (
+		/(github|git hub|repo|repository|\bpr\b|pull request|branch|commit|仓库|分支|提交|拉取请求|合并请求)/i.test(
+			messageLower,
+		)
+	) {
+		return "github";
 	}
 	if (
 		/(traefik|proxy|gateway|routing|router|reverse\s*proxy)/i.test(
@@ -225,6 +233,16 @@ export function selectRelevantTools(
 		if (wantsTraefik) prefixes.add("traefik_");
 	}
 
+	if (
+		intent === "query" &&
+		/(github|git hub|repo|repository|\bpr\b|pull request|branch|commit|仓库|分支|提交|拉取请求|合并请求)/i.test(
+			messageLower,
+		)
+	) {
+		prefixes.add("github_");
+		prefixes.add("git_provider_");
+	}
+
 	if (context.serverId && (intent === "server" || intent === "application")) {
 		prefixes.add("server_");
 	}
@@ -232,6 +250,11 @@ export function selectRelevantTools(
 	if (intent === "application") {
 		prefixes.add("application_");
 		prefixes.add("compose_");
+	}
+
+	if (intent === "github") {
+		prefixes.add("github_");
+		prefixes.add("git_provider_");
 	}
 
 	if (intent === "backup") {
