@@ -44,62 +44,6 @@ const RISK_RANK = {
 	high: 3,
 } as const;
 
-const TOOL_SEARCH_DOMAINS = [
-	"database",
-	"project",
-	"server",
-	"application",
-	"domain",
-	"certificate",
-	"proxy",
-	"backup",
-	"mount",
-	"registry",
-	"ssh",
-	"cluster",
-	"rollback",
-	"schedule",
-	"security",
-	"git",
-	"user",
-	"settings",
-	"billing",
-	"logs",
-	"deploy",
-	"common",
-] as const;
-
-const TOOL_SEARCH_DOMAIN_CATEGORY_HINTS: Record<string, string[]> = {
-	database: ["database", "postgres", "mysql", "mariadb", "mongo", "redis"],
-	project: ["project", "environment"],
-	server: ["server"],
-	application: ["application", "compose"],
-	domain: ["domain"],
-	certificate: ["certificate", "server"],
-	proxy: [
-		"server",
-		"domain",
-		"certificate",
-		"application",
-		"compose",
-		"settings",
-	],
-	backup: ["backup"],
-	mount: ["server"],
-	registry: ["deployment"],
-	ssh: ["server"],
-	cluster: ["server"],
-	rollback: ["deployment"],
-	schedule: ["server"],
-	security: ["server"],
-	git: ["github", "application", "compose"],
-	user: ["user"],
-	settings: ["settings"],
-	billing: ["stripe"],
-	logs: ["deployment", "server"],
-	deploy: ["deployment", "application", "compose"],
-};
-
 function normalizeRiskLevel(value: unknown): string {
 	return typeof value === "string" ? value.toLowerCase() : "high";
 }
@@ -235,65 +179,23 @@ function buildMetaToolPromptInfo(): ToolPromptInfo[] {
 
 function tokenizeToolSearchQuery(query: string): string[] {
 	const q = query.trim().toLowerCase();
-	const tokens: string[] = q.split(/[\s/_-]+/g).filter(Boolean);
+	const tokens: string[] = q.split(/[\s/_.-]+/g).filter(Boolean);
 
-	const add = (arr: string[]) => {
+	const add = (...arr: string[]) => {
 		for (const t of arr) tokens.push(t);
 	};
 
-	// Lightweight CN->EN keyword hints so tool_search works well in Chinese conversations.
-	if (/(数据库|database|\bdb\b)/i.test(q)) add(["database", "db"]);
-	if (/(postgres|postgresql|\bpg\b|pgsql|postgre)/i.test(q))
-		add(["postgres", "pg"]);
-	if (/(mysql)/i.test(q)) add(["mysql"]);
-	if (/(mariadb)/i.test(q)) add(["mariadb"]);
-	if (/(mongo|mongodb)/i.test(q)) add(["mongo", "mongodb"]);
-	if (/(redis)/i.test(q)) add(["redis"]);
+	// Keep this minimal: the tool catalog is intentionally small (tRPC bridge),
+	// but we still want Chinese queries to match English tool names.
+	if (/(trpc|t\s*rpc|t-rpc)/i.test(query)) add("trpc");
+	if (/(api|接口)/i.test(query)) add("api");
+	if (/(router|routers|路由|模块)/i.test(query)) add("router");
+	if (/(procedure|procedures|方法|函数|接口)/i.test(query)) add("procedure");
+	if (/(search|查找|搜索)/i.test(query)) add("search");
+	if (/(describe|schema|入参|参数|字段|说明|描述)/i.test(query)) add("describe");
+	if (/(call|invoke|execute|run|调用|执行)/i.test(query)) add("call");
 
-	if (/(项目|project)/i.test(q)) add(["project"]);
-	if (/(环境|environment|\benv\b)/i.test(q)) add(["environment", "env"]);
-	if (/(服务器|主机|server|host)/i.test(q)) add(["server"]);
-	if (/(应用|application|\bapp\b)/i.test(q)) add(["application", "app"]);
-	if (/(域名|domain|dns)/i.test(q)) add(["domain", "dns"]);
-	if (/(证书|certificate|ssl|https|tls)/i.test(q))
-		add(["certificate", "ssl", "https", "tls"]);
-	if (/(traefik|特雷菲克|反向代理|反代|网关|代理|转发|路由|ingress)/i.test(q))
-		add(["traefik", "proxy", "router", "ingress"]);
-	if (/(acme|let'?s\s*encrypt|续签|自动续期|证书续期|challenge)/i.test(q))
-		add(["acme", "letsencrypt", "challenge"]);
-	if (/(挂载|mount|bind\s*mount|绑定挂载|卷|volume)/i.test(q))
-		add(["mount", "bind", "volume"]);
-	if (/(对象存储|s3|r2|minio|bucket|存储桶|destination|备份目的地)/i.test(q))
-		add(["destination", "s3", "bucket", "backup"]);
-	if (/(卷备份|volume\s*backup)/i.test(q))
-		add(["volume_backup", "volume", "backup"]);
-	if (/(执行命令|命令行|终端|terminal|shell|exec)/i.test(q))
-		add(["exec", "command", "server_exec"]);
-	if (/(镜像仓库|registry|镜像|image|docker\s*hub|ghcr)/i.test(q))
-		add(["registry", "image", "docker", "ghcr"]);
-	if (/(ssh|ssh\s*key|密钥|密钥对|私钥|公钥)/i.test(q)) add(["ssh", "key"]);
-	if (/(集群|cluster|swarm|节点|node)/i.test(q))
-		add(["cluster", "swarm", "node"]);
-	if (/(回滚|rollback|revert|恢复到上一版)/i.test(q))
-		add(["rollback", "revert"]);
-	if (/(github|GitHub|git hub)/i.test(q)) add(["github", "git"]);
-	if (/(仓库|repo|repository)/i.test(q)) add(["repo", "repository"]);
-	if (/(分支|branch)/i.test(q)) add(["branch"]);
-	if (/(拉取请求|合并请求|pull request|\bpr\b)/i.test(q))
-		add(["pull", "request", "pr"]);
-	if (/(提交|commit)/i.test(q)) add(["commit"]);
-	if (/(备份|backup)/i.test(q)) add(["backup"]);
-	if (/(恢复|restore)/i.test(q)) add(["restore"]);
-	if (/(日志|log)/i.test(q)) add(["log", "logs"]);
-	if (/(重启|restart)/i.test(q)) add(["restart"]);
-	if (/(部署|deploy|发布)/i.test(q)) add(["deploy"]);
-	if (/(创建|新建|新增|create|add|new)/i.test(q)) add(["create", "new", "add"]);
-	if (/(删除|移除|销毁|delete|remove|destroy)/i.test(q))
-		add(["delete", "remove", "destroy"]);
-	if (/(列表|list|查看|show|all)/i.test(q)) add(["list", "get", "show"]);
-	if (/(详情|detail|info|inspect)/i.test(q)) add(["get", "info", "inspect"]);
-
-	return Array.from(new Set(tokens));
+	return Array.from(new Set(tokens.filter(Boolean)));
 }
 
 function deriveDefaultToolTags(t: {
@@ -501,15 +403,6 @@ function getToolDescribeData(t: Tool): ToolDescribeData {
 	};
 }
 
-function inferToolSearchDomains(query: string): string[] {
-	const tokens = tokenizeToolSearchQuery(query);
-	const domainSet = new Set<string>();
-	for (const d of TOOL_SEARCH_DOMAINS) {
-		if (tokens.includes(d)) domainSet.add(d);
-	}
-	return Array.from(domainSet);
-}
-
 function extractLiteralStringOptions(schema: z.ZodTypeAny): string[] {
 	const unwrapped = unwrapZodSchema(schema).schema;
 
@@ -662,7 +555,6 @@ function buildUnknownToolSuggestionResult(toolName: string): {
 function searchToolCatalog(params: {
 	query: string;
 	limit?: number;
-	domain?: (typeof TOOL_SEARCH_DOMAINS)[number];
 	category?: string;
 	riskLevelMax?: "low" | "medium" | "high";
 	requiresApproval?: boolean;
@@ -671,14 +563,12 @@ function searchToolCatalog(params: {
 	message: string;
 	meta: {
 		query: string;
-		matchedDomains: string[];
 		nextCall?: {
 			toolName: string;
 			params: Record<string, unknown>;
 			confirmLiterals: string[];
 		};
 		appliedFilters: {
-			domain?: (typeof TOOL_SEARCH_DOMAINS)[number];
 			category?: string;
 			riskLevelMax?: "low" | "medium" | "high";
 			requiresApproval?: boolean;
@@ -698,22 +588,6 @@ function searchToolCatalog(params: {
 	const index = getToolSearchIndex();
 	const tokens = tokenizeToolSearchQuery(params.query);
 	const tokensLower = tokens.map((t) => t.toLowerCase());
-	const matchedDomains = inferToolSearchDomains(params.query);
-	const hintedCategories = Array.from(
-		new Set(
-			matchedDomains.flatMap((d) => TOOL_SEARCH_DOMAIN_CATEGORY_HINTS[d] ?? []),
-		),
-	);
-	const requestedDomain =
-		typeof params.domain === "string" ? params.domain : undefined;
-	const requestedDomainCategories =
-		requestedDomain && TOOL_SEARCH_DOMAIN_CATEGORY_HINTS[requestedDomain]
-			? TOOL_SEARCH_DOMAIN_CATEGORY_HINTS[requestedDomain]
-			: [];
-	const hintedCategorySet = new Set([
-		...hintedCategories,
-		...requestedDomainCategories,
-	]);
 	const riskLevelMaxRank =
 		typeof params.riskLevelMax === "string"
 			? getRiskRank(params.riskLevelMax)
@@ -726,9 +600,6 @@ function searchToolCatalog(params: {
 	const scored: Array<{ t: (typeof all)[number]; score: number }> = [];
 	for (const x of index) {
 		const t = x.t;
-		if (requestedDomain && requestedDomainCategories.length > 0) {
-			if (!requestedDomainCategories.includes(t.category)) continue;
-		}
 		if (normalizedCategory && t.category !== normalizedCategory) continue;
 		if (typeof params.requiresApproval === "boolean") {
 			if (t.requiresApproval !== params.requiresApproval) continue;
@@ -743,9 +614,6 @@ function searchToolCatalog(params: {
 			if (x.extraTermsLower.some((term) => term.includes(tTok))) score += 5;
 			if (x.hayLower.includes(tTok)) score += 3;
 		}
-		if (hintedCategorySet.size > 0 && hintedCategorySet.has(t.category)) {
-			score += 2;
-		}
 		if (t.riskLevel === "low") score += 1;
 		if (score > 0) scored.push({ t, score });
 	}
@@ -755,10 +623,16 @@ function searchToolCatalog(params: {
 	const picked = (() => {
 		if (scored.length > 0) return scored.slice(0, limit).map((x) => x.t);
 
-		const pool =
-			hintedCategorySet.size === 0
-				? all
-				: all.filter((t) => hintedCategorySet.has(t.category));
+		const pool = all.filter((t) => {
+			if (normalizedCategory && t.category !== normalizedCategory) return false;
+			if (typeof params.requiresApproval === "boolean") {
+				if (t.requiresApproval !== params.requiresApproval) return false;
+			}
+			if (typeof riskLevelMaxRank === "number") {
+				if (getRiskRank(t.riskLevel) > riskLevelMaxRank) return false;
+			}
+			return true;
+		});
 
 		const safe = pool
 			.filter((t) => t.riskLevel === "low" && !t.requiresApproval)
@@ -782,23 +656,38 @@ function searchToolCatalog(params: {
 			: `No direct matches for "${params.query}". Returning ${picked.length} suggested tool(s) (some may require approval).`;
 
 	const bestTool = scored.length > 0 ? scored[0]?.t : undefined;
+	const fallbackTool =
+		toolRegistry.get("trpc_procedure_search") ?? toolRegistry.get("trpc_router_list");
 	const nextCall = bestTool
 		? {
 				toolName: bestTool.name,
 				params: buildExampleParams(bestTool.parameters),
 				confirmLiterals: extractConfirmLiterals(bestTool.parameters),
 			}
-		: undefined;
+		: fallbackTool
+			? {
+					toolName: fallbackTool.name,
+					params:
+						fallbackTool.name === "trpc_procedure_search"
+							? { query: params.query }
+							: buildExampleParams(fallbackTool.parameters),
+					confirmLiterals: extractConfirmLiterals(fallbackTool.parameters),
+				}
+			: picked[0]
+				? {
+						toolName: picked[0].name,
+						params: buildExampleParams(picked[0].parameters),
+						confirmLiterals: extractConfirmLiterals(picked[0].parameters),
+					}
+				: undefined;
 
 	return {
 		success: true,
 		message,
 		meta: {
 			query: params.query,
-			matchedDomains,
 			nextCall,
 			appliedFilters: {
-				domain: params.domain,
 				category: normalizedCategory,
 				riskLevelMax: params.riskLevelMax,
 				requiresApproval: params.requiresApproval,
@@ -1050,6 +939,9 @@ export const createConversation = async (params: {
 			title: params.title || "New Conversation",
 			projectId: params.projectId,
 			serverId: params.serverId,
+			metadata: {
+				toolApprovalsDisabled: true,
+			},
 		})
 		.returning();
 	return conversation;
@@ -1378,10 +1270,6 @@ function buildChatTools(params: {
 					.optional()
 					.default(12)
 					.describe("Max number of tools to return"),
-				domain: z
-					.enum(TOOL_SEARCH_DOMAINS)
-					.optional()
-					.describe("Optional domain filter"),
 				category: z
 					.string()
 					.min(1)
@@ -1399,7 +1287,6 @@ function buildChatTools(params: {
 			execute: async (input: {
 				query: string;
 				limit?: number;
-				domain?: (typeof TOOL_SEARCH_DOMAINS)[number];
 				category?: string;
 				riskLevelMax?: "low" | "medium" | "high";
 				requiresApproval?: boolean;
@@ -1414,7 +1301,7 @@ function buildChatTools(params: {
 				toolName: z
 					.string()
 					.min(1)
-					.describe("Exact tool name, e.g. postgres_create"),
+					.describe('Exact tool name, e.g. "trpc_procedure_call"'),
 			}),
 			execute: async (input: { toolName: string }) => {
 				const t = toolRegistry.get(input.toolName);
@@ -1432,17 +1319,49 @@ function buildChatTools(params: {
 		tool_call: tool({
 			description:
 				"Create a tool execution by name + params. Enforces validation. If the target tool requires approval, this returns pending_approval and does NOT execute; you must still provide all required params (including confirm literals). Use tool_describe first if unsure.",
-			inputSchema: z.object({
-				toolName: z.string().min(1).describe("Exact tool name to execute"),
-				params: z
-					.record(z.any())
-					.optional()
-					.default({})
-					.describe("Parameters object for the tool"),
-			}),
+			inputSchema: z
+				.object({
+					toolName: z.string().min(1).describe("Exact tool name to execute"),
+					params: z
+						.record(z.any())
+						.optional()
+						.default({})
+						.describe("Parameters object for the tool"),
+				})
+				.passthrough(),
 			execute: async (input: { toolName: string; params?: unknown }) => {
+				const inputAny = input as unknown as Record<string, unknown>;
 				const rawParams = (input.params ?? {}) as Record<string, unknown>;
+
+				// Common LLM mistake: provide `procedureName` at the top-level instead of inside `params`.
+				if (
+					input.toolName === "trpc_procedure_call" &&
+					rawParams.procedureName == null &&
+					typeof inputAny.procedureName === "string" &&
+					inputAny.procedureName.trim()
+				) {
+					rawParams.procedureName = inputAny.procedureName.trim();
+				}
+
 				let t = toolRegistry.get(input.toolName);
+				if (!t) {
+					// Convenience fallback: treat an unknown dotted name as a tRPC procedure call.
+					// Example: { toolName: "project.create", params: { name: "dk" } }
+					if (input.toolName.includes(".")) {
+						const trpcTool = toolRegistry.get("trpc_procedure_call");
+						if (trpcTool) {
+							const wrappedInput = rawParams.input ?? rawParams.params ?? rawParams;
+							const wrapped =
+								typeof wrappedInput === "object" && wrappedInput !== null
+									? (wrappedInput as Record<string, unknown>)
+									: {};
+							rawParams.procedureName = input.toolName;
+							rawParams.input = wrapped;
+							t = trpcTool;
+						}
+					}
+				}
+
 				if (!t) {
 					const searched = searchToolCatalog({ query: input.toolName, limit: 5 });
 					const candidateName = searched.meta.nextCall?.toolName ?? "";
@@ -1510,15 +1429,19 @@ function buildChatTools(params: {
 				}
 
 				try {
-					const result = await t.execute(validation.data as never, params.toolContext);
+					const rawResult = await t.execute(
+						validation.data as never,
+						params.toolContext,
+					);
+					const result = normalizeToolResultForStorage(rawResult);
 
 					const completionUpdate: Record<string, unknown> = {
-						status: result.success ? "completed" : "failed",
+						status: rawResult.success ? "completed" : "failed",
 						result,
 						completedAt: new Date().toISOString(),
 					};
-					if (!result.success) {
-						completionUpdate.error = result.error || result.message;
+					if (!rawResult.success) {
+						completionUpdate.error = rawResult.error || rawResult.message;
 					}
 					await updateToolExecution(execution.executionId, completionUpdate);
 
@@ -1773,6 +1696,106 @@ function safeJsonForPrompt(value: unknown, maxLen: number) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const TOOL_RESULT_MAX_JSON_CHARS = 200_000;
+const TOOL_RESULT_PREVIEW_CHARS = 20_000;
+
+function safeJsonStringifyForStorage(value: unknown): string {
+	const seen = new WeakSet<object>();
+	const replacer = (_key: string, v: unknown) => {
+		if (typeof v === "bigint") return v.toString();
+		if (v instanceof Error) {
+			return {
+				name: v.name,
+				message: v.message,
+				stack: v.stack,
+			};
+		}
+		if (v instanceof Map) {
+			return Array.from(v.entries());
+		}
+		if (v instanceof Set) {
+			return Array.from(v.values());
+		}
+		if (typeof v === "object" && v !== null) {
+			const obj = v as object;
+			if (seen.has(obj)) return "[Circular]";
+			seen.add(obj);
+		}
+		return v;
+	};
+
+	try {
+		return JSON.stringify(value, replacer);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		try {
+			return JSON.stringify({ error: "UNSERIALIZABLE", message });
+		} catch {
+			return "{\"error\":\"UNSERIALIZABLE\"}";
+		}
+	}
+}
+
+function normalizeToolResultForStorage(raw: unknown): {
+	success: boolean;
+	message: string;
+	data?: unknown;
+	error?: string;
+} {
+	const base = (() => {
+		if (isRecord(raw) && typeof raw.success === "boolean") {
+			const message = typeof raw.message === "string" ? raw.message : "";
+			const out: {
+				success: boolean;
+				message: string;
+				data?: unknown;
+				error?: string;
+			} = {
+				success: raw.success,
+				message: message.length > 0 ? message : "Tool executed",
+			};
+			if ("data" in raw) out.data = raw.data;
+			if (typeof raw.error === "string") out.error = raw.error;
+			return out;
+		}
+		return {
+			success: false,
+			message: "Tool returned an invalid result",
+			error: `Invalid tool result type: ${typeof raw}`,
+			data: {},
+		};
+	})();
+
+	const json = safeJsonStringifyForStorage(base);
+	if (json.length <= TOOL_RESULT_MAX_JSON_CHARS) {
+		try {
+			return JSON.parse(json) as typeof base;
+		} catch (error) {
+			return {
+				success: base.success,
+				message: base.message,
+				error: error instanceof Error ? error.message : String(error),
+				data: {
+					truncated: true,
+					jsonChars: json.length,
+					preview: json.slice(0, TOOL_RESULT_PREVIEW_CHARS),
+				},
+			};
+		}
+	}
+
+	return {
+		success: base.success,
+		message: base.message,
+		error: base.error,
+		data: {
+			truncated: true,
+			jsonChars: json.length,
+			preview: json.slice(0, TOOL_RESULT_PREVIEW_CHARS),
+		},
+	};
 }
 
 function getToolApprovalsDisabledFromMetadata(metadata: unknown): boolean {

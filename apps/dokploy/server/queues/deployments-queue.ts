@@ -70,5 +70,6 @@ export const deploymentWorker = new Worker(
 	{
 		autorun: false,
 		connection: redisConfig,
+		prefix: process.env.BULLMQ_PREFIX || undefined,
 	},
 );

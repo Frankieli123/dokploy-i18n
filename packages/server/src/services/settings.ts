@@ -381,6 +381,11 @@ export const readEnvironmentVariables = async (
 		command = `docker service inspect ${resourceName} --format '{{json .Spec.TaskTemplate.ContainerSpec.Env}}'`;
 	} else if (resourceType === "standalone") {
 		command = `docker container inspect ${resourceName} --format '{{json .Config.Env}}'`;
+	} else {
+		throw new Error("Resource type not found");
+	}
+	if (!command.trim()) {
+		throw new Error("Command is empty");
 	}
 	let result = "";
 	if (serverId) {

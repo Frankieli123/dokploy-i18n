@@ -135,6 +135,7 @@ export interface UseChatOptions {
 	onError?: (error: Error) => void;
 	enabled?: boolean;
 	autoLoad?: boolean;
+	uiVisible?: boolean;
 }
 
 export function useChat(options: UseChatOptions = {}) {
@@ -160,27 +161,44 @@ export function useChat(options: UseChatOptions = {}) {
 		api.ai.conversations.setToolApprovalsDisabled.useMutation();
 
 	const maybeInvalidateProjectQueries = useCallback(
-		(toolName: string, rawResult: unknown) => {
-			if (
-				toolName !== "project_create" &&
-				toolName !== "project_update" &&
-				toolName !== "project_delete"
-			) {
-				return;
-			}
-
+		(toolName: string, rawResult: unknown, toolArguments?: string) => {
 			const result = isRecord(rawResult) ? rawResult : undefined;
 			if (!result) return;
 			if (result.status === "pending_approval") return;
 			if (typeof result.success !== "boolean" || !result.success) return;
 
-			void utils.project.all.invalidate();
+			if (
+				toolName === "project_create" ||
+				toolName === "project_update" ||
+				toolName === "project_delete"
+			) {
+				void utils.project.all.invalidate();
 
-			const data = result.data;
-			const projectId =
-				isRecord(data) && typeof data.projectId === "string" ? data.projectId : "";
-			if (projectId.trim().length > 0) {
-				void utils.project.one.invalidate({ projectId });
+				const data = result.data;
+				const projectId =
+					isRecord(data) && typeof data.projectId === "string"
+						? data.projectId
+						: "";
+				if (projectId.trim().length > 0) {
+					void utils.project.one.invalidate({ projectId });
+				}
+				return;
+			}
+
+			if (toolName === "trpc_procedure_call" && toolArguments) {
+				try {
+					const args = JSON.parse(toolArguments);
+					if (isRecord(args) && typeof args.procedureName === "string") {
+						const proc = args.procedureName;
+						if (
+							["project.create", "project.update", "project.remove"].includes(
+								proc,
+							)
+						) {
+							void utils.project.all.invalidate();
+						}
+					}
+				} catch {}
 			}
 		},
 		[utils],
@@ -193,13 +211,15 @@ export function useChat(options: UseChatOptions = {}) {
 	}, [abortController]);
 
 	const isEnabled = options.enabled !== false;
+	const uiVisibleRef = useRef<boolean>(options.uiVisible !== false);
+	useEffect(() => {
+		uiVisibleRef.current = options.uiVisible !== false;
+	}, [options.uiVisible]);
 	const shouldAutoLoadConversation =
 		isEnabled && options.autoLoad === true && !conversationId;
 
 	const { data: autoLoadConversations } = api.ai.conversations.list.useQuery(
 		{
-			projectId: options.projectId,
-			serverId: options.serverId ?? null,
 			status: "active",
 			limit: 1,
 			offset: 0,
@@ -498,7 +518,8 @@ export function useChat(options: UseChatOptions = {}) {
 						result: normalizedResult,
 					},
 				}));
-				maybeInvalidateProjectQueries(toolName, normalizedResult);
+				const args = fallbackToolCall?.function?.arguments;
+				maybeInvalidateProjectQueries(toolName, normalizedResult, args);
 				setToolOutcomes((prev) => {
 					const outcome: ToolOutcome = {
 						toolCallId,
@@ -785,15 +806,56 @@ export function useChat(options: UseChatOptions = {}) {
 
 				let receivedDone = false;
 				const activeToolCallIds = new Set<string>();
+				const toolCallArgsById = new Map<string, string>();
 				const streamStartTime = Date.now();
-				let lastNonPingEventTime = streamStartTime;
+				let lastEventTime = streamStartTime;
+				const deltaBufferRef = { current: "" as string };
+				let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
+				const FLUSH_VISIBLE_MS = 60;
+				const FLUSH_HIDDEN_MS = 600;
+
+				const flushDeltaNow = () => {
+					if (flushDeltaTimer) {
+						clearTimeout(flushDeltaTimer);
+						flushDeltaTimer = null;
+					}
+					const pending = deltaBufferRef.current;
+					if (!pending) return;
+					deltaBufferRef.current = "";
+					setPendingMessages((prev) =>
+						prev.map((m) =>
+							m.messageId === assistantTempId
+								? {
+										...m,
+										content: (m.content ?? "") + pending,
+										status: "sending" as const,
+									}
+								: m,
+						),
+					);
+				};
+
+				const scheduleFlushDelta = () => {
+					const delay = uiVisibleRef.current
+						? FLUSH_VISIBLE_MS
+						: FLUSH_HIDDEN_MS;
+					if (flushDeltaTimer) {
+						if (!uiVisibleRef.current) return;
+						clearTimeout(flushDeltaTimer);
+						flushDeltaTimer = null;
+					}
+					flushDeltaTimer = setTimeout(() => {
+						flushDeltaNow();
+					}, delay);
+				};
+
 				const IDLE_NO_TOOLS_MS = 30 * 1000;
 				const IDLE_WITH_TOOLS_MS = 10 * 60 * 1000;
 				const MAX_DURATION_MS = 15 * 60 * 1000;
 
 				const safetyInterval = setInterval(() => {
 					const now = Date.now();
-					const idleMs = now - lastNonPingEventTime;
+					const idleMs = now - lastEventTime;
 					const idleLimit =
 						activeToolCallIds.size > 0 ? IDLE_WITH_TOOLS_MS : IDLE_NO_TOOLS_MS;
 					if (idleMs <= idleLimit && now - streamStartTime <= MAX_DURATION_MS) {
@@ -807,30 +869,19 @@ export function useChat(options: UseChatOptions = {}) {
 				try {
 					for await (const evt of readSseStream(response.body)) {
 						if (controller.signal.aborted) break;
-						if (evt.event !== "ping") {
-							lastNonPingEventTime = Date.now();
-						}
+						lastEventTime = Date.now();
 
 						if (evt.event === "delta") {
 							const payload = JSON.parse(evt.data) as { delta?: unknown };
 							const delta =
 								typeof payload.delta === "string" ? payload.delta : "";
 							if (delta.length === 0) continue;
-
-							setPendingMessages((prev) =>
-								prev.map((m) =>
-									m.messageId === assistantTempId
-										? {
-												...m,
-												content: (m.content ?? "") + delta,
-												status: "sending" as const,
-											}
-										: m,
-								),
-							);
+							deltaBufferRef.current += delta;
+							scheduleFlushDelta();
 						}
 
 						if (evt.event === "tool-call") {
+							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								toolCallId: string;
 								toolName: string;
@@ -841,6 +892,7 @@ export function useChat(options: UseChatOptions = {}) {
 								typeof payload.arguments === "string"
 									? payload.arguments
 									: JSON.stringify(payload.arguments ?? {});
+							toolCallArgsById.set(payload.toolCallId, argsString);
 							setPendingMessages((prev) =>
 								prev.map((m) =>
 									m.messageId === assistantTempId
@@ -875,6 +927,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "tool-result") {
+							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								toolCallId: string;
 								toolName: string;
@@ -882,7 +935,13 @@ export function useChat(options: UseChatOptions = {}) {
 							};
 							activeToolCallIds.delete(payload.toolCallId);
 							try {
-								maybeInvalidateProjectQueries(payload.toolName, payload.result);
+								const args = toolCallArgsById.get(payload.toolCallId);
+								toolCallArgsById.delete(payload.toolCallId);
+								maybeInvalidateProjectQueries(
+									payload.toolName,
+									payload.result,
+									args,
+								);
 							} catch {}
 
 							setPendingMessages((prev) =>
@@ -972,6 +1031,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "done") {
+							flushDeltaNow();
 							receivedDone = true;
 							activeToolCallIds.clear();
 							finalizeExecutingToolCalls(
@@ -988,6 +1048,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "error" || evt.event === "stream-error") {
+							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								message?: string;
 								error?: string;
@@ -1000,10 +1061,12 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 					}
 				} finally {
+					flushDeltaNow();
 					clearInterval(safetyInterval);
 				}
 
 				if (controller.signal.aborted && !receivedDone) {
+					flushDeltaNow();
 					finalizeExecutingToolCalls(
 						abortedBySafetyTimer
 							? "settings.ai.errors.streamingEndedWithoutDone"
@@ -1019,6 +1082,7 @@ export function useChat(options: UseChatOptions = {}) {
 				}
 
 				if (!controller.signal.aborted && !receivedDone) {
+					flushDeltaNow();
 					finalizeExecutingToolCalls(
 						"settings.ai.errors.streamingEndedWithoutDone",
 					);
@@ -1035,6 +1099,7 @@ export function useChat(options: UseChatOptions = {}) {
 			} catch (error) {
 				setAbortController(null);
 				if ((error as Error).name === "AbortError") {
+					// Best effort: apply any buffered delta before finalizing.
 					finalizeExecutingToolCalls(
 						abortedBySafetyTimer
 							? "settings.ai.errors.streamingEndedWithoutDone"
@@ -1134,18 +1199,6 @@ export function useChat(options: UseChatOptions = {}) {
 		},
 		[stopGeneration],
 	);
-
-	const contextKeyRef = useRef<string>(
-		`${options.projectId ?? ""}::${options.serverId ?? ""}`,
-	);
-
-	useEffect(() => {
-		const nextKey = `${options.projectId ?? ""}::${options.serverId ?? ""}`;
-		if (contextKeyRef.current === nextKey) return;
-		contextKeyRef.current = nextKey;
-		if (!isEnabled) return;
-		reset();
-	}, [isEnabled, options.projectId, options.serverId, reset]);
 
 	return {
 		ensureConversation,

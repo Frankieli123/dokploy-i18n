@@ -7,6 +7,7 @@ import { redisConfig } from "./redis-connection";
 
 const myQueue = new Queue("deployments", {
 	connection: redisConfig,
+	prefix: process.env.BULLMQ_PREFIX || undefined,
 });
 
 process.on("SIGTERM", () => {

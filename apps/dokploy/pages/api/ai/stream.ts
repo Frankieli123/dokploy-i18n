@@ -14,8 +14,43 @@ function writeSseEvent(
 	event: string,
 	data: Record<string, unknown>,
 ) {
-	res.write(`event: ${event}\n`);
-	res.write(`data: ${JSON.stringify(data)}\n\n`);
+	const payload = (() => {
+		const seen = new WeakSet<object>();
+		const replacer = (_key: string, value: unknown) => {
+			if (typeof value === "bigint") return value.toString();
+			if (value instanceof Error) {
+				return {
+					name: value.name,
+					message: value.message,
+					stack: value.stack,
+				};
+			}
+			if (value instanceof Map) return Array.from(value.entries());
+			if (value instanceof Set) return Array.from(value.values());
+			if (typeof value === "object" && value !== null) {
+				const obj = value as object;
+				if (seen.has(obj)) return "[Circular]";
+				seen.add(obj);
+			}
+			return value;
+		};
+
+		try {
+			return JSON.stringify(data, replacer);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			try {
+				return JSON.stringify({
+					error: "UNSERIALIZABLE",
+					message,
+				});
+			} catch {
+				return "{\"error\":\"UNSERIALIZABLE\"}";
+			}
+		}
+	})();
+
+	res.write(`event: ${event}\ndata: ${payload}\n\n`);
 }
 
 export default async function handler(

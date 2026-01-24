@@ -155,6 +155,7 @@ export function AIChatDrawer({
 		projectId,
 		serverId: effectiveServerId,
 		enabled: isOpen,
+		uiVisible: isOpen,
 		autoLoad: autoLoadHistory,
 	});
 
@@ -539,8 +540,6 @@ function ConversationHistoryDialog(props: {
 
 	const { data: conversations, isLoading } = api.ai.conversations.list.useQuery(
 		{
-			projectId: props.projectId,
-			serverId: props.serverId ?? null,
 			status: "active",
 			limit: 20,
 			offset: 0,
