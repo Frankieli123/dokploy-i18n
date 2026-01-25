@@ -1,5 +1,8 @@
 import {
 	findGithubById,
+	githubPublicRepoInfo,
+	githubPublicRepoListPath,
+	githubPublicRepoReadFile,
 	getGithubBranches,
 	getGithubRepositories,
 	haveGithubRequirements,
@@ -7,6 +10,7 @@ import {
 	updateGitProvider,
 } from "@dokploy/server";
 import { TRPCError } from "@trpc/server";
+import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { db } from "@/server/db";
 import {
@@ -31,6 +35,72 @@ export const githubRouter = createTRPCRouter({
 				});
 			}
 			return githubProvider;
+		}),
+	publicRepoInfo: protectedProcedure
+		.input(
+			z.object({
+				repo: z
+					.string()
+					.min(1)
+					.describe("GitHub repository as owner/repo or a GitHub URL"),
+			}),
+		)
+		.query(async ({ input }) => {
+			return githubPublicRepoInfo({ repo: input.repo });
+		}),
+	publicRepoListPath: protectedProcedure
+		.input(
+			z.object({
+				repo: z
+					.string()
+					.min(1)
+					.describe("GitHub repository as owner/repo or a GitHub URL"),
+				path: z
+					.string()
+					.optional()
+					.default("")
+					.describe('Path inside the repo ("" for root)'),
+				ref: z
+					.string()
+					.optional()
+					.describe("Optional branch, tag, or commit SHA"),
+			}),
+		)
+		.query(async ({ input }) => {
+			return githubPublicRepoListPath({
+				repo: input.repo,
+				path: input.path,
+				ref: input.ref,
+			});
+		}),
+	publicRepoReadFile: protectedProcedure
+		.input(
+			z.object({
+				repo: z
+					.string()
+					.min(1)
+					.describe("GitHub repository as owner/repo or a GitHub URL"),
+				path: z.string().min(1).describe("File path inside the repo"),
+				ref: z
+					.string()
+					.optional()
+					.describe("Optional branch, tag, or commit SHA"),
+				maxBytes: z
+					.number()
+					.min(1)
+					.max(1_000_000)
+					.optional()
+					.default(250_000)
+					.describe("Max bytes to return (prevents huge files)"),
+			}),
+		)
+		.query(async ({ input }) => {
+			return githubPublicRepoReadFile({
+				repo: input.repo,
+				path: input.path,
+				ref: input.ref,
+				maxBytes: input.maxBytes,
+			});
 		}),
 	getGithubRepositories: protectedProcedure
 		.input(apiFindOneGithub)

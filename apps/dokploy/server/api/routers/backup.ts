@@ -1,4 +1,10 @@
 import {
+	buildMariadbExternalMigrationCommand,
+	buildMongoExternalMigrationCommand,
+	buildMysqlExternalMigrationCommand,
+	buildPostgresExternalMigrationCommand,
+	buildRedisExternalMigrationCommand,
+	checkServiceAccess,
 	createBackup,
 	findBackupById,
 	findComposeByBackupId,
@@ -11,6 +17,7 @@ import {
 	findMySqlById,
 	findPostgresByBackupId,
 	findPostgresById,
+	findRedisById,
 	findServerById,
 	IS_CLOUD,
 	keepLatestNBackups,
@@ -361,6 +368,160 @@ export const backupRouter = createTRPCRouter({
 							: "Error listing backup files",
 					cause: error,
 				});
+			}
+		}),
+	migrateExternalDatabase: protectedProcedure
+		.input(
+			z.object({
+				databaseType: z.enum(["postgres", "mysql", "mariadb", "mongo", "redis"]),
+				databaseId: z.string().min(1),
+				sourceUrl: z.string().min(1),
+				mode: z.enum(["overwrite", "import"]).optional().default("overwrite"),
+				sourceDatabase: z
+					.string()
+					.optional()
+					.describe("Optional: DB name override when not present in URL"),
+				targetDatabase: z
+					.string()
+					.optional()
+					.describe("Optional: target DB name override (mongo)"),
+			}),
+		)
+		.mutation(async ({ input, ctx }) => {
+			const mode = input.mode ?? "overwrite";
+
+			const run = async (command: string, serverId?: string | null) => {
+				if (serverId) {
+					await execAsyncRemote(serverId, command);
+				} else {
+					await execAsync(command, { shell: "/bin/bash" });
+				}
+			};
+
+			if (ctx.user.role === "member") {
+				await checkServiceAccess(
+					ctx.user.id,
+					input.databaseId,
+					ctx.session.activeOrganizationId,
+					"access",
+				);
+			}
+
+			switch (input.databaseType) {
+				case "postgres": {
+					const postgres = await findPostgresById(input.databaseId);
+					if (
+						postgres.environment.project.organizationId !==
+						ctx.session.activeOrganizationId
+					) {
+						throw new TRPCError({
+							code: "UNAUTHORIZED",
+							message: "You are not authorized to access this Postgres",
+						});
+					}
+					const command = buildPostgresExternalMigrationCommand({
+						appName: postgres.appName,
+						targetDatabase:
+							input.targetDatabase?.trim() || postgres.databaseName,
+						targetUser: postgres.databaseUser,
+						targetPassword: postgres.databasePassword,
+						sourceUrl: input.sourceUrl,
+						mode,
+					});
+					await run(command, postgres.serverId);
+					return true;
+				}
+				case "mysql": {
+					const mysql = await findMySqlById(input.databaseId);
+					if (
+						mysql.environment.project.organizationId !==
+						ctx.session.activeOrganizationId
+					) {
+						throw new TRPCError({
+							code: "UNAUTHORIZED",
+							message: "You are not authorized to access this MySQL",
+						});
+					}
+					const command = buildMysqlExternalMigrationCommand({
+						appName: mysql.appName,
+						targetDatabase: input.targetDatabase?.trim() || mysql.databaseName,
+						targetRootPassword: mysql.databaseRootPassword,
+						sourceUrl: input.sourceUrl,
+						sourceDatabase: input.sourceDatabase,
+						mode,
+					});
+					await run(command, mysql.serverId);
+					return true;
+				}
+				case "mariadb": {
+					const mariadb = await findMariadbById(input.databaseId);
+					if (
+						mariadb.environment.project.organizationId !==
+						ctx.session.activeOrganizationId
+					) {
+						throw new TRPCError({
+							code: "UNAUTHORIZED",
+							message: "You are not authorized to access this MariaDB",
+						});
+					}
+					const command = buildMariadbExternalMigrationCommand({
+						appName: mariadb.appName,
+						targetDatabase:
+							input.targetDatabase?.trim() || mariadb.databaseName,
+						targetUser: mariadb.databaseUser,
+						targetPassword: mariadb.databasePassword,
+						sourceUrl: input.sourceUrl,
+						sourceDatabase: input.sourceDatabase,
+						mode,
+					});
+					await run(command, mariadb.serverId);
+					return true;
+				}
+				case "mongo": {
+					const mongo = await findMongoById(input.databaseId);
+					if (
+						mongo.environment.project.organizationId !==
+						ctx.session.activeOrganizationId
+					) {
+						throw new TRPCError({
+							code: "UNAUTHORIZED",
+							message: "You are not authorized to access this MongoDB",
+						});
+					}
+					const command = buildMongoExternalMigrationCommand({
+						appName: mongo.appName,
+						targetUser: mongo.databaseUser,
+						targetPassword: mongo.databasePassword,
+						sourceUrl: input.sourceUrl,
+						sourceDatabase: input.sourceDatabase,
+						targetDatabase: input.targetDatabase,
+						mode,
+					});
+					await run(command, mongo.serverId);
+					return true;
+				}
+				case "redis": {
+					const redis = await findRedisById(input.databaseId);
+					if (
+						redis.environment.project.organizationId !==
+						ctx.session.activeOrganizationId
+					) {
+						throw new TRPCError({
+							code: "UNAUTHORIZED",
+							message: "You are not authorized to access this Redis",
+						});
+					}
+					const command = buildRedisExternalMigrationCommand({
+						appName: redis.appName,
+						dockerImage: redis.dockerImage,
+						replicas: redis.replicas,
+						mounts: redis.mounts,
+						sourceUrl: input.sourceUrl,
+						mode,
+					});
+					await run(command, redis.serverId);
+					return true;
+				}
 			}
 		}),
 

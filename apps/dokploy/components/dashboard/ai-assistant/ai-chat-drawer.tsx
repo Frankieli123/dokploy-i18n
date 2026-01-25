@@ -476,6 +476,7 @@ export function AIChatDrawer({
 										onRejectToolCall={rejectToolCall}
 										isLast={index === messages.length - 1}
 										onRetry={() => handleRetry(message.messageId)}
+										areToolApprovalsDisabled={areToolApprovalsDisabled}
 									/>
 								</div>
 							))}

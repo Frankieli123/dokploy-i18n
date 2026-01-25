@@ -1331,7 +1331,24 @@ function buildChatTools(params: {
 				.passthrough(),
 			execute: async (input: { toolName: string; params?: unknown }) => {
 				const inputAny = input as unknown as Record<string, unknown>;
-				const rawParams = (input.params ?? {}) as Record<string, unknown>;
+				const rawParams: Record<string, unknown> = {
+					...(isRecord(inputAny.params)
+						? (inputAny.params as Record<string, unknown>)
+						: isRecord(inputAny.input)
+							? (inputAny.input as Record<string, unknown>)
+							: isRecord(inputAny.args)
+								? (inputAny.args as Record<string, unknown>)
+								: isRecord(input.params)
+									? (input.params as Record<string, unknown>)
+									: {}),
+				};
+
+				// Common LLM mistake: provide tool params at the top-level instead of inside `params`.
+				for (const [k, v] of Object.entries(inputAny)) {
+					if (k === "toolName" || k === "params" || k === "input" || k === "args")
+						continue;
+					if (rawParams[k] == null) rawParams[k] = v;
+				}
 
 				// Common LLM mistake: provide `procedureName` at the top-level instead of inside `params`.
 				if (
@@ -1341,6 +1358,48 @@ function buildChatTools(params: {
 					inputAny.procedureName.trim()
 				) {
 					rawParams.procedureName = inputAny.procedureName.trim();
+				}
+				if (
+					(input.toolName === "trpc_procedure_call" ||
+						input.toolName === "trpc_procedure_describe") &&
+					typeof rawParams.procedureName === "string"
+				) {
+					rawParams.procedureName = rawParams.procedureName.trim();
+				}
+				if (
+					input.toolName === "trpc_procedure_call" &&
+					typeof rawParams.input === "undefined" &&
+					typeof rawParams.params === "undefined" &&
+					typeof rawParams.procedureName === "string" &&
+					rawParams.procedureName.trim().length > 0
+				) {
+					const inferredInput: Record<string, unknown> = {};
+					for (const [k, v] of Object.entries(rawParams)) {
+						if (k === "procedureName" || k === "input" || k === "params") {
+							continue;
+						}
+						inferredInput[k] = v;
+					}
+					if (Object.keys(inferredInput).length > 0) {
+						rawParams.input = inferredInput;
+					}
+				}
+				if (
+					input.toolName === "trpc_procedure_search" &&
+					typeof rawParams.query === "string"
+				) {
+					rawParams.query = rawParams.query.trim();
+				}
+				if (
+					(input.toolName === "trpc_procedure_search" ||
+						input.toolName === "tool_search" ||
+						input.toolName === "tool_suggest") &&
+					(typeof rawParams.query !== "string" ||
+						rawParams.query.trim().length === 0) &&
+					typeof rawParams.reason === "string" &&
+					rawParams.reason.trim().length > 0
+				) {
+					rawParams.query = rawParams.reason.trim();
 				}
 
 				let t = toolRegistry.get(input.toolName);
@@ -2827,6 +2886,7 @@ function buildSystemPrompt(
 - Be concise; ask at most 1-3 focused questions only if blocking.
 - Tools: if you know the exact tool + params, call tool_call directly; otherwise use tool_suggest/tool_search/tool_describe, then tool_call.
  - Approvals (critical): if a tool requires approval AND tool approvals are manual, you MUST create a tool_call that returns status="pending_approval" (do not ask in natural language without a tool_call). Include ALL required params (including any confirm literal); do NOT send empty params as a placeholder. Tell the user to approve/reject in the UI (or type "批准/拒绝"). If tool approvals are disabled for this conversation, proceed without asking for approval.
+- Tool UX: do not narrate tool names or internal errors; focus on outcomes. If a tool fails due to invalid params/unknown tool, correct and retry (use tool_describe/tool_search as needed). Ask the user only when blocked.
 - Context: reuse recent tool results; do not re-run the same read-only checks/config reads unnecessarily.
 - ServerId: self-hosted defaults to the local Dokploy host when serverId is missing; only require serverId for remote targets. Cloud mode requires serverId for server operations.
 - Safety: run low-risk read tools immediately; for medium/high-risk actions, explain before executing; if approval is required, create the pending_approval tool_call first.

@@ -101,6 +101,7 @@ interface MessageBubbleProps {
 	onRejectToolCall?: (toolCallId: string) => void;
 	isLast?: boolean;
 	onRetry?: () => void;
+	areToolApprovalsDisabled?: boolean;
 }
 
 export function MessageBubble({
@@ -109,6 +110,7 @@ export function MessageBubble({
 	onRejectToolCall,
 	isLast,
 	onRetry,
+	areToolApprovalsDisabled,
 }: MessageBubbleProps) {
 	const { t } = useTranslation("common");
 
@@ -246,7 +248,7 @@ export function MessageBubble({
 					</div>
 				)}
 
-				{hasToolCalls && (
+				{hasToolCalls && !areToolApprovalsDisabled && (
 					<div className="w-full max-w-full min-w-0 overflow-hidden space-y-1">
 						{message.toolCalls!.length > 1 ? (
 							<ToolGroup
