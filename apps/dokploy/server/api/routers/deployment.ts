@@ -1,3 +1,6 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { paths } from "@dokploy/server/constants";
 import {
 	execAsync,
 	execAsyncRemote,
@@ -24,6 +27,46 @@ import {
 } from "@/server/db/schema";
 import { myQueue } from "@/server/queues/queueSetup";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
+
+const MAX_BYTES_HARD_LIMIT = 2 * 1024 * 1024;
+const TAIL_MAX_LINES = 2000;
+
+async function tailFile(
+	filePath: string,
+	lines: number,
+	maxBytes: number,
+): Promise<{ content: string; truncated: boolean }> {
+	const clampedBytes = Math.max(1, Math.min(MAX_BYTES_HARD_LIMIT, maxBytes));
+	const clampedLines = Math.max(1, Math.min(TAIL_MAX_LINES, lines));
+
+	const st = await fs.stat(filePath);
+	const start = Math.max(0, st.size - clampedBytes);
+	const handle = await fs.open(filePath, "r");
+	try {
+		const len = Math.max(0, st.size - start);
+		const buffer = Buffer.alloc(len);
+		const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+		const text = buffer.subarray(0, bytesRead).toString("utf8");
+		const parts = text.split(/\r?\n/);
+		return {
+			content: parts.slice(-clampedLines).join("\n"),
+			truncated: start > 0,
+		};
+	} finally {
+		await handle.close();
+	}
+}
+
+function isPathInsideBase(basePath: string, filePath: string): boolean {
+	const norm = (value: string) => value.replace(/\\/g, "/");
+	const base = path.posix.normalize(norm(basePath)).replace(/\/+$/g, "");
+	const full = path.posix.normalize(norm(filePath));
+	return full === base || full.startsWith(`${base}/`);
+}
+
+function shQuote(value: string): string {
+	return `'${value.replaceAll("'", `'\"'\"'`)}'`;
+}
 
 export const deploymentRouter = createTRPCRouter({
 	all: protectedProcedure
@@ -183,5 +226,89 @@ export const deploymentRouter = createTRPCRouter({
 			}
 
 			await updateDeploymentStatus(deployment.deploymentId, "error");
+		}),
+
+	readLog: protectedProcedure
+		.input(
+			z.object({
+				deploymentId: z.string().min(1),
+				lines: z.number().min(1).max(TAIL_MAX_LINES).optional().default(200),
+				maxBytes: z
+					.number()
+					.min(1)
+					.max(MAX_BYTES_HARD_LIMIT)
+					.optional()
+					.default(64 * 1024),
+			}),
+		)
+		.query(async ({ input, ctx }) => {
+			const deployment = await findDeploymentById(input.deploymentId);
+
+			if (deployment.applicationId) {
+				const application = await findApplicationById(deployment.applicationId);
+				if (
+					application.environment.project.organizationId !==
+					ctx.session.activeOrganizationId
+				) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You are not authorized to access this application",
+					});
+				}
+			} else if (deployment.composeId) {
+				const compose = await findComposeById(deployment.composeId);
+				if (
+					compose.environment.project.organizationId !==
+					ctx.session.activeOrganizationId
+				) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You are not authorized to access this compose",
+					});
+				}
+			} else if (deployment.serverId) {
+				const server = await findServerById(deployment.serverId);
+				if (server.organizationId !== ctx.session.activeOrganizationId) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You are not authorized to access this server",
+					});
+				}
+			}
+
+			const logServerId =
+				deployment.buildServerId ||
+				deployment.serverId ||
+				deployment.application?.buildServerId ||
+				deployment.application?.serverId ||
+				deployment.schedule?.serverId ||
+				null;
+			const basePath = paths(!!logServerId).BASE_PATH;
+			if (!isPathInsideBase(basePath, deployment.logPath)) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Log path is outside Dokploy base path",
+				});
+			}
+
+			if (logServerId) {
+				const cmd = `tail -n ${input.lines} -- ${shQuote(deployment.logPath)}`;
+				const { stdout, stderr } = await execAsyncRemote(logServerId, cmd);
+				return {
+					logPath: deployment.logPath,
+					serverId: logServerId,
+					content: stdout,
+					stderr,
+					truncated: false,
+				};
+			}
+
+			const result = await tailFile(deployment.logPath, input.lines, input.maxBytes);
+			return {
+				logPath: deployment.logPath,
+				serverId: null,
+				stderr: "",
+				...result,
+			};
 		}),
 });

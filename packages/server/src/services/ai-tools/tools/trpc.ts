@@ -136,7 +136,7 @@ const trpcProcedureCall: Tool<
 > = {
 	name: "trpc_procedure_call",
 	description:
-		"Call any tRPC procedure by name (runs as current user). Use trpc_procedure_describe first to get the input shape. This is approval-gated unless approvals are disabled for the conversation.",
+		"Call any tRPC procedure by name (runs as current user). Use trpc_procedure_describe first to get the input shape. Queries run without approval; mutations are approval-gated unless approvals are disabled for the conversation.",
 	category: "settings",
 	tags: ["trpc", "api", "procedure", "call", "invoke"],
 	parameters: z.object({

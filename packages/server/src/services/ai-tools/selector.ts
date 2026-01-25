@@ -26,13 +26,14 @@ export function selectRelevantTools(
 	const minTools = context.minTools ?? 0;
 	const maxTools = context.maxTools ?? 12;
 
-	const trpcTools = toolRegistry
-		.getAll()
-		.filter((t) => t.name.startsWith("trpc_"))
-		.sort((a, b) => a.name.localeCompare(b.name));
+	const all = toolRegistry.getAll();
+	const sorted = [...all].sort((a, b) => {
+		const aIsMacro = !a.name.startsWith("trpc_") ? 0 : 1;
+		const bIsMacro = !b.name.startsWith("trpc_") ? 0 : 1;
+		return aIsMacro - bIsMacro || a.name.localeCompare(b.name);
+	});
 
-	const selected = uniqueByName(trpcTools);
+	const selected = uniqueByName(sorted);
 	if (selected.length <= maxTools && selected.length >= minTools) return selected;
 	return selected.slice(0, Math.max(minTools, maxTools));
 }
-

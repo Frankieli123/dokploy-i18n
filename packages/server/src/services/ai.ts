@@ -22,6 +22,7 @@ import { z } from "zod";
 import { IS_CLOUD } from "../constants";
 import { findOrganizationById } from "./admin";
 import { orchestrateRun } from "./ai/agent/orchestrator";
+import { getTrpcBridge } from "./ai/trpc-bridge";
 import {
 	initializeTools,
 	type Tool,
@@ -194,6 +195,12 @@ function tokenizeToolSearchQuery(query: string): string[] {
 	if (/(search|查找|搜索)/i.test(query)) add("search");
 	if (/(describe|schema|入参|参数|字段|说明|描述)/i.test(query)) add("describe");
 	if (/(call|invoke|execute|run|调用|执行)/i.test(query)) add("call");
+	if (/(项目|project)/i.test(query)) add("project", "projects");
+	if (/(环境|environment|env)/i.test(query)) add("environment");
+	if (/(应用|application|app)/i.test(query)) add("application", "app");
+	if (/(容器|container|docker)/i.test(query)) add("container", "docker");
+	if (/(日志|log|logs)/i.test(query)) add("logs", "log");
+	if (/(服务器|主机|server|host)/i.test(query)) add("server");
 
 	return Array.from(new Set(tokens.filter(Boolean)));
 }
@@ -1306,6 +1313,19 @@ function buildChatTools(params: {
 			execute: async (input: { toolName: string }) => {
 				const t = toolRegistry.get(input.toolName);
 				if (!t) {
+					if (input.toolName.includes(".")) {
+						const bridge = getTrpcBridge();
+						if (bridge) {
+							try {
+								const desc = await bridge.describeProcedure(input.toolName);
+								return {
+									success: true,
+									message: `tRPC procedure "${desc.name}" described`,
+									data: { kind: "trpc_procedure", ...desc },
+								};
+							} catch {}
+						}
+					}
 					return buildUnknownToolSuggestionResult(input.toolName);
 				}
 				const data = getToolDescribeData(t);
@@ -1390,36 +1410,51 @@ function buildChatTools(params: {
 				) {
 					rawParams.query = rawParams.query.trim();
 				}
-				if (
-					(input.toolName === "trpc_procedure_search" ||
-						input.toolName === "tool_search" ||
-						input.toolName === "tool_suggest") &&
-					(typeof rawParams.query !== "string" ||
-						rawParams.query.trim().length === 0) &&
-					typeof rawParams.reason === "string" &&
-					rawParams.reason.trim().length > 0
-				) {
-					rawParams.query = rawParams.reason.trim();
-				}
+					if (
+						(input.toolName === "trpc_procedure_search" ||
+							input.toolName === "tool_search" ||
+							input.toolName === "tool_suggest") &&
+						(typeof rawParams.query !== "string" ||
+							rawParams.query.trim().length === 0) &&
+						typeof rawParams.reason === "string" &&
+						rawParams.reason.trim().length > 0
+					) {
+						rawParams.query = rawParams.reason.trim();
+					}
+					if (
+						input.toolName === "trpc_procedure_search" &&
+						typeof rawParams.limit === "number"
+					) {
+						rawParams.limit = Math.max(1, Math.min(50, rawParams.limit));
+					}
+					if (
+						(input.toolName === "tool_search" ||
+							input.toolName === "tool_suggest") &&
+						typeof rawParams.limit === "number"
+					) {
+						rawParams.limit = Math.max(1, Math.min(30, rawParams.limit));
+					}
 
 				let t = toolRegistry.get(input.toolName);
-				if (!t) {
-					// Convenience fallback: treat an unknown dotted name as a tRPC procedure call.
-					// Example: { toolName: "project.create", params: { name: "dk" } }
-					if (input.toolName.includes(".")) {
-						const trpcTool = toolRegistry.get("trpc_procedure_call");
-						if (trpcTool) {
-							const wrappedInput = rawParams.input ?? rawParams.params ?? rawParams;
-							const wrapped =
-								typeof wrappedInput === "object" && wrappedInput !== null
-									? (wrappedInput as Record<string, unknown>)
-									: {};
-							rawParams.procedureName = input.toolName;
-							rawParams.input = wrapped;
-							t = trpcTool;
+					if (!t) {
+						// Convenience fallback: treat an unknown dotted name as a tRPC procedure call.
+						// Example: { toolName: "project.create", params: { name: "dk" } }
+						if (input.toolName.includes(".")) {
+							const trpcTool = toolRegistry.get("trpc_procedure_call");
+							if (trpcTool) {
+								const wrappedInput = rawParams.input ?? rawParams.params ?? rawParams;
+								const wrapped =
+									typeof wrappedInput === "object" && wrappedInput !== null
+										? (wrappedInput as Record<string, unknown>)
+										: {};
+								rawParams.procedureName = input.toolName;
+								if (Object.keys(wrapped).length > 0) {
+									rawParams.input = wrapped;
+								}
+								t = trpcTool;
+							}
 						}
 					}
-				}
 
 				if (!t) {
 					const searched = searchToolCatalog({ query: input.toolName, limit: 5 });
@@ -1442,6 +1477,7 @@ function buildChatTools(params: {
 				if (!t) return buildUnknownToolSuggestionResult(input.toolName);
 				const validation = t.parameters.safeParse(rawParams);
 				if (!validation.success) {
+					const exampleParams = buildExampleParams(t.parameters);
 					return {
 						success: false,
 						message:
@@ -1450,7 +1486,11 @@ function buildChatTools(params: {
 						data: {
 							toolName: t.name,
 							confirmLiterals: extractConfirmLiterals(t.parameters),
-							exampleParams: buildExampleParams(t.parameters),
+							exampleParams,
+							exampleToolCall: {
+								toolName: t.name,
+								params: exampleParams,
+							},
 						},
 					};
 				}
@@ -1460,8 +1500,26 @@ function buildChatTools(params: {
 					unknown
 				>;
 
-				const requiresApproval =
-					t.requiresApproval && params.toolApprovalsDisabled !== true;
+					let requiresApproval =
+						t.requiresApproval && params.toolApprovalsDisabled !== true;
+					if (
+						requiresApproval &&
+						t.name === "trpc_procedure_call" &&
+						typeof validatedParams.procedureName === "string" &&
+						validatedParams.procedureName.trim().length > 0
+					) {
+						const bridge = getTrpcBridge();
+						if (bridge) {
+							try {
+								const desc = await bridge.describeProcedure(
+									validatedParams.procedureName.trim(),
+								);
+								if (desc.type === "query") {
+									requiresApproval = false;
+								}
+							} catch {}
+						}
+					}
 
 				const execution = await createToolExecution({
 					conversationId: params.conversationId,
@@ -1755,6 +1813,68 @@ function safeJsonForPrompt(value: unknown, maxLen: number) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getRetryableToolCallFailures(toolResults: unknown): {
+	failures: Record<string, unknown>[];
+	successfulTools: string[];
+	hasPendingApproval: boolean;
+} {
+	const failures: Record<string, unknown>[] = [];
+	const successfulTools = new Set<string>();
+	let hasPendingApproval = false;
+
+	if (!Array.isArray(toolResults)) {
+		return { failures, successfulTools: [], hasPendingApproval };
+	}
+
+	for (const tr of toolResults) {
+		if (!tr || typeof tr !== "object") continue;
+
+		const resultValue =
+			(tr as { result?: unknown }).result ??
+			(tr as { output?: unknown }).output ??
+			tr;
+		if (!isRecord(resultValue)) continue;
+
+		if (resultValue.success === true) {
+			if (resultValue.status === "pending_approval") {
+				hasPendingApproval = true;
+			}
+			const invokedTool =
+				typeof resultValue.invokedTool === "string"
+					? resultValue.invokedTool.trim()
+					: typeof resultValue.toolName === "string"
+						? resultValue.toolName.trim()
+						: "";
+			if (invokedTool.length > 0) successfulTools.add(invokedTool);
+			continue;
+		}
+
+		if (resultValue.success !== false) continue;
+
+		const message =
+			typeof resultValue.message === "string" ? resultValue.message : "";
+		const error = typeof resultValue.error === "string" ? resultValue.error : "";
+		const data = isRecord(resultValue.data) ? resultValue.data : undefined;
+
+		const isInvalidParams = message.startsWith("Invalid parameters");
+		const isUnknownTool = error.startsWith("Unknown tool:");
+		const hasExampleToolCall =
+			!!data &&
+			"exampleToolCall" in data &&
+			isRecord((data as { exampleToolCall?: unknown }).exampleToolCall);
+
+		if (isInvalidParams || isUnknownTool || hasExampleToolCall) {
+			failures.push(resultValue);
+		}
+	}
+
+	return {
+		failures: failures.slice(0, 2),
+		successfulTools: Array.from(successfulTools),
+		hasPendingApproval,
+	};
 }
 
 const TOOL_RESULT_MAX_JSON_CHARS = 200_000;
@@ -2176,23 +2296,90 @@ export const chat = async ({
 
 	const initialSystemMode = getInitialSystemMode(aiSettings);
 
+	const isLikelyActionRequest = (text: string): boolean => {
+		const t = text.trim();
+		if (t.length === 0) return false;
+		const hasAction =
+			/(备份|backup|卷备份|volume\s*backup|恢复|restore|迁移|migrate|部署|deploy|创建|新建|create|删除|移除|remove|delete|更新|修改|edit|update|设置|set|配置|config|启动|start|停止|stop|重启|restart|导入|import|导出|export|挂载|mount|日志|log|logs|容器|container|docker)/i.test(
+				t,
+			);
+		if (!hasAction) return false;
+
+		const looksLikeQuestion =
+			/(\?|？|为什么|如何|怎么|是否|能否|可以吗|有吗|是什么|区别)/i.test(t);
+		if (looksLikeQuestion) return false;
+
+		return true;
+	};
+
+	const deriveTrpcSearchQueryHint = (text: string): string => {
+		const tokens = new Set<string>();
+		const add = (arr: string[]) => {
+			for (const t of arr) {
+				const trimmed = t.trim();
+				if (trimmed) tokens.add(trimmed);
+			}
+		};
+
+		if (/(备份|backup)/i.test(text)) add(["backup"]);
+		if (/(卷备份|volume\s*backup)/i.test(text)) add(["volume", "backup"]);
+		if (/(挂载|mount|卷|volume)/i.test(text)) add(["mount", "volume"]);
+		if (/(日志|logs?)/i.test(text)) add(["logs", "log"]);
+		if (/(容器|container|docker)/i.test(text)) add(["docker", "container"]);
+		if (/(部署|deployment)/i.test(text)) add(["deployment"]);
+		if (/(文件|file)/i.test(text)) add(["file"]);
+		if (/(s3|r2|minio|对象存储|bucket|存储桶|destination)/i.test(text))
+			add(["s3", "destination"]);
+		if (/(计划|定时|cron|schedule)/i.test(text)) add(["schedule", "cron"]);
+		if (/(保留|留存|retention|keep)/i.test(text)) add(["retention"]);
+			if (/(项目|project)/i.test(text)) add(["project"]);
+			if (/(环境|environment|env)/i.test(text)) add(["environment"]);
+			if (/(环境变量|env\s*vars?|environment\s*variables?)/i.test(text))
+				add(["env", "environment", "variables"]);
+			if (/(域名|domain|dns)/i.test(text)) add(["domain", "dns"]);
+			if (/(证书|certificate|ssl|https|tls)/i.test(text))
+				add(["certificate", "ssl", "https", "tls"]);
+			if (
+				/(traefik|特雷菲克|反向代理|反代|网关|代理|转发|路由|ingress|reverse\s*proxy)/i.test(
+					text,
+				)
+			)
+				add(["traefik", "proxy", "router", "ingress"]);
+			if (/(github|仓库|repo|repository|git)/i.test(text))
+				add(["github", "repo"]);
+			if (/(数据库|database|\bdb\b)/i.test(text)) add(["database", "db"]);
+			if (/(postgres|postgresql|\bpg\b|pgsql|postgre)/i.test(text))
+				add(["postgres", "pg"]);
+			if (/(mysql)/i.test(text)) add(["mysql"]);
+			if (/(mariadb)/i.test(text)) add(["mariadb"]);
+			if (/(mongo|mongodb)/i.test(text)) add(["mongo", "mongodb"]);
+			if (/(redis)/i.test(text)) add(["redis"]);
+
+			const hint = Array.from(tokens).join(" ");
+			if (hint.length > 0) return hint;
+			const trimmed = text.trim();
+		return trimmed.length > 0 ? trimmed.slice(0, 200) : "backup";
+	};
+
 	const runGenerate = async (
 		withTools: boolean,
 		systemMode: "system" | "inline" = "system",
+		overrideSystemPrompt?: string,
 	) => {
+		const effectiveSystemPrompt = overrideSystemPrompt ?? systemPrompt;
 		const nextMessages =
 			systemMode === "inline"
 				? [
 						{
 							role: "user" as const,
-							content: `SYSTEM INSTRUCTIONS (treat as system):\n${systemPrompt}`,
+							content: `SYSTEM INSTRUCTIONS (treat as system):\n${effectiveSystemPrompt}`,
 						},
 						...messages,
 					]
 				: messages;
 		return await generateText({
 			model,
-			system: systemMode === "system" ? systemPrompt : undefined,
+			system: systemMode === "system" ? effectiveSystemPrompt : undefined,
 			messages: nextMessages,
 			tools: withTools ? tools : undefined,
 			stopWhen: stepCountIs(10),
@@ -2225,6 +2412,48 @@ export const chat = async ({
 				}
 			}
 		} else throw error;
+	}
+
+	const retryable = getRetryableToolCallFailures(
+		(result as unknown as { toolResults?: unknown }).toolResults,
+	);
+	if (isLikelyActionRequest(message)) {
+		const needsToolKickoff =
+			!Array.isArray(result.toolCalls) || result.toolCalls.length === 0;
+		const safeSuccessTools = new Set([
+			"trpc_procedure_search",
+			"trpc_procedure_describe",
+			"tool_search",
+			"tool_suggest",
+			"tool_describe",
+		]);
+		const onlySafeSuccesses = retryable.successfulTools.every((t) =>
+			safeSuccessTools.has(t),
+		);
+		const needsParamRepair =
+			retryable.failures.length > 0 &&
+			!retryable.hasPendingApproval &&
+			(retryable.successfulTools.length === 0 || onlySafeSuccesses);
+
+		if (needsToolKickoff || needsParamRepair) {
+			const hint = deriveTrpcSearchQueryHint(message);
+			const hintForPrompt = hint
+				.replaceAll("\\", "\\\\")
+				.replaceAll("\"", "\\\"")
+				.replaceAll("\n", " ")
+				.replaceAll("\r", " ");
+			const failureDetails = needsParamRepair
+				? safeJsonForPrompt(retryable.failures, 2500)
+				: "";
+			const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_search\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_describe and trpc_procedure_call as needed.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
+			try {
+				result = await runGenerate(
+					true,
+					initialSystemMode,
+					`${systemPrompt}${extra}`,
+				);
+			} catch {}
+		}
 	}
 
 	let finalText = typeof result.text === "string" ? result.text : "";
@@ -2510,24 +2739,101 @@ export const chatStream = async (
 
 	const initialSystemMode = getInitialSystemMode(aiSettings);
 
+	const isLikelyActionRequest = (text: string): boolean => {
+		const t = text.trim();
+		if (t.length === 0) return false;
+		const hasAction =
+			/(备份|backup|恢复|restore|迁移|migrate|部署|deploy|创建|create|删除|delete|移除|remove|更新|update|修改|编辑|设置|set|配置|config|启动|start|停止|stop|重启|restart|导入|import|导出|export|挂载|mount|日志|log|logs|容器|container|docker)/i.test(
+				t,
+			);
+		if (!hasAction) return false;
+
+		const imperative =
+			/(帮我|请|麻烦|替我|给我|执行|操作|把.*(备份|backup|恢复|restore|迁移|migrate|部署|deploy|创建|create|删除|delete|更新|update|修改|edit|设置|set|配置|config|启动|start|停止|stop|重启|restart|导入|import|导出|export|日志|log|logs|容器|container|docker))/i.test(
+				t,
+			);
+		if (imperative) return true;
+
+		const looksLikeQuestion =
+			/(\?|？|怎么|如何|为何|为什么|是什么|区别|原理|能不能|可以吗|是否)/i.test(
+				t,
+			);
+		return !looksLikeQuestion;
+	};
+
+	const deriveTrpcSearchQueryHint = (text: string): string => {
+		const q = text.toLowerCase();
+		const tokens = new Set<string>();
+		const add = (arr: string[]) => {
+			for (const t of arr) {
+				const trimmed = t.trim();
+				if (trimmed) tokens.add(trimmed);
+			}
+		};
+
+		if (/(备份|backup)/i.test(text)) add(["backup"]);
+		if (/(卷备份|volume\s*backup)/i.test(text)) add(["volume", "backup"]);
+		if (/(挂载|mount|卷|volume)/i.test(text)) add(["mount", "volume"]);
+		if (/(日志|logs?)/i.test(text)) add(["logs", "log"]);
+		if (/(容器|container|docker)/i.test(text)) add(["docker", "container"]);
+		if (/(部署|deployment)/i.test(text)) add(["deployment"]);
+		if (/(文件|file)/i.test(text)) add(["file"]);
+		if (/(s3|r2|minio|对象存储|bucket|存储桶|destination)/i.test(text))
+			add(["s3", "destination"]);
+		if (/(每天|定时|cron|schedule)/i.test(text)) add(["schedule", "cron"]);
+		if (/(最多|保留|retention|keep)/i.test(text)) add(["retention"]);
+			if (/(项目|project)/i.test(text)) add(["project"]);
+			if (/(环境|environment|env)/i.test(text)) add(["environment"]);
+			if (/(环境变量|env\s*vars?|environment\s*variables?)/i.test(text))
+				add(["env", "environment", "variables"]);
+			if (/(域名|domain|dns)/i.test(text)) add(["domain", "dns"]);
+			if (/(证书|certificate|ssl|https|tls)/i.test(text))
+				add(["certificate", "ssl", "https", "tls"]);
+			if (
+				/(traefik|特雷菲克|反向代理|反代|网关|代理|转发|路由|ingress|reverse\s*proxy)/i.test(
+					text,
+				)
+			)
+				add(["traefik", "proxy", "router", "ingress"]);
+			if (/(github|仓库|repo|repository|git)/i.test(text))
+				add(["github", "repo"]);
+			if (/(数据库|database|\bdb\b)/i.test(text)) add(["database", "db"]);
+			if (/(postgres|postgresql|\bpg\b|pgsql|postgre)/i.test(text))
+				add(["postgres", "pg"]);
+			if (/(mysql)/i.test(text)) add(["mysql"]);
+			if (/(mariadb)/i.test(text)) add(["mariadb"]);
+			if (/(mongo|mongodb)/i.test(text)) add(["mongo", "mongodb"]);
+			if (/(redis)/i.test(text)) add(["redis"]);
+
+			const hint = Array.from(tokens).join(" ");
+			if (hint.length > 0) return hint;
+			const trimmed = q.trim();
+		return trimmed.length > 0 ? trimmed.slice(0, 200) : "backup";
+	};
+
 	const runStream = async (
 		withTools: boolean,
 		systemMode: "system" | "inline" = "system",
+		overrideSystemPrompt?: string,
 	) => {
 		const stopWhen = stepCountIs(10);
+		const effectiveSystemPrompt = overrideSystemPrompt ?? systemPrompt;
 		const nextMessages =
 			systemMode === "inline"
 				? [
 						{
 							role: "user" as const,
-							content: `SYSTEM INSTRUCTIONS (treat as system):\n${systemPrompt}`,
+							content: `SYSTEM INSTRUCTIONS (treat as system):\n${effectiveSystemPrompt}`,
 						},
 						...messages,
 					]
 				: messages;
 		const stream = streamText({
 			model,
-			system: systemMode === "system" ? systemPrompt : undefined,
+			system:
+				systemMode === "system"
+					? effectiveSystemPrompt
+					: undefined,
 			messages: nextMessages,
 			tools: withTools ? tools : undefined,
 			stopWhen,
@@ -2722,6 +3028,45 @@ export const chatStream = async (
 		} else throw error;
 	}
 
+	if (!options.abortSignal?.aborted && isLikelyActionRequest(message)) {
+		const retryable = getRetryableToolCallFailures(streamed.toolResults);
+		const needsToolKickoff = streamed.toolCalls.length === 0;
+		const safeSuccessTools = new Set([
+			"trpc_procedure_search",
+			"trpc_procedure_describe",
+			"tool_search",
+			"tool_suggest",
+			"tool_describe",
+		]);
+		const onlySafeSuccesses = retryable.successfulTools.every((t) =>
+			safeSuccessTools.has(t),
+		);
+		const needsParamRepair =
+			retryable.failures.length > 0 &&
+			!retryable.hasPendingApproval &&
+			(retryable.successfulTools.length === 0 || onlySafeSuccesses);
+
+		if (needsToolKickoff || needsParamRepair) {
+			const hint = deriveTrpcSearchQueryHint(message);
+			const hintForPrompt = hint
+				.replaceAll("\\", "\\\\")
+				.replaceAll("\"", "\\\"")
+				.replaceAll("\n", " ")
+				.replaceAll("\r", " ");
+			const failureDetails = needsParamRepair
+				? safeJsonForPrompt(retryable.failures, 2500)
+				: "";
+			const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_search\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_describe and trpc_procedure_call as needed.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
+			try {
+				streamed = await runStream(
+					true,
+					initialSystemMode,
+					`${systemPrompt}${extra}`,
+				);
+			} catch {}
+		}
+	}
+
 	if (
 		streamed.fullText.trim().length === 0 &&
 		Array.isArray(streamed.toolCalls) &&
@@ -2885,12 +3230,15 @@ function buildSystemPrompt(
 	const guidelines = `Guidelines:
 - Be concise; ask at most 1-3 focused questions only if blocking.
 - Tools: if you know the exact tool + params, call tool_call directly; otherwise use tool_suggest/tool_search/tool_describe, then tool_call.
+- tRPC: procedures are NOT tools. To find procedures, use tool_call -> trpc_procedure_search (params must include {query}). To call a procedure, use tool_call -> trpc_procedure_call OR call tool_call with toolName="<router>.<procedure>" and params=<procedure input> (it will be routed to trpc_procedure_call). Queries run without approval; mutations may require approval.
  - Approvals (critical): if a tool requires approval AND tool approvals are manual, you MUST create a tool_call that returns status="pending_approval" (do not ask in natural language without a tool_call). Include ALL required params (including any confirm literal); do NOT send empty params as a placeholder. Tell the user to approve/reject in the UI (or type "批准/拒绝"). If tool approvals are disabled for this conversation, proceed without asking for approval.
 - Tool UX: do not narrate tool names or internal errors; focus on outcomes. If a tool fails due to invalid params/unknown tool, correct and retry (use tool_describe/tool_search as needed). Ask the user only when blocked.
 - Context: reuse recent tool results; do not re-run the same read-only checks/config reads unnecessarily.
 - ServerId: self-hosted defaults to the local Dokploy host when serverId is missing; only require serverId for remote targets. Cloud mode requires serverId for server operations.
 - Safety: run low-risk read tools immediately; for medium/high-risk actions, explain before executing; if approval is required, create the pending_approval tool_call first.
 - Accuracy: never invent tool names; never guess IDs. Use list/find/get tools; ask the user to confirm only when ambiguous.
+- Idempotency: before creating backups/schedules (or other recurring resources), list existing items first and avoid duplicates; prefer updating an existing item when it matches the intent.
+- Volume backups: to back up ALL mounts, set volumeName="dokploy_all_mounts" (you may also accept "ALL"/"all"). For compose + ALL mounts, serviceName is required; for application + ALL mounts, applicationId is required.
 - Defaults: if the user says "直接执行/用默认/别问/少问", proceed with safe defaults and ask at most 1 blocking question to avoid harm.
 - Results: clearly report tool outcomes; if the toolset is insufficient, say what's missing and the next best step.
 - Repo/code changes: if you must change a Git repo, ask whether to create a PR; read files first and show a unified diff before writing (approval required).

@@ -7,6 +7,32 @@ import {
 	type updateVolumeBackupSchema,
 	volumeBackups,
 } from "../db/schema";
+import { ALL_MOUNTS_VOLUME_NAME } from "../utils/volume-backups/naming";
+
+const normalizeAllMountsVolumeName = (value: string): string => {
+	const trimmed = value.trim();
+	const lower = trimmed.toLowerCase();
+	if (lower === ALL_MOUNTS_VOLUME_NAME) return ALL_MOUNTS_VOLUME_NAME;
+	if (
+		lower === "all" ||
+		lower === "all_mounts" ||
+		lower === "all-mounts" ||
+		lower === "allmounts" ||
+		lower === "all mounts" ||
+		trimmed === "*" ||
+		trimmed === "全部" ||
+		trimmed === "所有" ||
+		trimmed === "全量" ||
+		trimmed === "全部挂载" ||
+		trimmed === "所有挂载"
+	) {
+		return ALL_MOUNTS_VOLUME_NAME;
+	}
+	return trimmed;
+};
+
+const requireNonEmpty = (value: unknown): value is string =>
+	typeof value === "string" && value.trim().length > 0;
 
 export const findVolumeBackupById = async (volumeBackupId: string) => {
 	const volumeBackup = await db.query.volumeBackups.findFirst({
@@ -36,9 +62,51 @@ export const findVolumeBackupById = async (volumeBackupId: string) => {
 export const createVolumeBackup = async (
 	volumeBackup: z.infer<typeof createVolumeBackupSchema>,
 ) => {
+	const normalized = {
+		...volumeBackup,
+		serviceType: volumeBackup.serviceType ?? "application",
+		volumeName: normalizeAllMountsVolumeName(volumeBackup.volumeName),
+		serviceName:
+			typeof volumeBackup.serviceName === "string"
+				? volumeBackup.serviceName.trim()
+				: volumeBackup.serviceName,
+	};
+
+	if (normalized.volumeName === ALL_MOUNTS_VOLUME_NAME) {
+		if (
+			normalized.serviceType !== "application" &&
+			normalized.serviceType !== "compose"
+		) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message:
+					"ALL mounts volume backups are only supported for application and compose",
+			});
+		}
+		if (
+			normalized.serviceType === "application" &&
+			!requireNonEmpty(normalized.applicationId)
+		) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "applicationId is required for ALL mounts application backups",
+			});
+		}
+		if (
+			normalized.serviceType === "compose" &&
+			(!requireNonEmpty(normalized.composeId) ||
+				!requireNonEmpty(normalized.serviceName))
+		) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "composeId and serviceName are required for ALL mounts compose backups",
+			});
+		}
+	}
+
 	const newVolumeBackup = await db
 		.insert(volumeBackups)
-		.values(volumeBackup)
+		.values(normalized)
 		.returning()
 		.then((e) => e[0]);
 
@@ -55,9 +123,51 @@ export const updateVolumeBackup = async (
 	volumeBackupId: string,
 	volumeBackup: z.infer<typeof updateVolumeBackupSchema>,
 ) => {
+	const normalized = {
+		...volumeBackup,
+		serviceType: volumeBackup.serviceType ?? "application",
+		volumeName: normalizeAllMountsVolumeName(volumeBackup.volumeName),
+		serviceName:
+			typeof volumeBackup.serviceName === "string"
+				? volumeBackup.serviceName.trim()
+				: volumeBackup.serviceName,
+	};
+
+	if (normalized.volumeName === ALL_MOUNTS_VOLUME_NAME) {
+		if (
+			normalized.serviceType !== "application" &&
+			normalized.serviceType !== "compose"
+		) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message:
+					"ALL mounts volume backups are only supported for application and compose",
+			});
+		}
+		if (
+			normalized.serviceType === "application" &&
+			!requireNonEmpty(normalized.applicationId)
+		) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "applicationId is required for ALL mounts application backups",
+			});
+		}
+		if (
+			normalized.serviceType === "compose" &&
+			(!requireNonEmpty(normalized.composeId) ||
+				!requireNonEmpty(normalized.serviceName))
+		) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "composeId and serviceName are required for ALL mounts compose backups",
+			});
+		}
+	}
+
 	return await db
 		.update(volumeBackups)
-		.set(volumeBackup)
+		.set(normalized)
 		.where(eq(volumeBackups.volumeBackupId, volumeBackupId))
 		.returning()
 		.then((e) => e[0]);
