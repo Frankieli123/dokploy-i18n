@@ -383,6 +383,7 @@ export const createDomainLabels = (
 
 	// Add TLS configuration for websecure
 	if (entrypoint === "websecure") {
+		labels.push(`traefik.http.routers.${routerName}.tls=true`);
 		if (certificateType === "letsencrypt") {
 			labels.push(
 				`traefik.http.routers.${routerName}.tls.certresolver=letsencrypt`,

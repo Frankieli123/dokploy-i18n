@@ -1,5 +1,5 @@
 import type { ApplicationNested, Domain, Redirect } from "@dokploy/server";
-import { createRouterConfig } from "@dokploy/server";
+import { createDomainLabels, createRouterConfig } from "@dokploy/server";
 import { expect, test } from "vitest";
 
 const baseApp: ApplicationNested = {
@@ -267,4 +267,21 @@ test("CertificateType on websecure entrypoint", async () => {
 	);
 
 	expect(router.tls?.certResolver).toBe("letsencrypt");
+});
+
+test("Docker labels enable TLS on websecure router", () => {
+	const labels = createDomainLabels(
+		"test",
+		{
+			...baseDomain,
+			host: "example.com",
+			port: 80,
+			https: true,
+			certificateType: "letsencrypt",
+			uniqueConfigKey: 1,
+		},
+		"websecure",
+	);
+
+	expect(labels).toContain("traefik.http.routers.test-1-websecure.tls=true");
 });
