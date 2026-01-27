@@ -87,6 +87,64 @@ const trpcProcedureSearch: Tool<
 	},
 };
 
+const trpcProcedureSuggest: Tool<
+	{ query: string; limit?: number },
+	Array<{
+		name: string;
+		type: string;
+		inputExample: Record<string, unknown> | null;
+		fields?: Array<{ name: string; type: string; required: boolean }>;
+	}>
+> = {
+	name: "trpc_procedure_suggest",
+	description:
+		"Search tRPC procedure names and include input examples for the top matches (search + describe in one call).",
+	category: "settings",
+	tags: ["trpc", "api", "procedure", "suggest", "help", "schema"],
+	parameters: z.object({
+		query: z.string().min(1).describe("Search keyword (e.g. backup, domain create)"),
+		limit: z.number().min(1).max(20).optional().default(8),
+	}),
+	riskLevel: "low",
+	requiresApproval: false,
+	execute: async (params) => {
+		const bridge = getTrpcBridge();
+		if (!bridge) return bridgeNotConfigured();
+
+		try {
+			const results = await bridge.searchProcedures({
+				query: params.query,
+				limit: params.limit ?? 8,
+			});
+			const described = await Promise.all(
+				results.map(async (r) => {
+					try {
+						return await bridge.describeProcedure(r.name);
+					} catch {
+						return {
+							name: r.name,
+							type: r.type,
+							inputExample: null,
+						};
+					}
+				}),
+			);
+
+			return {
+				success: true,
+				message: `Suggested ${described.length} tRPC procedure(s)`,
+				data: described,
+			};
+		} catch (error) {
+			return {
+				success: false,
+				message: "Failed to suggest tRPC procedures",
+				error: error instanceof Error ? error.message : String(error),
+			};
+		}
+	},
+};
+
 const trpcProcedureDescribe: Tool<
 	{ procedureName: string },
 	{
@@ -189,6 +247,7 @@ const trpcProcedureCall: Tool<
 export function registerTrpcTools() {
 	toolRegistry.register(trpcRouterList);
 	toolRegistry.register(trpcProcedureSearch);
+	toolRegistry.register(trpcProcedureSuggest);
 	toolRegistry.register(trpcProcedureDescribe);
 	toolRegistry.register(trpcProcedureCall);
 }

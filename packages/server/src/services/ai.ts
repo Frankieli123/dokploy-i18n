@@ -37,6 +37,7 @@ type ToolPromptInfo = {
 	description: string;
 	riskLevel: string;
 	requiresApproval: boolean;
+	parameters?: string;
 };
 
 const RISK_RANK = {
@@ -176,6 +177,46 @@ function buildMetaToolPromptInfo(): ToolPromptInfo[] {
 			requiresApproval: false,
 		},
 	];
+}
+
+function sortToolsForPrompt(tools: Tool[]): Tool[] {
+	const safe = tools
+		.filter((t) => t.riskLevel === "low" && !t.requiresApproval)
+		.sort((a, b) => a.name.localeCompare(b.name));
+	const rest = tools
+		.filter((t) => !(t.riskLevel === "low" && !t.requiresApproval))
+		.sort((a, b) => a.name.localeCompare(b.name));
+	return safe.concat(rest);
+}
+
+function buildToolCatalogPromptInfo(params: {
+	userMessage: string;
+	projectId?: string;
+	serverId?: string;
+	maxTools?: number;
+}): ToolPromptInfo[] {
+	const maxTools = typeof params.maxTools === "number" ? params.maxTools : 24;
+	const all = toolRegistry.getAll();
+	const selectedTools =
+		all.length <= maxTools
+			? sortToolsForPrompt(all)
+			: selectRelevantTools(params.userMessage, {
+					projectId: params.projectId,
+					serverId: params.serverId,
+					minTools: 0,
+					maxTools,
+				});
+
+	return selectedTools.map((t) => {
+		const data = getToolDescribeData(t);
+		return {
+			name: data.name,
+			description: data.description,
+			riskLevel: data.riskLevel,
+			requiresApproval: data.requiresApproval,
+			parameters: data.parameters,
+		};
+	});
 }
 
 function tokenizeToolSearchQuery(query: string): string[] {
@@ -2266,12 +2307,18 @@ export const chat = async ({
 	const provider = selectAIProvider(aiSettings);
 	const model = provider(aiSettings.model);
 
-	// Get system prompt with context
-	const conversation = await getConversationById(conversationId);
-	const baseSystemPrompt = buildSystemPrompt(
-		conversation,
-		buildMetaToolPromptInfo(),
-	);
+		// Get system prompt with context
+		const conversation = await getConversationById(conversationId);
+		const baseSystemPrompt = buildSystemPrompt(
+			conversation,
+			buildMetaToolPromptInfo().concat(
+				buildToolCatalogPromptInfo({
+					userMessage: message,
+					projectId: conversation.projectId || undefined,
+					serverId: conversation.serverId || undefined,
+				}),
+			),
+		);
 	const systemPrompt =
 		toolExecutionContextMessage.trim().length > 0
 			? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
@@ -2420,13 +2467,14 @@ export const chat = async ({
 	if (isLikelyActionRequest(message)) {
 		const needsToolKickoff =
 			!Array.isArray(result.toolCalls) || result.toolCalls.length === 0;
-		const safeSuccessTools = new Set([
-			"trpc_procedure_search",
-			"trpc_procedure_describe",
-			"tool_search",
-			"tool_suggest",
-			"tool_describe",
-		]);
+			const safeSuccessTools = new Set([
+				"trpc_procedure_search",
+				"trpc_procedure_suggest",
+				"trpc_procedure_describe",
+				"tool_search",
+				"tool_suggest",
+				"tool_describe",
+			]);
 		const onlySafeSuccesses = retryable.successfulTools.every((t) =>
 			safeSuccessTools.has(t),
 		);
@@ -2445,7 +2493,7 @@ export const chat = async ({
 			const failureDetails = needsParamRepair
 				? safeJsonForPrompt(retryable.failures, 2500)
 				: "";
-			const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_search\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_describe and trpc_procedure_call as needed.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
+			const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_suggest\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_call as needed (or call tool_call with toolName=\"<router>.<procedure>\"). Use trpc_procedure_describe only if you still need schema details.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
 			try {
 				result = await runGenerate(
 					true,
@@ -2710,12 +2758,18 @@ export const chatStream = async (
 		conversationId,
 	});
 
-	const provider = selectAIProvider(aiSettings);
-	const model = provider(aiSettings.model);
-	const baseSystemPrompt = buildSystemPrompt(
-		conversation,
-		buildMetaToolPromptInfo(),
-	);
+		const provider = selectAIProvider(aiSettings);
+		const model = provider(aiSettings.model);
+		const baseSystemPrompt = buildSystemPrompt(
+			conversation,
+			buildMetaToolPromptInfo().concat(
+				buildToolCatalogPromptInfo({
+					userMessage: message,
+					projectId: conversation.projectId || undefined,
+					serverId: conversation.serverId || undefined,
+				}),
+			),
+		);
 	const systemPrompt =
 		toolExecutionContextMessage.trim().length > 0
 			? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
@@ -3031,13 +3085,14 @@ export const chatStream = async (
 	if (!options.abortSignal?.aborted && isLikelyActionRequest(message)) {
 		const retryable = getRetryableToolCallFailures(streamed.toolResults);
 		const needsToolKickoff = streamed.toolCalls.length === 0;
-		const safeSuccessTools = new Set([
-			"trpc_procedure_search",
-			"trpc_procedure_describe",
-			"tool_search",
-			"tool_suggest",
-			"tool_describe",
-		]);
+			const safeSuccessTools = new Set([
+				"trpc_procedure_search",
+				"trpc_procedure_suggest",
+				"trpc_procedure_describe",
+				"tool_search",
+				"tool_suggest",
+				"tool_describe",
+			]);
 		const onlySafeSuccesses = retryable.successfulTools.every((t) =>
 			safeSuccessTools.has(t),
 		);
@@ -3056,7 +3111,7 @@ export const chatStream = async (
 			const failureDetails = needsParamRepair
 				? safeJsonForPrompt(retryable.failures, 2500)
 				: "";
-			const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_search\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_describe and trpc_procedure_call as needed.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
+			const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_suggest\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_call as needed (or call tool_call with toolName=\"<router>.<procedure>\"). Use trpc_procedure_describe only if you still need schema details.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
 			try {
 				streamed = await runStream(
 					true,
@@ -3221,16 +3276,23 @@ function buildSystemPrompt(
 			: "";
 
 	const toolList = availableTools
-		.map(
-			(t) =>
-				`- ${t.name}: ${t.description} (Risk: ${t.riskLevel}${t.requiresApproval ? ", requires approval" : ""})`,
-		)
+		.map((t) => {
+			const header = `- ${t.name}: ${t.description} (Risk: ${t.riskLevel}${t.requiresApproval ? ", requires approval" : ""})`;
+			const params =
+				typeof t.parameters === "string" && t.parameters.trim().length > 0
+					? `\n  Parameters:\n${t.parameters
+							.split("\n")
+							.map((line) => `  ${line}`)
+							.join("\n")}`
+					: "";
+			return `${header}${params}`;
+		})
 		.join("\n");
 
 	const guidelines = `Guidelines:
 - Be concise; ask at most 1-3 focused questions only if blocking.
 - Tools: if you know the exact tool + params, call tool_call directly; otherwise use tool_suggest/tool_search/tool_describe, then tool_call.
-- tRPC: procedures are NOT tools. To find procedures, use tool_call -> trpc_procedure_search (params must include {query}). To call a procedure, use tool_call -> trpc_procedure_call OR call tool_call with toolName="<router>.<procedure>" and params=<procedure input> (it will be routed to trpc_procedure_call). Queries run without approval; mutations may require approval.
+- tRPC: procedures are NOT tools. To find procedures, use tool_call -> trpc_procedure_suggest (preferred) or trpc_procedure_search (params must include {query}). To call a procedure, use tool_call -> trpc_procedure_call OR call tool_call with toolName="<router>.<procedure>" and params=<procedure input> (it will be routed to trpc_procedure_call). Queries run without approval; mutations may require approval.
  - Approvals (critical): if a tool requires approval AND tool approvals are manual, you MUST create a tool_call that returns status="pending_approval" (do not ask in natural language without a tool_call). Include ALL required params (including any confirm literal); do NOT send empty params as a placeholder. Tell the user to approve/reject in the UI (or type "批准/拒绝"). If tool approvals are disabled for this conversation, proceed without asking for approval.
 - Tool UX: do not narrate tool names or internal errors; focus on outcomes. If a tool fails due to invalid params/unknown tool, correct and retry (use tool_describe/tool_search as needed). Ask the user only when blocked.
 - Context: reuse recent tool results; do not re-run the same read-only checks/config reads unnecessarily.
@@ -3696,21 +3758,27 @@ async function autoContinueAfterApprovedToolExecution(params: {
 			}
 			return null;
 		})
-		.filter(Boolean) as CoreMessage[];
+			.filter(Boolean) as CoreMessage[];
 
-	const internalPrompt = [
-		"Continue the task based on the conversation so far.",
-		`The last approved tool execution has ${params.outcome}.`,
-		`Tool: ${params.toolName}`,
+		const internalPrompt = [
+			"Continue the task based on the conversation so far.",
+			`The last approved tool execution has ${params.outcome}.`,
+			`Tool: ${params.toolName}`,
 		`Execution ID: ${params.executionId}`,
 		"",
 		"Rules:",
 		"- Use the recent tool execution context to reuse IDs and avoid repeating completed actions.",
 		"- If more actions are required, create tool_call(s) with all required params.",
-		"- If the task is already complete, briefly confirm and stop.",
-	].join("\n");
+			"- If the task is already complete, briefly confirm and stop.",
+		].join("\n");
 
-	messages.push({ role: "user", content: internalPrompt });
+		const lastUserMessageForTools =
+			[...history]
+				.reverse()
+				.find((m) => m.role === "user" && (m.content ?? "").trim().length > 0)
+				?.content ?? internalPrompt;
+
+		messages.push({ role: "user", content: internalPrompt });
 
 	const toolExecutionContextMessage = await buildToolExecutionContextMessage({
 		conversationId: params.conversationId,
@@ -3721,7 +3789,13 @@ async function autoContinueAfterApprovedToolExecution(params: {
 
 	const baseSystemPrompt = buildSystemPrompt(
 		conversation,
-		buildMetaToolPromptInfo(),
+		buildMetaToolPromptInfo().concat(
+			buildToolCatalogPromptInfo({
+				userMessage: lastUserMessageForTools,
+				projectId: conversation.projectId || undefined,
+				serverId: conversation.serverId || undefined,
+			}),
+		),
 	);
 	const systemPrompt =
 		toolExecutionContextMessage.trim().length > 0
