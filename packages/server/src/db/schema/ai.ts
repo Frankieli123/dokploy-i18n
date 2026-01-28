@@ -1,16 +1,18 @@
 import { relations } from "drizzle-orm";
-import {
-	boolean,
-	integer,
-	jsonb,
-	pgEnum,
-	pgTable,
-	text,
-} from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
-import { nanoid } from "nanoid";
-import { z } from "zod";
-import { organization } from "./account";
+	import {
+		boolean,
+		customType,
+		integer,
+		jsonb,
+		pgEnum,
+		pgTable,
+		text,
+		vector,
+	} from "drizzle-orm/pg-core";
+	import { createInsertSchema } from "drizzle-zod";
+	import { nanoid } from "nanoid";
+	import { z } from "zod";
+	import { organization } from "./account";
 import { projects } from "./project";
 import { server } from "./server";
 
@@ -64,25 +66,46 @@ export const aiProviderTypeSchema = z.enum([
 	"openai_compatible",
 ]);
 
-// ============================================
-// AI Configuration Table (existing)
-// ============================================
+	// ============================================
+	// AI Configuration Table (existing)
+	// ============================================
 
-export const ai = pgTable("ai", {
-	aiId: text("aiId")
-		.notNull()
-		.primaryKey()
-		.$defaultFn(() => nanoid()),
-	name: text("name").notNull(),
-	providerType: text("providerType").notNull().default("openai_compatible"),
-	apiUrl: text("apiUrl").notNull(),
-	apiKey: text("apiKey").notNull(),
-	model: text("model").notNull(),
-	isEnabled: boolean("isEnabled").notNull().default(true),
-	organizationId: text("organizationId")
-		.notNull()
-		.references(() => organization.id, { onDelete: "cascade" }), // Admin ID who created the AI settings
-	createdAt: text("createdAt")
+	const vectorUntyped = customType<{
+		data: number[];
+		driverData: string;
+	}>({
+		dataType() {
+			return "vector";
+		},
+		toDriver(value) {
+			if (!Array.isArray(value)) return value as unknown as string;
+			return JSON.stringify(value);
+		},
+		fromDriver(value) {
+			if (typeof value !== "string") return value as unknown as number[];
+			return value
+				.slice(1, -1)
+				.split(",")
+				.map((v) => Number.parseFloat(v));
+		},
+	});
+
+	export const ai = pgTable("ai", {
+		aiId: text("aiId")
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => nanoid()),
+		name: text("name").notNull(),
+		providerType: text("providerType").notNull().default("openai_compatible"),
+		apiUrl: text("apiUrl").notNull(),
+		apiKey: text("apiKey").notNull(),
+		model: text("model").notNull(),
+		embeddingModel: text("embeddingModel"),
+		isEnabled: boolean("isEnabled").notNull().default(true),
+		organizationId: text("organizationId")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }), // Admin ID who created the AI settings
+		createdAt: text("createdAt")
 		.notNull()
 		.$defaultFn(() => new Date().toISOString()),
 });
@@ -94,35 +117,77 @@ export const aiRelations = relations(ai, ({ one }) => ({
 	}),
 }));
 
-const createSchema = createInsertSchema(ai, {
-	name: z.string().min(1, { message: "Name is required" }),
-	providerType: aiProviderTypeSchema.optional().default("openai_compatible"),
-	apiUrl: z.string().url({ message: "Please enter a valid URL" }),
-	apiKey: z.string(),
-	model: z.string().min(1, { message: "Model is required" }),
-	isEnabled: z.boolean().optional(),
-});
-
-export const apiCreateAi = createSchema
-	.pick({
-		name: true,
-		providerType: true,
-		apiUrl: true,
-		apiKey: true,
-		model: true,
-		isEnabled: true,
-	})
-	.required()
-	.extend({
+	const createSchema = createInsertSchema(ai, {
+		name: z.string().min(1, { message: "Name is required" }),
 		providerType: aiProviderTypeSchema.optional().default("openai_compatible"),
+		apiUrl: z.string().url({ message: "Please enter a valid URL" }),
+		apiKey: z.string(),
+		model: z.string().min(1, { message: "Model is required" }),
+		embeddingModel: z.string().trim().min(1).optional().nullable(),
+		isEnabled: z.boolean().optional(),
 	});
 
-export const apiUpdateAi = createSchema
-	.partial()
-	.extend({
-		aiId: z.string().min(1),
-	})
-	.omit({ organizationId: true });
+	export const apiCreateAi = createSchema
+		.pick({
+			name: true,
+			providerType: true,
+			apiUrl: true,
+			apiKey: true,
+			model: true,
+			embeddingModel: true,
+			isEnabled: true,
+		})
+		.required()
+		.extend({
+			providerType: aiProviderTypeSchema.optional().default("openai_compatible"),
+			embeddingModel: z.string().trim().min(1).optional().nullable(),
+		});
+
+	export const apiUpdateAi = createSchema
+		.partial()
+		.extend({
+			aiId: z.string().min(1),
+			embeddingModel: z.string().trim().min(1).optional().nullable(),
+		})
+		.omit({ organizationId: true });
+
+	// ============================================
+	// Agent Playbooks (organization-scoped memory)
+	// ============================================
+
+	export const aiAgentPlaybooks = pgTable("ai_agent_playbook", {
+		playbookId: text("playbookId")
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => nanoid()),
+		organizationId: text("organizationId")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		signature: text("signature").notNull(),
+		intent: text("intent").notNull(),
+		summary: text("summary"),
+		tags: jsonb("tags").$type<string[]>(),
+		steps: jsonb("steps")
+			.$type<
+				Array<{
+					toolName: string;
+					procedureName?: string;
+					inputKeys?: string[];
+				}>
+			>()
+			.notNull(),
+		successCount: integer("successCount").notNull().default(0),
+		failCount: integer("failCount").notNull().default(0),
+		lastUsedAt: text("lastUsedAt"),
+		expiresAt: text("expiresAt").notNull(),
+		hashVector: vector("hashVector", { dimensions: 256 }).notNull(),
+		embeddingModel: text("embeddingModel"),
+		embeddingDim: integer("embeddingDim"),
+		embeddingVector: vectorUntyped("embeddingVector"),
+		createdAt: text("createdAt")
+			.notNull()
+			.$defaultFn(() => new Date().toISOString()),
+	});
 
 export const deploySuggestionSchema = z.object({
 	environmentId: z.string().min(1),

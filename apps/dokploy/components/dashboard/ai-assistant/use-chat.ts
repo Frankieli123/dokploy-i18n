@@ -138,6 +138,13 @@ export interface UseChatOptions {
 	uiVisible?: boolean;
 }
 
+export interface PendingApproval {
+	executionId: string;
+	toolName: string;
+	runId?: string;
+	parametersPreview?: string;
+}
+
 export function useChat(options: UseChatOptions = {}) {
 	const utils = api.useUtils();
 	const [conversationId, setConversationId] = useState<string | undefined>(
@@ -155,6 +162,8 @@ export function useChat(options: UseChatOptions = {}) {
 	const [isLoading, setIsLoading] = useState(false);
 	const [abortController, setAbortController] =
 		useState<AbortController | null>(null);
+	const [pendingApproval, setPendingApproval] =
+		useState<PendingApproval | null>(null);
 	const approveExecution = api.ai.agent.approve.useMutation();
 	const executeExecution = api.ai.agent.execute.useMutation();
 	const setToolApprovalsDisabledMutation =
@@ -649,9 +658,39 @@ export function useChat(options: UseChatOptions = {}) {
 			} finally {
 				inFlightApprovalExecutionIdsRef.current.delete(executionId);
 			}
-		},
-		[approveExecution, refetchMessages, toolCallMeta, options, messages],
-	);
+			},
+			[approveExecution, refetchMessages, toolCallMeta, options, messages],
+		);
+
+	const approvePending = useCallback(async () => {
+		const executionId = pendingApproval?.executionId?.trim() ?? "";
+		if (executionId.length === 0) return;
+		if (inFlightApprovalExecutionIdsRef.current.has(executionId)) return;
+		inFlightApprovalExecutionIdsRef.current.add(executionId);
+		try {
+			await approveExecution.mutateAsync({ executionId, approved: true });
+			setPendingApproval(null);
+		} catch (error) {
+			options.onError?.(error as Error);
+		} finally {
+			inFlightApprovalExecutionIdsRef.current.delete(executionId);
+		}
+	}, [approveExecution, options, pendingApproval]);
+
+	const rejectPending = useCallback(async () => {
+		const executionId = pendingApproval?.executionId?.trim() ?? "";
+		if (executionId.length === 0) return;
+		if (inFlightApprovalExecutionIdsRef.current.has(executionId)) return;
+		inFlightApprovalExecutionIdsRef.current.add(executionId);
+		try {
+			await approveExecution.mutateAsync({ executionId, approved: false });
+			setPendingApproval(null);
+		} catch (error) {
+			options.onError?.(error as Error);
+		} finally {
+			inFlightApprovalExecutionIdsRef.current.delete(executionId);
+		}
+	}, [approveExecution, options, pendingApproval]);
 
 	const stopGeneration = useCallback(() => {
 		abortController?.abort();
@@ -683,7 +722,7 @@ export function useChat(options: UseChatOptions = {}) {
 	);
 
 	const send = useCallback(
-		async (content: string, aiId: string) => {
+		async (content: string, aiId: string, isAgentMode = false) => {
 			if (!content.trim()) return;
 
 			setIsLoading(true);
@@ -770,6 +809,245 @@ export function useChat(options: UseChatOptions = {}) {
 			}
 
 			let abortedBySafetyTimer = false;
+
+			if (isAgentMode) {
+				let stopReason: "done" | "waiting_approval" | "aborted" = "aborted";
+				try {
+					const controller = new AbortController();
+					setAbortController(controller);
+
+					const response = await fetch("/api/ai/agent/stream", {
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+							Accept: "text/event-stream",
+						},
+						body: JSON.stringify({
+							conversationId: currentConversationId,
+							goal: content,
+							aiId,
+						}),
+						signal: controller.signal,
+					});
+
+					if (!response.ok) {
+						const errorText = await response.text().catch(() => "");
+						throw new Error(errorText || `Request failed (${response.status})`);
+					}
+
+					if (!response.body) {
+						throw new Error("settings.ai.errors.streamingResponseNotAvailable");
+					}
+
+					setPendingMessages((prev) =>
+						prev.map((m) =>
+							m.messageId === userTempId ? { ...m, status: "sent" as const } : m,
+						),
+					);
+
+					const deltaBufferRef = { current: "" as string };
+					let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
+					const FLUSH_MS = 80;
+
+					const flushDeltaNow = () => {
+						if (flushDeltaTimer) {
+							clearTimeout(flushDeltaTimer);
+							flushDeltaTimer = null;
+						}
+						const pending = deltaBufferRef.current;
+						if (!pending) return;
+						deltaBufferRef.current = "";
+						setPendingMessages((prev) =>
+							prev.map((m) =>
+								m.messageId === assistantTempId
+									? {
+											...m,
+											content: (m.content ?? "") + pending,
+											status: "sending" as const,
+										}
+									: m,
+							),
+						);
+					};
+
+					const scheduleFlushDelta = () => {
+						if (flushDeltaTimer) return;
+						flushDeltaTimer = setTimeout(() => {
+							flushDeltaNow();
+						}, FLUSH_MS);
+					};
+
+					const appendAssistantLine = (line: string) => {
+						const trimmed = typeof line === "string" ? line.trim() : "";
+						if (!trimmed) return;
+						setPendingMessages((prev) =>
+							prev.map((m) =>
+								m.messageId === assistantTempId
+									? {
+											...m,
+											content:
+												(() => {
+													const existing = m.content ?? "";
+													if (existing.length > 0 && !existing.endsWith("\n")) {
+														return `${existing}\n${trimmed}\n`;
+													}
+													return `${existing}${trimmed}\n`;
+												})(),
+											status: "sending" as const,
+										}
+									: m,
+							),
+						);
+					};
+
+					for await (const evt of readSseStream(response.body)) {
+						if (controller.signal.aborted) break;
+
+						if (evt.event === "done") {
+							flushDeltaNow();
+							stopReason = "done";
+							break;
+						}
+						if (evt.event === "error" || evt.event === "stream-error") {
+							flushDeltaNow();
+							const payload = JSON.parse(evt.data) as {
+								message?: string;
+								error?: string;
+							};
+							throw new Error(
+								payload.message ||
+									payload.error ||
+									"settings.ai.errors.streamingError",
+							);
+						}
+
+						const payload = (() => {
+							try {
+								const outer = JSON.parse(evt.data) as unknown;
+								if (!isRecord(outer)) return null;
+								const inner = outer.payload;
+								return isRecord(inner) ? inner : null;
+							} catch {
+								return null;
+							}
+						})();
+
+						if (evt.event === "agent.output.delta") {
+							const delta =
+								payload && typeof payload.delta === "string" ? payload.delta : "";
+							if (delta.length === 0) continue;
+							deltaBufferRef.current += delta;
+							scheduleFlushDelta();
+							continue;
+						}
+
+						if (evt.event === "agent.step.result") {
+							flushDeltaNow();
+							const toolName =
+								payload && typeof payload.toolName === "string"
+									? payload.toolName
+									: "tool";
+							const success =
+								payload && typeof payload.success === "boolean"
+									? payload.success
+									: false;
+							const summary =
+								payload && typeof payload.summary === "string"
+									? payload.summary
+									: "";
+							appendAssistantLine(
+								`[${toolName}] ${success ? "OK" : "FAILED"}${summary ? `: ${summary}` : ""}`,
+							);
+							continue;
+						}
+
+						if (evt.event === "agent.step.wait_approval") {
+							flushDeltaNow();
+							const toolName =
+								payload && typeof payload.toolName === "string"
+									? payload.toolName
+									: "";
+							const executionId =
+								payload && typeof payload.executionId === "string"
+									? payload.executionId
+									: "";
+							const runId =
+								payload && typeof payload.runId === "string" ? payload.runId : "";
+							const parametersPreview =
+								payload && typeof payload.parametersPreview === "string"
+									? payload.parametersPreview
+									: undefined;
+							appendAssistantLine(
+								toolName
+									? `Waiting for approval: ${toolName}`
+									: "Waiting for approval",
+							);
+							if (executionId.trim().length > 0) {
+								setPendingApproval({
+									executionId: executionId.trim(),
+									toolName,
+									runId: runId.trim().length > 0 ? runId.trim() : undefined,
+									parametersPreview,
+								});
+							}
+							continue;
+						}
+					}
+
+					flushDeltaNow();
+					if (flushDeltaTimer) {
+						clearTimeout(flushDeltaTimer);
+						flushDeltaTimer = null;
+					}
+				} catch (error) {
+					setAbortController(null);
+					const errorMsg =
+						error instanceof Error
+							? error.message
+							: "settings.ai.errors.unknownError";
+					setPendingMessages((prev) =>
+						prev.map((m) =>
+							m.messageId === userTempId || m.messageId === assistantTempId
+								? { ...m, status: "error" as const, error: errorMsg }
+								: m,
+						),
+					);
+					setIsLoading(false);
+					options.onError?.(error as Error);
+					return;
+				}
+
+				if (stopReason !== "done") {
+					setPendingMessages((prev) =>
+						prev.map((m) =>
+							m.messageId === assistantTempId
+								? { ...m, status: "sent" as const }
+								: m,
+						),
+					);
+					setIsLoading(false);
+					setAbortController(null);
+					return;
+				}
+
+				try {
+					const refetchPromise = refetchMessages().catch(() => {});
+					await Promise.race([
+						refetchPromise,
+						new Promise((resolve) => setTimeout(resolve, 10000)),
+					]);
+				} finally {
+					setPendingMessages((prev) =>
+						prev.filter(
+							(m) =>
+								m.messageId !== userTempId && m.messageId !== assistantTempId,
+						),
+					);
+					setIsLoading(false);
+					setAbortController(null);
+				}
+				return;
+			}
 
 			try {
 				const controller = new AbortController();
@@ -1163,15 +1441,16 @@ export function useChat(options: UseChatOptions = {}) {
 		setAbortController(null);
 		setIsLoading(false);
 		setConversationId(undefined);
-		setPendingMessages([]);
-		setToolCallMeta({});
-		setToolOutcomes([]);
-		hasUserSetToolApprovalsDisabledRef.current = false;
-		setAreToolApprovalsDisabled(false);
-	}, [abortController]);
+			setPendingMessages([]);
+			setToolCallMeta({});
+			setToolOutcomes([]);
+			hasUserSetToolApprovalsDisabledRef.current = false;
+			setAreToolApprovalsDisabled(false);
+			setPendingApproval(null);
+		}, [abortController]);
 
 	const retryMessage = useCallback(
-		async (messageId: string, aiId: string) => {
+		async (messageId: string, aiId: string, isAgentMode = false) => {
 			const message = pendingMessages.find((m) => m.messageId === messageId);
 			if (!message || !message.content) return;
 
@@ -1179,7 +1458,7 @@ export function useChat(options: UseChatOptions = {}) {
 				prev.filter((m) => m.messageId !== messageId),
 			);
 
-			await send(message.content, aiId);
+			await send(message.content, aiId, isAgentMode);
 		},
 		[pendingMessages, send],
 	);
@@ -1191,14 +1470,15 @@ export function useChat(options: UseChatOptions = {}) {
 
 			stopGeneration();
 			setPendingMessages([]);
-			setToolCallMeta({});
-			setToolOutcomes([]);
-			hasUserSetToolApprovalsDisabledRef.current = false;
-			setAreToolApprovalsDisabled(false);
-			setConversationId(normalized);
-		},
-		[stopGeneration],
-	);
+				setToolCallMeta({});
+				setToolOutcomes([]);
+				hasUserSetToolApprovalsDisabledRef.current = false;
+				setAreToolApprovalsDisabled(false);
+				setPendingApproval(null);
+				setConversationId(normalized);
+			},
+			[stopGeneration],
+		);
 
 	return {
 		ensureConversation,
@@ -1211,6 +1491,9 @@ export function useChat(options: UseChatOptions = {}) {
 		send,
 		approveToolCall,
 		rejectToolCall,
+		pendingApproval,
+		approvePending,
+		rejectPending,
 		reset,
 		openConversation,
 		retryMessage,

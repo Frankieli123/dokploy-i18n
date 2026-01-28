@@ -542,51 +542,121 @@ export const backupRouter = createTRPCRouter({
 					const postgres = await findPostgresById(input.databaseId);
 
 					return observable<string>((emit) => {
-						restorePostgresBackup(postgres, destination, input, (log) => {
-							emit.next(log);
-						});
+						let cancelled = false;
+						const safeNext = (log: string) => {
+							if (!cancelled) emit.next(log);
+						};
+						void restorePostgresBackup(postgres, destination, input, safeNext)
+							.then(() => {
+								if (!cancelled) emit.complete();
+							})
+							.catch((error) => {
+								if (!cancelled) emit.error(error);
+							});
+						return () => {
+							cancelled = true;
+						};
 					});
 				}
 				if (input.databaseType === "mysql") {
 					const mysql = await findMySqlById(input.databaseId);
 					return observable<string>((emit) => {
-						restoreMySqlBackup(mysql, destination, input, (log) => {
-							emit.next(log);
-						});
+						let cancelled = false;
+						const safeNext = (log: string) => {
+							if (!cancelled) emit.next(log);
+						};
+						void restoreMySqlBackup(mysql, destination, input, safeNext)
+							.then(() => {
+								if (!cancelled) emit.complete();
+							})
+							.catch((error) => {
+								if (!cancelled) emit.error(error);
+							});
+						return () => {
+							cancelled = true;
+						};
 					});
 				}
 				if (input.databaseType === "mariadb") {
 					const mariadb = await findMariadbById(input.databaseId);
 					return observable<string>((emit) => {
-						restoreMariadbBackup(mariadb, destination, input, (log) => {
-							emit.next(log);
-						});
+						let cancelled = false;
+						const safeNext = (log: string) => {
+							if (!cancelled) emit.next(log);
+						};
+						void restoreMariadbBackup(mariadb, destination, input, safeNext)
+							.then(() => {
+								if (!cancelled) emit.complete();
+							})
+							.catch((error) => {
+								if (!cancelled) emit.error(error);
+							});
+						return () => {
+							cancelled = true;
+						};
 					});
 				}
 				if (input.databaseType === "mongo") {
 					const mongo = await findMongoById(input.databaseId);
 					return observable<string>((emit) => {
-						restoreMongoBackup(mongo, destination, input, (log) => {
-							emit.next(log);
-						});
+						let cancelled = false;
+						const safeNext = (log: string) => {
+							if (!cancelled) emit.next(log);
+						};
+						void restoreMongoBackup(mongo, destination, input, safeNext)
+							.then(() => {
+								if (!cancelled) emit.complete();
+							})
+							.catch((error) => {
+								if (!cancelled) emit.error(error);
+							});
+						return () => {
+							cancelled = true;
+						};
 					});
 				}
 				if (input.databaseType === "web-server") {
 					return observable<string>((emit) => {
-						restoreWebServerBackup(destination, input.backupFile, (log) => {
-							emit.next(log);
-						});
+						let cancelled = false;
+						const safeNext = (log: string) => {
+							if (!cancelled) emit.next(log);
+						};
+						void restoreWebServerBackup(destination, input.backupFile, safeNext)
+							.then(() => {
+								if (!cancelled) emit.complete();
+							})
+							.catch((error) => {
+								if (!cancelled) emit.error(error);
+							});
+						return () => {
+							cancelled = true;
+						};
 					});
 				}
 			}
 			if (input.backupType === "compose") {
 				const compose = await findComposeById(input.databaseId);
 				return observable<string>((emit) => {
-					restoreComposeBackup(compose, destination, input, (log) => {
-						emit.next(log);
-					});
+					let cancelled = false;
+					const safeNext = (log: string) => {
+						if (!cancelled) emit.next(log);
+					};
+					void restoreComposeBackup(compose, destination, input, safeNext)
+						.then(() => {
+							if (!cancelled) emit.complete();
+						})
+						.catch((error) => {
+							if (!cancelled) emit.error(error);
+						});
+					return () => {
+						cancelled = true;
+					};
 				});
 			}
-			return true;
+
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "Unsupported restore backup input",
+			});
 		}),
 });

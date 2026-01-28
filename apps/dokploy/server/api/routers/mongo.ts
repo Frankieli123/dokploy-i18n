@@ -232,9 +232,20 @@ export const mongoRouter = createTRPCRouter({
 				});
 			}
 			return observable<string>((emit) => {
-				deployMongo(input.mongoId, (log) => {
-					emit.next(log);
-				});
+				let cancelled = false;
+				const safeNext = (log: unknown) => {
+					if (!cancelled) emit.next(String(log));
+				};
+				void deployMongo(input.mongoId, safeNext)
+					.then(() => {
+						if (!cancelled) emit.complete();
+					})
+					.catch((error) => {
+						if (!cancelled) emit.error(error);
+					});
+				return () => {
+					cancelled = true;
+				};
 			});
 		}),
 

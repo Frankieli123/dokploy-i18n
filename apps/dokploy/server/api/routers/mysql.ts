@@ -231,9 +231,20 @@ export const mysqlRouter = createTRPCRouter({
 			}
 
 			return observable<string>((emit) => {
-				deployMySql(input.mysqlId, (log) => {
-					emit.next(log);
-				});
+				let cancelled = false;
+				const safeNext = (log: unknown) => {
+					if (!cancelled) emit.next(String(log));
+				};
+				void deployMySql(input.mysqlId, safeNext)
+					.then(() => {
+						if (!cancelled) emit.complete();
+					})
+					.catch((error) => {
+						if (!cancelled) emit.error(error);
+					});
+				return () => {
+					cancelled = true;
+				};
 			});
 		}),
 	changeStatus: protectedProcedure

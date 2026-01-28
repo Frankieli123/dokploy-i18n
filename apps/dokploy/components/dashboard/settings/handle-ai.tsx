@@ -70,6 +70,7 @@ const baseAiSchema = z.object({
 	apiUrl: z.string().url(),
 	apiKey: z.string(),
 	model: z.string().min(1),
+	embeddingModel: z.string().optional(),
 	isEnabled: z.boolean(),
 });
 
@@ -83,11 +84,13 @@ const normalizeAiSchema = (data: BaseSchema): BaseSchema => {
 		.replace(/\/v2\/v2$/, "/v2")
 		.replace(/\/v1\/v1$/, "/v1");
 
+	const embeddingModel = data.embeddingModel?.trim() || undefined;
+
 	if (data.providerType === "gemini") {
-		return { ...data, apiUrl: fixed.replace(/\/v1beta$/, "") };
+		return { ...data, apiUrl: fixed.replace(/\/v1beta$/, ""), embeddingModel };
 	}
 
-	return { ...data, apiUrl: fixed };
+	return { ...data, apiUrl: fixed, embeddingModel };
 };
 
 const aiSchema = baseAiSchema.transform(normalizeAiSchema);
@@ -142,6 +145,7 @@ export const HandleAi = ({ aiId }: Props) => {
 			apiUrl: "https://api.openai.com/v1",
 			apiKey: "",
 			model: "",
+			embeddingModel: "",
 			isEnabled: true,
 		},
 	});
@@ -161,15 +165,16 @@ export const HandleAi = ({ aiId }: Props) => {
 				if (providerType === "gemini") return raw.replace(/\/v1beta$/, "");
 				return raw;
 			})();
-			form.reset({
-				name: data?.name ?? "",
-				providerType,
-				apiUrl: displayApiUrl,
-				apiKey: data?.apiKey ?? "",
-				model: data?.model ?? "",
-				isEnabled: data?.isEnabled ?? true,
-			});
-		}
+				form.reset({
+					name: data?.name ?? "",
+					providerType,
+					apiUrl: displayApiUrl,
+					apiKey: data?.apiKey ?? "",
+					model: data?.model ?? "",
+					embeddingModel: data?.embeddingModel ?? "",
+					isEnabled: data?.isEnabled ?? true,
+				});
+			}
 		setModelSearch("");
 		setModelPopoverOpen(false);
 	}, [aiId, form, data]);
@@ -200,6 +205,7 @@ export const HandleAi = ({ aiId }: Props) => {
 		try {
 			await mutateAsync({
 				...data,
+				embeddingModel: data.embeddingModel ?? null,
 				aiId: aiId || "",
 			});
 
@@ -432,11 +438,11 @@ export const HandleAi = ({ aiId }: Props) => {
 							</span>
 						)}
 
-						{!isLoadingServerModels && models && models.length > 0 && (
-							<FormField
-								control={form.control}
-								name="model"
-								render={({ field }) => {
+							{!isLoadingServerModels && models && models.length > 0 && (
+								<FormField
+									control={form.control}
+									name="model"
+									render={({ field }) => {
 									const selectedModel = models.find(
 										(m) => m.id === field.value,
 									);
@@ -523,13 +529,35 @@ export const HandleAi = ({ aiId }: Props) => {
 										</FormItem>
 									);
 								}}
-							/>
-						)}
+								/>
+							)}
 
-						<FormField
-							control={form.control}
-							name="isEnabled"
-							render={({ field }) => (
+							<FormField
+								control={form.control}
+								name="embeddingModel"
+								render={({ field }) => (
+									<FormItem>
+										<FormLabel>{t("settings.ai.form.embeddingModel.label")}</FormLabel>
+										<FormControl>
+											<Input
+												placeholder={t(
+													"settings.ai.form.embeddingModel.placeholder",
+												)}
+												{...field}
+											/>
+										</FormControl>
+										<FormDescription>
+											{t("settings.ai.form.embeddingModel.description")}
+										</FormDescription>
+										<FormMessage />
+									</FormItem>
+								)}
+							/>
+
+							<FormField
+								control={form.control}
+								name="isEnabled"
+								render={({ field }) => (
 								<FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
 									<div className="space-y-0.5">
 										<FormLabel className="text-base">

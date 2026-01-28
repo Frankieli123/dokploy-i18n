@@ -191,9 +191,20 @@ export const serverRouter = createTRPCRouter({
 					});
 				}
 				return observable<string>((emit) => {
-					serverSetup(input.serverId, (log) => {
-						emit.next(log);
-					});
+					let cancelled = false;
+					const safeNext = (log: unknown) => {
+						if (!cancelled) emit.next(String(log));
+					};
+					void serverSetup(input.serverId, safeNext)
+						.then(() => {
+							if (!cancelled) emit.complete();
+						})
+						.catch((error) => {
+							if (!cancelled) emit.error(error);
+						});
+					return () => {
+						cancelled = true;
+					};
 				});
 			} catch (error) {
 				throw error;

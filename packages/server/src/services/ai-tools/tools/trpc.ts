@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getTrpcBridge } from "../../ai/trpc-bridge";
+import { TrpcBridgeSubscriptionError, getTrpcBridge } from "../../ai/trpc-bridge";
 import { toolRegistry } from "../registry";
 import type { Tool } from "../types";
 
@@ -54,7 +54,7 @@ const trpcProcedureSearch: Tool<
 > = {
 	name: "trpc_procedure_search",
 	description:
-		"Search tRPC procedure names. Use before calling trpc_procedure_call.",
+		"Search tRPC procedure names. Prefer trpc_procedure_suggest to get examples immediately.",
 	category: "settings",
 	tags: ["trpc", "api", "procedure", "search"],
 	parameters: z.object({
@@ -98,7 +98,7 @@ const trpcProcedureSuggest: Tool<
 > = {
 	name: "trpc_procedure_suggest",
 	description:
-		"Search tRPC procedure names and include input examples for the top matches (search + describe in one call).",
+		"Search tRPC procedure names and include input examples for the top matches. Preferred over simple search.",
 	category: "settings",
 	tags: ["trpc", "api", "procedure", "suggest", "help", "schema"],
 	parameters: z.object({
@@ -194,7 +194,7 @@ const trpcProcedureCall: Tool<
 > = {
 	name: "trpc_procedure_call",
 	description:
-		"Call any tRPC procedure by name (runs as current user). Use trpc_procedure_describe first to get the input shape. Queries run without approval; mutations are approval-gated unless approvals are disabled for the conversation.",
+		"Call any tRPC procedure by name (runs as current user). Use trpc_procedure_describe first to get the input shape. Queries run without approval; mutations are approval-gated unless approvals are disabled for the conversation. Subscriptions collect emitted values until completion/timeout and return them as an object.",
 	category: "settings",
 	tags: ["trpc", "api", "procedure", "call", "invoke"],
 	parameters: z.object({
@@ -229,12 +229,56 @@ const trpcProcedureCall: Tool<
 					userId: ctx.userId,
 				},
 			});
+
+			if (
+				result &&
+				typeof result === "object" &&
+				(result as { type?: unknown }).type === "subscription"
+			) {
+				const sub = result as {
+					events?: unknown[];
+					truncated?: boolean;
+					truncatedReason?: string;
+				};
+				const count = Array.isArray(sub.events) ? sub.events.length : 0;
+				const truncatedInfo = sub.truncated
+					? ` (truncated: ${sub.truncatedReason ?? "limit"})`
+					: "";
+				return {
+					success: true,
+					message: `tRPC subscription "${params.procedureName}" completed. Collected ${count} event(s)${truncatedInfo}.`,
+					data: result,
+				};
+			}
+
 			return {
 				success: true,
 				message: `tRPC procedure "${params.procedureName}" executed`,
 				data: result,
 			};
 		} catch (error) {
+			const isSubscriptionError =
+				error instanceof TrpcBridgeSubscriptionError ||
+				(!!error &&
+					typeof error === "object" &&
+					(error as { name?: unknown }).name === "TrpcBridgeSubscriptionError" &&
+					Array.isArray((error as { events?: unknown }).events));
+
+			if (isSubscriptionError) {
+				const events = Array.isArray((error as { events?: unknown }).events)
+					? (error as { events: unknown[] }).events
+					: [];
+				return {
+					success: false,
+					message: `tRPC procedure "${params.procedureName}" failed`,
+					error: error instanceof Error ? error.message : String(error),
+					data: {
+						type: "subscription",
+						events,
+					},
+				};
+			}
+
 			return {
 				success: false,
 				message: `tRPC procedure "${params.procedureName}" failed`,

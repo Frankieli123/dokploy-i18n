@@ -236,9 +236,20 @@ export const postgresRouter = createTRPCRouter({
 				});
 			}
 			return observable<string>((emit) => {
-				deployPostgres(input.postgresId, (log) => {
-					emit.next(log);
-				});
+				let cancelled = false;
+				const safeNext = (log: unknown) => {
+					if (!cancelled) emit.next(String(log));
+				};
+				void deployPostgres(input.postgresId, safeNext)
+					.then(() => {
+						if (!cancelled) emit.complete();
+					})
+					.catch((error) => {
+						if (!cancelled) emit.error(error);
+					});
+				return () => {
+					cancelled = true;
+				};
 			});
 		}),
 

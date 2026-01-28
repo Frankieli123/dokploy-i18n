@@ -5,6 +5,7 @@ import {
 	getTrpcBridge,
 	setTrpcBridge,
 	type TrpcBridge,
+	TrpcBridgeSubscriptionError,
 	type TrpcProcedureDescription,
 	type TrpcProcedureType,
 	type TrpcRouterSummary,
@@ -15,6 +16,44 @@ import { z } from "zod";
 let cachedCallerHeaders: Record<string, string> | null = null;
 let cachedCallerHeadersAt = 0;
 const CALLER_HEADERS_TTL_MS = 60_000;
+
+const TRPC_SUBSCRIPTION_MAX_EVENTS = Math.min(
+	10_000,
+	Math.max(
+		100,
+		Number(process.env.DOKPLOY_TRPC_SUBSCRIPTION_MAX_EVENTS ?? "2000") || 2000,
+	),
+);
+const TRPC_SUBSCRIPTION_MAX_CHARS = Math.min(
+	2_000_000,
+	Math.max(
+		10_000,
+		Number(process.env.DOKPLOY_TRPC_SUBSCRIPTION_MAX_CHARS ?? "200000") || 200000,
+	),
+);
+const TRPC_SUBSCRIPTION_TIMEOUT_MS = Math.min(
+	6 * 60 * 60 * 1000,
+	Math.max(
+		10 * 1000,
+		Number(process.env.DOKPLOY_TRPC_SUBSCRIPTION_TIMEOUT_MS ?? "1800000") ||
+			1800000,
+	),
+);
+
+function isObservableLike(value: unknown): value is {
+	subscribe: (observer: {
+		next?: (value: unknown) => void;
+		error?: (error: unknown) => void;
+		complete?: () => void;
+	}) => { unsubscribe: () => void };
+} {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"subscribe" in value &&
+		typeof (value as { subscribe?: unknown }).subscribe === "function"
+	);
+}
 
 async function getCallerHeaders(): Promise<Record<string, string>> {
 	const now = Date.now();
@@ -300,10 +339,6 @@ async function callProcedure(params: {
 	ctx: { organizationId: string; userId: string };
 }): Promise<unknown> {
 	const type = getProcedureType(params.appRouter, params.procedureName);
-	if (type === "subscription") {
-		throw new Error("Subscription procedures are not supported via trpc_procedure_call");
-	}
-
 	const { session, user } = await buildCallerContext(params.ctx);
 	const headers = await getCallerHeaders();
 	const caller = params.appRouter.createCaller({
@@ -323,7 +358,119 @@ async function callProcedure(params: {
 	}
 	const fn = current?.[parts.at(-1) as string];
 	if (typeof fn !== "function") throw new Error("Procedure not callable");
-	return await fn(params.input);
+
+	const result = await fn(params.input);
+	if (type !== "subscription") return result;
+	if (!isObservableLike(result)) return result;
+
+	const startedAt = Date.now();
+	const events: unknown[] = [];
+	let totalChars = 0;
+	let truncated = false;
+	let truncatedReason: "max_events" | "max_chars" | "timeout" | null = null;
+
+	const output = await new Promise<{
+		type: "subscription";
+		events: unknown[];
+		truncated: boolean;
+		truncatedReason?: string;
+		durationMs: number;
+	}>((resolve, reject) => {
+		let finished = false;
+		let sub: { unsubscribe: () => void } | null = null;
+
+		const finish = (params: {
+			outcome: "completed" | "truncated" | "timeout" | "error";
+			error?: unknown;
+		}) => {
+			if (finished) return;
+			finished = true;
+			if (timer) clearTimeout(timer);
+			try {
+				sub?.unsubscribe();
+			} catch {}
+
+			const durationMs = Date.now() - startedAt;
+			if (params.outcome === "error") {
+				const message =
+					params.error instanceof Error
+						? params.error.message
+						: "Subscription failed";
+				reject(
+					new TrpcBridgeSubscriptionError(message, {
+						events,
+						cause: params.error,
+					}),
+				);
+				return;
+			}
+
+			resolve({
+				type: "subscription",
+				events,
+				truncated,
+				...(truncatedReason ? { truncatedReason } : {}),
+				durationMs,
+			});
+		};
+
+		const timer = setTimeout(() => {
+			truncated = true;
+			truncatedReason = "timeout";
+			finish({ outcome: "timeout" });
+		}, TRPC_SUBSCRIPTION_TIMEOUT_MS);
+
+		try {
+			sub = result.subscribe({
+				next(value) {
+					if (finished) return;
+
+					if (!truncated) {
+						events.push(value);
+						if (events.length >= TRPC_SUBSCRIPTION_MAX_EVENTS) {
+							truncated = true;
+							truncatedReason = "max_events";
+							finish({ outcome: "truncated" });
+							return;
+						}
+
+						if (typeof value === "string") {
+							totalChars += value.length;
+						} else if (
+							typeof value === "number" ||
+							typeof value === "boolean" ||
+							value == null
+						) {
+							totalChars += String(value).length;
+						} else {
+							try {
+								totalChars += JSON.stringify(value).length;
+							} catch {
+								totalChars += 0;
+							}
+						}
+
+						if (totalChars >= TRPC_SUBSCRIPTION_MAX_CHARS) {
+							truncated = true;
+							truncatedReason = "max_chars";
+							finish({ outcome: "truncated" });
+							return;
+						}
+					}
+				},
+				error(error) {
+					finish({ outcome: "error", error });
+				},
+				complete() {
+					finish({ outcome: "completed" });
+				},
+			});
+		} catch (error) {
+			finish({ outcome: "error", error });
+		}
+	});
+
+	return output;
 }
 
 export function registerTrpcBridge(appRouter: any) {

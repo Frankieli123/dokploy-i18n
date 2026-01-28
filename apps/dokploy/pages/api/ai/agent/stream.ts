@@ -111,6 +111,7 @@ export default async function handler(
 
 	let runId = "";
 	let runFinishedAtMs: number | null = null;
+	let pollDelay = 800;
 
 	try {
 		const run = await startAgentRun({
@@ -132,10 +133,12 @@ export default async function handler(
 				limit: 50,
 			});
 
+			let sawNewMessage = false;
 			for (const msg of messages) {
 				if (seenMessageIds.has(msg.messageId)) continue;
 				seenMessageIds.add(msg.messageId);
 				cursorCreatedAt = msg.createdAt;
+				sawNewMessage = true;
 
 				const rawContent = typeof msg.content === "string" ? msg.content : "";
 				let payload: unknown = null;
@@ -173,12 +176,14 @@ export default async function handler(
 				}
 			}
 
+			pollDelay = sawNewMessage ? 800 : Math.min(Math.round(pollDelay * 1.5), 4000);
+
 			if (runFinishedAtMs && Date.now() - runFinishedAtMs > 5000) {
 				writeSseEvent(res, "done", { conversationId, runId });
 				return;
 			}
 
-			await sleep(800, abortController.signal);
+			await sleep(pollDelay, abortController.signal);
 		}
 	} catch (error) {
 		writeSseEvent(res, "error", {

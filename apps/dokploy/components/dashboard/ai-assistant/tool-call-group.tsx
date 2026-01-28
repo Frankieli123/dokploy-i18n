@@ -230,7 +230,7 @@ export function ToolGroup({
 			</div>
 
 			{isOpen && (
-				<div className="border-t bg-muted/10 divide-y divide-border/50 max-w-full min-w-0 overflow-hidden">
+				<div className="border-t bg-muted/10 divide-y divide-border/50 max-w-full min-w-0 max-h-[40vh] overflow-y-auto overflow-x-hidden">
 					{orderedToolCalls.map((tc) => {
 						const effectiveExecutionId = getEffectiveExecutionId(tc);
 						const status =

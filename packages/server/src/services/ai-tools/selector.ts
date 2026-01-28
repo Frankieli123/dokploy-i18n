@@ -38,6 +38,7 @@ export function selectRelevantTools(
 
 	const coreToolNames = [
 		"projects_inventory",
+		"trpc_procedure_suggest",
 		"trpc_procedure_search",
 		"trpc_procedure_describe",
 		"trpc_procedure_call",

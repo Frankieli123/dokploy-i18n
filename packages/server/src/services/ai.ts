@@ -1,6 +1,7 @@
 import { db } from "@dokploy/server/db";
 import {
 	ai,
+	aiAgentPlaybooks,
 	aiConversations,
 	aiMessages,
 	aiRuns,
@@ -16,13 +17,20 @@ import {
 	streamText,
 	tool,
 } from "ai";
-import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { IS_CLOUD } from "../constants";
 import { findOrganizationById } from "./admin";
-import { orchestrateRun } from "./ai/agent/orchestrator";
 import { getTrpcBridge } from "./ai/trpc-bridge";
+import {
+	PLAYBOOK_DEFAULT_TOP_K,
+	PLAYBOOK_HASH_DIMENSIONS,
+	PLAYBOOK_RETENTION_DAYS,
+	hashTextToUnitVector,
+	tryEmbedText,
+} from "./ai/playbook-memory";
 import {
 	initializeTools,
 	type Tool,
@@ -1261,6 +1269,7 @@ type ChatUsage = {
 
 function buildChatTools(params: {
 	conversationId: string;
+	runId?: string;
 	toolContext: ToolContext;
 	messageId?: string;
 	toolApprovalsDisabled?: boolean;
@@ -1562,13 +1571,14 @@ function buildChatTools(params: {
 						}
 					}
 
-				const execution = await createToolExecution({
-					conversationId: params.conversationId,
-					messageId: params.messageId,
-					toolName: t.name,
-					parameters: validatedParams,
-					requiresApproval,
-				});
+					const execution = await createToolExecution({
+						conversationId: params.conversationId,
+						runId: params.runId,
+						messageId: params.messageId,
+						toolName: t.name,
+						parameters: validatedParams,
+						requiresApproval,
+					});
 
 				if (requiresApproval) {
 					return {
@@ -2256,7 +2266,21 @@ export const chat = async ({
 		});
 	}
 
-	// Initialize tools on first use
+	if (aiSettings.organizationId !== organizationId) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You don't have access to this AI configuration",
+		});
+	}
+
+	const conversation = await getConversationById(conversationId);
+	if (conversation.organizationId !== organizationId) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You don't have access to this conversation",
+		});
+	}
+
 	initializeTools();
 
 	// Save user message
@@ -2276,7 +2300,7 @@ export const chat = async ({
 	const history = await getMessages({ conversationId, limit: 20 });
 
 	// Build messages array for AI
-	const messages: CoreMessage[] = history
+	let messages: CoreMessage[] = history
 		.map((msg) => {
 			if (msg.role !== "user" && msg.role !== "assistant") return null;
 			const content = (msg.content || "").trim();
@@ -2300,16 +2324,26 @@ export const chat = async ({
 		})
 		.filter(Boolean) as CoreMessage[];
 
-	const toolExecutionContextMessage = await buildToolExecutionContextMessage({
-		conversationId,
-	});
-
 	const provider = selectAIProvider(aiSettings);
 	const model = provider(aiSettings.model);
 
-		// Get system prompt with context
-		const conversation = await getConversationById(conversationId);
-		const baseSystemPrompt = buildSystemPrompt(
+	let playbookPrompt = "";
+	try {
+		const playbooks = await findRelevantPlaybooks({
+			organizationId: conversation.organizationId,
+			aiSettings: {
+				apiUrl: aiSettings.apiUrl,
+				apiKey: aiSettings.apiKey,
+				providerType: aiSettings.providerType,
+				embeddingModel: aiSettings.embeddingModel,
+			},
+			queryText: message,
+		});
+		playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
+	} catch {}
+
+	const baseSystemPrompt = [
+		buildSystemPrompt(
 			conversation,
 			buildMetaToolPromptInfo().concat(
 				buildToolCatalogPromptInfo({
@@ -2318,11 +2352,22 @@ export const chat = async ({
 					serverId: conversation.serverId || undefined,
 				}),
 			),
-		);
-	const systemPrompt =
-		toolExecutionContextMessage.trim().length > 0
-			? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
-			: baseSystemPrompt;
+		),
+		playbookPrompt,
+	]
+		.filter((s) => typeof s === "string" && s.trim().length > 0)
+		.join("\n\n");
+	let systemPrompt = baseSystemPrompt;
+	const refreshSystemPrompt = async () => {
+		const toolExecutionContextMessage = await buildToolExecutionContextMessage({
+			conversationId,
+		});
+		systemPrompt =
+			toolExecutionContextMessage.trim().length > 0
+				? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
+				: baseSystemPrompt;
+	};
+	await refreshSystemPrompt();
 
 	// Build tool context
 	const toolContext: ToolContext = {
@@ -2332,13 +2377,14 @@ export const chat = async ({
 		serverId: conversation.serverId || undefined,
 	};
 
+	const toolApprovalsDisabled = getToolApprovalsDisabledFromMetadata(
+		conversation.metadata,
+	);
 	const tools = buildChatTools({
 		conversationId,
 		toolContext,
 		messageId: userMessage.messageId,
-		toolApprovalsDisabled: getToolApprovalsDisabledFromMetadata(
-			conversation.metadata,
-		),
+		toolApprovalsDisabled,
 	});
 
 	const initialSystemMode = getInitialSystemMode(aiSettings);
@@ -2433,87 +2479,159 @@ export const chat = async ({
 		});
 	};
 
-	let result: Awaited<ReturnType<typeof generateText>>;
-	try {
-		result = await runGenerate(true, initialSystemMode);
-	} catch (error) {
-		const aborted = false;
-		if (isSystemMessagePlacementError(error) && !aborted) {
-			try {
-				result = await runGenerate(true, "inline");
-			} catch (retryError) {
-				if (isMissingToolUseIdError(retryError)) {
-					result = await runGenerate(false, "inline");
-				} else {
-					throw retryError;
-				}
-			}
-		} else if (isMissingToolUseIdError(error) && !aborted) {
-			try {
-				result = await runGenerate(false, initialSystemMode);
-			} catch (retryError) {
-				if (isSystemMessagePlacementError(retryError)) {
-					result = await runGenerate(false, "inline");
-				} else {
-					throw retryError;
-				}
-			}
-		} else throw error;
-	}
+	type GeneratedTurn = Awaited<ReturnType<typeof generateText>>;
 
-	const retryable = getRetryableToolCallFailures(
-		(result as unknown as { toolResults?: unknown }).toolResults,
-	);
-	if (isLikelyActionRequest(message)) {
-		const needsToolKickoff =
-			!Array.isArray(result.toolCalls) || result.toolCalls.length === 0;
-			const safeSuccessTools = new Set([
-				"trpc_procedure_search",
-				"trpc_procedure_suggest",
-				"trpc_procedure_describe",
-				"tool_search",
-				"tool_suggest",
-				"tool_describe",
-			]);
-		const onlySafeSuccesses = retryable.successfulTools.every((t) =>
-			safeSuccessTools.has(t),
-		);
-		const needsParamRepair =
-			retryable.failures.length > 0 &&
-			!retryable.hasPendingApproval &&
-			(retryable.successfulTools.length === 0 || onlySafeSuccesses);
+	const buildAgentContinuePrompt = () => {
+		const clipped = safeTruncateString(message.trim(), 500);
+		return [
+			"Continue the task based on the conversation so far.",
+			`User request: ${clipped}`,
+			"",
+			"Rules:",
+			"- Use the recent tool execution context to avoid repeating completed work.",
+			"- If more actions are required, call tools.",
+			"- If the task is complete, provide a concise final confirmation and DO NOT call any tools.",
+			'- Never ask the user to "wait" or say you are still "processing".',
+		].join("\n");
+	};
 
-		if (needsToolKickoff || needsParamRepair) {
-			const hint = deriveTrpcSearchQueryHint(message);
-			const hintForPrompt = hint
-				.replaceAll("\\", "\\\\")
-				.replaceAll("\"", "\\\"")
-				.replaceAll("\n", " ")
-				.replaceAll("\r", " ");
-			const failureDetails = needsParamRepair
-				? safeJsonForPrompt(retryable.failures, 2500)
-				: "";
-			const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_suggest\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_call as needed (or call tool_call with toolName=\"<router>.<procedure>\"). Use trpc_procedure_describe only if you still need schema details.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
-			try {
-				result = await runGenerate(
-					true,
-					initialSystemMode,
-					`${systemPrompt}${extra}`,
-				);
-			} catch {}
+	const runGenerateWithFallback = async (
+		overrideSystemPrompt?: string,
+	): Promise<GeneratedTurn> => {
+		let result: GeneratedTurn;
+		try {
+			result = await runGenerate(true, initialSystemMode, overrideSystemPrompt);
+		} catch (error) {
+			const aborted = false;
+			if (isSystemMessagePlacementError(error) && !aborted) {
+				try {
+					result = await runGenerate(true, "inline", overrideSystemPrompt);
+				} catch (retryError) {
+					if (isMissingToolUseIdError(retryError)) {
+						result = await runGenerate(false, "inline", overrideSystemPrompt);
+					} else {
+						throw retryError;
+					}
+				}
+			} else if (isMissingToolUseIdError(error) && !aborted) {
+				try {
+					result = await runGenerate(false, initialSystemMode, overrideSystemPrompt);
+				} catch (retryError) {
+					if (isSystemMessagePlacementError(retryError)) {
+						result = await runGenerate(false, "inline", overrideSystemPrompt);
+					} else {
+						throw retryError;
+					}
+				}
+			} else throw error;
 		}
+		return result;
+	};
+
+	const safeSuccessTools = new Set([
+		"trpc_procedure_search",
+		"trpc_procedure_suggest",
+		"trpc_procedure_describe",
+		"tool_search",
+		"tool_suggest",
+		"tool_describe",
+	]);
+	const isSafeSuccessTool = (toolName: string) => {
+		if (safeSuccessTools.has(toolName)) return true;
+		const t = toolRegistry.get(toolName);
+		return !!t && t.riskLevel === "low" && !t.requiresApproval;
+	};
+
+	const agenticEnabled = toolApprovalsDisabled && isLikelyActionRequest(message);
+	const maxTurns = agenticEnabled ? 4 : 1;
+	const maxPlatformToolCalls = agenticEnabled ? 60 : 0;
+
+	let finalText = "";
+	const allToolCalls: NonNullable<GeneratedTurn["toolCalls"]> = [];
+	const allToolResults: unknown[] = [];
+	const aggregatedUsage: { inputTokens?: number; outputTokens?: number } = {
+		inputTokens: 0,
+		outputTokens: 0,
+	};
+	let platformToolCalls = 0;
+
+	for (let turn = 0; turn < maxTurns; turn++) {
+		await refreshSystemPrompt();
+		let result = await runGenerateWithFallback(systemPrompt);
+
+		if (isLikelyActionRequest(message)) {
+			const toolResults = (result as unknown as { toolResults?: unknown })
+				.toolResults;
+			const retryable = getRetryableToolCallFailures(toolResults);
+			const needsToolKickoff = !Array.isArray(result.toolCalls)
+				? true
+				: !result.toolCalls.some((tc) => tc.toolName === "tool_call");
+			const onlySafeSuccesses =
+				retryable.successfulTools.length === 0 ||
+				retryable.successfulTools.every(isSafeSuccessTool);
+			const needsParamRepair =
+				retryable.failures.length > 0 &&
+				!retryable.hasPendingApproval &&
+				onlySafeSuccesses;
+
+			if ((turn === 0 && needsToolKickoff) || needsParamRepair) {
+				const hint = deriveTrpcSearchQueryHint(message);
+				const hintForPrompt = hint
+					.replaceAll("\\", "\\\\")
+					.replaceAll("\"", "\\\"")
+					.replaceAll("\n", " ")
+					.replaceAll("\r", " ");
+				const failureDetails = needsParamRepair
+					? safeJsonForPrompt(retryable.failures, 2500)
+					: "";
+				const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_suggest\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_call as needed (or call tool_call with toolName=\"<router>.<procedure>\"). Use trpc_procedure_describe only if you still need schema details.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
+				try {
+					result = await runGenerateWithFallback(`${systemPrompt}${extra}`);
+				} catch {}
+			}
+		}
+
+		finalText += typeof result.text === "string" ? result.text : "";
+		if (Array.isArray(result.toolCalls)) allToolCalls.push(...result.toolCalls);
+		const toolResults = (result as unknown as { toolResults?: unknown }).toolResults;
+		if (Array.isArray(toolResults)) allToolResults.push(...toolResults);
+		aggregatedUsage.inputTokens =
+			(aggregatedUsage.inputTokens ?? 0) + (result.usage?.inputTokens ?? 0);
+		aggregatedUsage.outputTokens =
+			(aggregatedUsage.outputTokens ?? 0) + (result.usage?.outputTokens ?? 0);
+
+		if (!agenticEnabled || turn >= maxTurns - 1) break;
+
+		const retryable = getRetryableToolCallFailures(toolResults);
+		const platformThisTurn = Array.isArray(result.toolCalls)
+			? result.toolCalls.filter((tc) => tc.toolName === "tool_call").length
+			: 0;
+		platformToolCalls += platformThisTurn;
+
+		if (retryable.hasPendingApproval) break;
+		if (platformThisTurn <= 0) break;
+		if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls)
+			break;
+
+		const assistantSnippet = safeTruncateString(
+			(typeof result.text === "string" ? result.text : "").trim(),
+			4000,
+		);
+		if (assistantSnippet.length > 0) {
+			messages = messages.concat({ role: "assistant", content: assistantSnippet });
+		}
+		messages = messages.concat({ role: "user", content: buildAgentContinuePrompt() });
 	}
 
-	let finalText = typeof result.text === "string" ? result.text : "";
 	if (
 		finalText.trim().length === 0 &&
-		Array.isArray(result.toolCalls) &&
-		result.toolCalls.length > 0
+		Array.isArray(allToolCalls) &&
+		allToolCalls.length > 0
 	) {
 		const summary = await generateToolOutcomeSummary({
 			model,
 			userMessage: message,
-			toolCalls: result.toolCalls.map((tc) => ({
+			toolCalls: allToolCalls.map((tc) => ({
 				id: tc.toolCallId,
 				name: tc.toolName,
 				arguments:
@@ -2521,31 +2639,31 @@ export const chat = async ({
 					(tc as unknown as { args?: unknown; input?: unknown }).input ??
 					{},
 			})),
-			toolResults: Array.isArray(result.toolResults)
-				? (result.toolResults as unknown[]).map((tr) => {
-						const toolCallId =
-							(tr as { toolCallId?: unknown }).toolCallId ??
-							(tr as { id?: unknown }).id;
-						const toolName =
-							(tr as { toolName?: unknown }).toolName ??
-							(tr as { name?: unknown }).name;
-						const resultValue =
-							(tr as { result?: unknown }).result ??
-							(tr as { output?: unknown }).output ??
-							tr;
-						return {
-							toolCallId: typeof toolCallId === "string" ? toolCallId : "",
-							toolName: typeof toolName === "string" ? toolName : "",
-							result: resultValue,
-						};
-					})
-				: [],
+			toolResults: allToolResults
+				.map((tr) => {
+					const toolCallId =
+						(tr as { toolCallId?: unknown }).toolCallId ??
+						(tr as { id?: unknown }).id;
+					const toolName =
+						(tr as { toolName?: unknown }).toolName ??
+						(tr as { name?: unknown }).name;
+					const resultValue =
+						(tr as { result?: unknown }).result ??
+						(tr as { output?: unknown }).output ??
+						tr;
+					return {
+						toolCallId: typeof toolCallId === "string" ? toolCallId : "",
+						toolName: typeof toolName === "string" ? toolName : "",
+						result: resultValue,
+					};
+				})
+				.slice(0, 25),
 		});
 		finalText = summary || finalText;
 	}
 	if (
 		finalText.trim().length === 0 &&
-		(!Array.isArray(result.toolCalls) || result.toolCalls.length === 0)
+		(!Array.isArray(allToolCalls) || allToolCalls.length === 0)
 	) {
 		finalText = buildEmptyModelOutputFallback(message);
 	}
@@ -2553,8 +2671,7 @@ export const chat = async ({
 	// Save assistant response
 	const executionIdByToolCallId = new Map<string, string>();
 	const invokedToolNameByToolCallId = new Map<string, string>();
-	if (Array.isArray(result.toolResults)) {
-		for (const tr of result.toolResults as unknown[]) {
+	for (const tr of allToolResults) {
 			if (!tr || typeof tr !== "object") continue;
 			const resultValue = (tr as { result?: unknown }).result;
 			if (!resultValue || typeof resultValue !== "object") continue;
@@ -2592,10 +2709,9 @@ export const chat = async ({
 					executionIdByToolCallId.set(toolCallIdKey, picked.trim());
 				}
 			}
-		}
 	}
 
-	const toolCallsToPersist = (result.toolCalls ?? [])
+	const toolCallsToPersist = (allToolCalls ?? [])
 		.filter((tc) => tc.toolName === "tool_call")
 		.map((tc) => {
 			const rawArgs =
@@ -2632,8 +2748,8 @@ export const chat = async ({
 		role: "assistant",
 		content: finalText,
 		toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : undefined,
-		promptTokens: result.usage?.inputTokens,
-		completionTokens: result.usage?.outputTokens,
+		promptTokens: aggregatedUsage.inputTokens,
+		completionTokens: aggregatedUsage.outputTokens,
 	});
 
 	scheduleConversationSummaryUpdate({
@@ -2658,17 +2774,18 @@ export const chat = async ({
 		}
 	}
 
-	const usage: ChatUsage | undefined = result.usage
-		? {
-				inputTokens: result.usage.inputTokens,
-				outputTokens: result.usage.outputTokens,
-			}
+	const usage: ChatUsage | undefined =
+		aggregatedUsage.inputTokens != null || aggregatedUsage.outputTokens != null
+			? {
+					inputTokens: aggregatedUsage.inputTokens,
+					outputTokens: aggregatedUsage.outputTokens,
+				}
 		: undefined;
 
 	return {
 		message: assistantMessage,
 		usage,
-		toolResults: (result.toolResults ?? []) as unknown,
+		toolResults: allToolResults as unknown,
 	};
 };
 
@@ -2730,7 +2847,7 @@ export const chatStream = async (
 	}
 
 	const history = await getMessages({ conversationId, limit: 20 });
-	const messages: CoreMessage[] = history
+	let messages: CoreMessage[] = history
 		.map((msg) => {
 			if (msg.role !== "user" && msg.role !== "assistant") return null;
 			const content = (msg.content ?? "").trim();
@@ -2754,26 +2871,49 @@ export const chatStream = async (
 		})
 		.filter(Boolean) as CoreMessage[];
 
-	const toolExecutionContextMessage = await buildToolExecutionContextMessage({
-		conversationId,
-	});
-
 		const provider = selectAIProvider(aiSettings);
 		const model = provider(aiSettings.model);
-		const baseSystemPrompt = buildSystemPrompt(
-			conversation,
-			buildMetaToolPromptInfo().concat(
-				buildToolCatalogPromptInfo({
-					userMessage: message,
-					projectId: conversation.projectId || undefined,
-					serverId: conversation.serverId || undefined,
-				}),
+		let playbookPrompt = "";
+		try {
+			const playbooks = await findRelevantPlaybooks({
+				organizationId: conversation.organizationId,
+				aiSettings: {
+					apiUrl: aiSettings.apiUrl,
+					apiKey: aiSettings.apiKey,
+					providerType: aiSettings.providerType,
+					embeddingModel: aiSettings.embeddingModel,
+				},
+				queryText: message,
+			});
+			playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
+		} catch {}
+
+		const baseSystemPrompt = [
+			buildSystemPrompt(
+				conversation,
+				buildMetaToolPromptInfo().concat(
+					buildToolCatalogPromptInfo({
+						userMessage: message,
+						projectId: conversation.projectId || undefined,
+						serverId: conversation.serverId || undefined,
+					}),
+				),
 			),
-		);
-	const systemPrompt =
-		toolExecutionContextMessage.trim().length > 0
-			? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
-			: baseSystemPrompt;
+			playbookPrompt,
+		]
+			.filter((s) => typeof s === "string" && s.trim().length > 0)
+			.join("\n\n");
+	let systemPrompt = baseSystemPrompt;
+	const refreshSystemPrompt = async () => {
+		const toolExecutionContextMessage = await buildToolExecutionContextMessage({
+			conversationId,
+		});
+		systemPrompt =
+			toolExecutionContextMessage.trim().length > 0
+				? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
+				: baseSystemPrompt;
+	};
+	await refreshSystemPrompt();
 
 	const toolContext: ToolContext = {
 		organizationId,
@@ -2782,13 +2922,14 @@ export const chatStream = async (
 		serverId: conversation.serverId || undefined,
 	};
 
+	const toolApprovalsDisabled = getToolApprovalsDisabledFromMetadata(
+		conversation.metadata,
+	);
 	const tools = buildChatTools({
 		conversationId,
 		toolContext,
 		messageId: userMessage.messageId,
-		toolApprovalsDisabled: getToolApprovalsDisabledFromMetadata(
-			conversation.metadata,
-		),
+		toolApprovalsDisabled,
 	});
 
 	const initialSystemMode = getInitialSystemMode(aiSettings);
@@ -3054,84 +3195,176 @@ export const chatStream = async (
 		return { fullText, toolCalls, toolResults, usage, streamError };
 	};
 
-	let streamed: Awaited<ReturnType<typeof runStream>>;
-	try {
-		streamed = await runStream(true, initialSystemMode);
-	} catch (error) {
-		const aborted = options.abortSignal?.aborted;
-		if (!aborted && isSystemMessagePlacementError(error)) {
-			try {
-				streamed = await runStream(true, "inline");
-			} catch (retryError) {
-				if (!aborted && isMissingToolUseIdError(retryError)) {
-					streamed = await runStream(false, "inline");
-				} else {
-					throw retryError;
-				}
-			}
-		} else if (!aborted && isMissingToolUseIdError(error)) {
-			try {
-				streamed = await runStream(false, initialSystemMode);
-			} catch (retryError) {
-				if (!aborted && isSystemMessagePlacementError(retryError)) {
-					streamed = await runStream(false, "inline");
-				} else {
-					throw retryError;
-				}
-			}
-		} else throw error;
-	}
+	type StreamedTurn = Awaited<ReturnType<typeof runStream>>;
 
-	if (!options.abortSignal?.aborted && isLikelyActionRequest(message)) {
-		const retryable = getRetryableToolCallFailures(streamed.toolResults);
-		const needsToolKickoff = streamed.toolCalls.length === 0;
-			const safeSuccessTools = new Set([
-				"trpc_procedure_search",
-				"trpc_procedure_suggest",
-				"trpc_procedure_describe",
-				"tool_search",
-				"tool_suggest",
-				"tool_describe",
-			]);
-		const onlySafeSuccesses = retryable.successfulTools.every((t) =>
-			safeSuccessTools.has(t),
-		);
-		const needsParamRepair =
-			retryable.failures.length > 0 &&
-			!retryable.hasPendingApproval &&
-			(retryable.successfulTools.length === 0 || onlySafeSuccesses);
+	const buildAgentContinuePrompt = () => {
+		const clipped = safeTruncateString(message.trim(), 500);
+		return [
+			"Continue the task based on the conversation so far.",
+			`User request: ${clipped}`,
+			"",
+			"Rules:",
+			"- Use the recent tool execution context to avoid repeating completed work.",
+			"- If more actions are required, call tools.",
+			"- If the task is complete, provide a concise final confirmation and DO NOT call any tools.",
+			'- Never ask the user to "wait" or say you are still "processing".',
+		].join("\n");
+	};
 
-		if (needsToolKickoff || needsParamRepair) {
-			const hint = deriveTrpcSearchQueryHint(message);
-			const hintForPrompt = hint
-				.replaceAll("\\", "\\\\")
-				.replaceAll("\"", "\\\"")
-				.replaceAll("\n", " ")
-				.replaceAll("\r", " ");
-			const failureDetails = needsParamRepair
-				? safeJsonForPrompt(retryable.failures, 2500)
-				: "";
-			const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_suggest\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_call as needed (or call tool_call with toolName=\"<router>.<procedure>\"). Use trpc_procedure_describe only if you still need schema details.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
-			try {
-				streamed = await runStream(
-					true,
-					initialSystemMode,
-					`${systemPrompt}${extra}`,
-				);
-			} catch {}
+	const runStreamWithFallback = async (
+		overrideSystemPrompt?: string,
+	): Promise<StreamedTurn> => {
+		let streamed: StreamedTurn;
+		try {
+			streamed = await runStream(true, initialSystemMode, overrideSystemPrompt);
+		} catch (error) {
+			const aborted = options.abortSignal?.aborted;
+			if (!aborted && isSystemMessagePlacementError(error)) {
+				try {
+					streamed = await runStream(true, "inline", overrideSystemPrompt);
+				} catch (retryError) {
+					if (!aborted && isMissingToolUseIdError(retryError)) {
+						streamed = await runStream(false, "inline", overrideSystemPrompt);
+					} else {
+						throw retryError;
+					}
+				}
+			} else if (!aborted && isMissingToolUseIdError(error)) {
+				try {
+					streamed = await runStream(false, initialSystemMode, overrideSystemPrompt);
+				} catch (retryError) {
+					if (!aborted && isSystemMessagePlacementError(retryError)) {
+						streamed = await runStream(false, "inline", overrideSystemPrompt);
+					} else {
+						throw retryError;
+					}
+				}
+			} else throw error;
 		}
+		return streamed;
+	};
+
+	const safeSuccessTools = new Set([
+		"trpc_procedure_search",
+		"trpc_procedure_suggest",
+		"trpc_procedure_describe",
+		"tool_search",
+		"tool_suggest",
+		"tool_describe",
+	]);
+	const isSafeSuccessTool = (toolName: string) => {
+		if (safeSuccessTools.has(toolName)) return true;
+		const t = toolRegistry.get(toolName);
+		return !!t && t.riskLevel === "low" && !t.requiresApproval;
+	};
+
+	const agenticEnabled = toolApprovalsDisabled && isLikelyActionRequest(message);
+	const maxTurns = agenticEnabled ? 4 : 1;
+	const maxPlatformToolCalls = agenticEnabled ? 60 : 0;
+
+	let fullText = "";
+	const allToolCalls: StreamedTurn["toolCalls"] = [];
+	const allToolResults: StreamedTurn["toolResults"] = [];
+	const aggregatedUsage: { promptTokens?: number; completionTokens?: number } = {
+		promptTokens: 0,
+		completionTokens: 0,
+	};
+		let streamError: string | null = null;
+		let platformToolCalls = 0;
+
+		const likelyActionRequest = isLikelyActionRequest(message);
+
+		for (let turn = 0; turn < maxTurns; turn++) {
+			if (options.abortSignal?.aborted) break;
+
+			await refreshSystemPrompt();
+			const turnStreams: StreamedTurn[] = [];
+			let streamed = await runStreamWithFallback(systemPrompt);
+			turnStreams.push(streamed);
+
+			if (!options.abortSignal?.aborted && likelyActionRequest) {
+				const retryable = getRetryableToolCallFailures(streamed.toolResults);
+				const needsToolKickoff = streamed.toolCalls.every(
+					(tc) => tc.sourceToolName !== "tool_call",
+				);
+			const onlySafeSuccesses =
+				retryable.successfulTools.length === 0 ||
+				retryable.successfulTools.every(isSafeSuccessTool);
+			const needsParamRepair =
+				retryable.failures.length > 0 &&
+				!retryable.hasPendingApproval &&
+				onlySafeSuccesses;
+
+				if ((turn === 0 && needsToolKickoff) || needsParamRepair) {
+					const hint = deriveTrpcSearchQueryHint(message);
+					const hintForPrompt = hint
+						.replaceAll("\\", "\\\\")
+					.replaceAll("\"", "\\\"")
+					.replaceAll("\n", " ")
+					.replaceAll("\r", " ");
+				const failureDetails = needsParamRepair
+					? safeJsonForPrompt(retryable.failures, 2500)
+					: "";
+					const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_suggest\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_call as needed (or call tool_call with toolName=\"<router>.<procedure>\"). Use trpc_procedure_describe only if you still need schema details.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
+					try {
+						await refreshSystemPrompt();
+						streamed = await runStreamWithFallback(`${systemPrompt}${extra}`);
+						turnStreams.push(streamed);
+					} catch {}
+				}
+			}
+
+			const turnToolCalls: StreamedTurn["toolCalls"] = [];
+			const turnToolResults: StreamedTurn["toolResults"] = [];
+			for (const streamedChunk of turnStreams) {
+				fullText += streamedChunk.fullText;
+				allToolCalls.push(...streamedChunk.toolCalls);
+				allToolResults.push(...streamedChunk.toolResults);
+				turnToolCalls.push(...streamedChunk.toolCalls);
+				turnToolResults.push(...streamedChunk.toolResults);
+				aggregatedUsage.promptTokens =
+					(aggregatedUsage.promptTokens ?? 0) +
+					(streamedChunk.usage.promptTokens ?? 0);
+				aggregatedUsage.completionTokens =
+					(aggregatedUsage.completionTokens ?? 0) +
+					(streamedChunk.usage.completionTokens ?? 0);
+				if (
+					typeof streamedChunk.streamError === "string" &&
+					streamedChunk.streamError.length > 0
+				) {
+					streamError = streamedChunk.streamError;
+				}
+			}
+
+			if (!agenticEnabled || turn >= maxTurns - 1) break;
+
+			const retryable = getRetryableToolCallFailures(turnToolResults);
+			const platformThisTurn = turnToolCalls.filter(
+				(tc) => tc.sourceToolName === "tool_call",
+			).length;
+			platformToolCalls += platformThisTurn;
+
+			if (retryable.hasPendingApproval) break;
+			if (platformThisTurn <= 0) break;
+			if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls) break;
+
+			const assistantSnippet = safeTruncateString(streamed.fullText.trim(), 4000);
+			if (assistantSnippet.length > 0) {
+				messages = messages.concat({ role: "assistant", content: assistantSnippet });
+			}
+			messages = messages.concat({ role: "user", content: buildAgentContinuePrompt() });
 	}
 
 	if (
-		streamed.fullText.trim().length === 0 &&
-		Array.isArray(streamed.toolCalls) &&
-		streamed.toolCalls.length > 0 &&
+		fullText.trim().length === 0 &&
+		Array.isArray(allToolCalls) &&
+		allToolCalls.length > 0 &&
 		!options.abortSignal?.aborted
 	) {
 		const summary = await generateToolOutcomeSummary({
 			model,
 			userMessage: message,
-			toolCalls: streamed.toolCalls.map((tc) => ({
+			toolCalls: allToolCalls.map((tc) => ({
 				id: tc.id,
 				name: tc.function.name,
 				arguments: (() => {
@@ -3142,8 +3375,8 @@ export const chatStream = async (
 					}
 				})(),
 			})),
-			toolResults: streamed.toolResults,
-			streamError: streamed.streamError,
+			toolResults: allToolResults,
+			streamError,
 		});
 
 		if (summary.length > 0) {
@@ -3152,13 +3385,13 @@ export const chatStream = async (
 			} catch {
 				// Ignore callback errors
 			}
-			streamed.fullText = summary;
+			fullText = summary;
 		}
 	}
 
 	const executionIdByToolCallId = new Map<string, string>();
 	const invokedToolNameByToolCallId = new Map<string, string>();
-	for (const tr of streamed.toolResults) {
+	for (const tr of allToolResults) {
 		if (!tr || typeof tr !== "object") continue;
 		const resultValue = (tr as { result?: unknown }).result;
 		if (resultValue && typeof resultValue === "object") {
@@ -3189,7 +3422,7 @@ export const chatStream = async (
 		}
 	}
 
-	const toolCallsToPersist = streamed.toolCalls
+	const toolCallsToPersist = allToolCalls
 		.filter((tc) => tc.sourceToolName === "tool_call")
 		.map((tc) => {
 			const toolName =
@@ -3208,18 +3441,18 @@ export const chatStream = async (
 	const assistantMessage = await saveMessage({
 		conversationId,
 		role: "assistant",
-		content: streamed.fullText,
+		content: fullText,
 		toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : undefined,
-		promptTokens: streamed.usage.promptTokens,
-		completionTokens: streamed.usage.completionTokens,
+		promptTokens: aggregatedUsage.promptTokens,
+		completionTokens: aggregatedUsage.completionTokens,
 	});
 
 	const usage: ChatUsage | undefined =
-		streamed.usage.promptTokens != null ||
-		streamed.usage.completionTokens != null
+		aggregatedUsage.promptTokens != null ||
+		aggregatedUsage.completionTokens != null
 			? {
-					inputTokens: streamed.usage.promptTokens,
-					outputTokens: streamed.usage.completionTokens,
+					inputTokens: aggregatedUsage.promptTokens,
+					outputTokens: aggregatedUsage.completionTokens,
 				}
 			: undefined;
 
@@ -3246,16 +3479,343 @@ export const chatStream = async (
 		})();
 	}
 
-	return {
-		message: assistantMessage,
-		usage,
-		toolResults: [],
+		return {
+			message: assistantMessage,
+			usage,
+			toolResults: [],
+		};
 	};
-};
 
-function buildSystemPrompt(
-	conversation: Awaited<ReturnType<typeof getConversationById>>,
-	availableTools: ToolPromptInfo[],
+	type PlaybookStep = {
+		toolName: string;
+		procedureName?: string;
+		inputKeys?: string[];
+	};
+
+	function addDaysIso(days: number, from = new Date()): string {
+		const ms = Math.max(0, Number(days) || 0) * 24 * 60 * 60 * 1000;
+		return new Date(from.getTime() + ms).toISOString();
+	}
+
+	function buildPlaybookSignature(steps: PlaybookStep[]): string {
+		const text = steps
+			.map((s) => `${s.toolName}:${s.procedureName ?? ""}`)
+			.join("|");
+		return createHash("sha256").update(text).digest("hex");
+	}
+
+	function extractTopLevelKeys(value: unknown): string[] {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+		return Object.keys(value).filter((k) => k.trim().length > 0).slice(0, 40);
+	}
+
+	function derivePlaybookTagsFromSteps(steps: PlaybookStep[]): string[] {
+		const tags = new Set<string>();
+		for (const step of steps) {
+			const proc = typeof step.procedureName === "string" ? step.procedureName : "";
+			const prefix = proc.includes(".") ? proc.split(".")[0] : "";
+			if (prefix) tags.add(prefix);
+		}
+		return Array.from(tags).slice(0, 12);
+	}
+
+	function buildPlaybookVectorText(params: {
+		intent: string;
+		steps: PlaybookStep[];
+		tags: string[];
+	}): string {
+		const stepText = params.steps
+			.map((s) => (s.procedureName ? `${s.toolName} ${s.procedureName}` : s.toolName))
+			.join("\n");
+		const tagText = params.tags.length > 0 ? `\nTags: ${params.tags.join(", ")}` : "";
+		return `${params.intent.trim()}\n${stepText}${tagText}`.trim();
+	}
+
+	async function findRelevantPlaybooks(params: {
+		organizationId: string;
+		aiSettings: {
+			apiUrl: string;
+			apiKey: string;
+			providerType?: string | null;
+			embeddingModel?: string | null;
+		};
+		queryText: string;
+		limit?: number;
+	}): Promise<
+		Array<{
+			playbookId: string;
+			intent: string;
+			summary: string | null;
+			steps: PlaybookStep[];
+			successCount: number;
+			failCount: number;
+			lastUsedAt: string | null;
+			signature: string;
+			distance: number;
+		}>
+	> {
+		const limit = Math.max(
+			1,
+			Math.min(10, Number(params.limit ?? PLAYBOOK_DEFAULT_TOP_K) || PLAYBOOK_DEFAULT_TOP_K),
+		);
+		const nowIso = new Date().toISOString();
+
+		// Opportunistic cleanup (cheap, organization-scoped).
+		try {
+			await db
+				.delete(aiAgentPlaybooks)
+				.where(
+					and(
+						eq(aiAgentPlaybooks.organizationId, params.organizationId),
+						lt(aiAgentPlaybooks.expiresAt, nowIso),
+					),
+				);
+		} catch {}
+
+		const embedding = await tryEmbedText({
+			aiSettings: params.aiSettings,
+			text: params.queryText,
+		});
+
+		const queryEmbedding = async () => {
+			if (!embedding) return [];
+			const distanceExpr = sql<number>`${aiAgentPlaybooks.embeddingVector} <=> ${JSON.stringify(
+				embedding.vector,
+			)}::vector`.as("distance");
+			return await db
+				.select({
+					playbookId: aiAgentPlaybooks.playbookId,
+					intent: aiAgentPlaybooks.intent,
+					summary: aiAgentPlaybooks.summary,
+					steps: aiAgentPlaybooks.steps,
+					successCount: aiAgentPlaybooks.successCount,
+					failCount: aiAgentPlaybooks.failCount,
+					lastUsedAt: aiAgentPlaybooks.lastUsedAt,
+					signature: aiAgentPlaybooks.signature,
+					distance: distanceExpr,
+				})
+				.from(aiAgentPlaybooks)
+				.where(
+					and(
+						eq(aiAgentPlaybooks.organizationId, params.organizationId),
+						gt(aiAgentPlaybooks.expiresAt, nowIso),
+						eq(aiAgentPlaybooks.embeddingModel, embedding.model),
+						eq(aiAgentPlaybooks.embeddingDim, embedding.dim),
+						isNotNull(aiAgentPlaybooks.embeddingVector),
+					),
+				)
+				.orderBy(distanceExpr, desc(aiAgentPlaybooks.successCount), desc(aiAgentPlaybooks.lastUsedAt))
+				.limit(limit);
+		};
+
+		const queryHash = async () => {
+			const vec = hashTextToUnitVector(params.queryText, PLAYBOOK_HASH_DIMENSIONS);
+			const distanceExpr = sql<number>`${aiAgentPlaybooks.hashVector} <=> ${JSON.stringify(
+				vec,
+			)}::vector`.as("distance");
+			return await db
+				.select({
+					playbookId: aiAgentPlaybooks.playbookId,
+					intent: aiAgentPlaybooks.intent,
+					summary: aiAgentPlaybooks.summary,
+					steps: aiAgentPlaybooks.steps,
+					successCount: aiAgentPlaybooks.successCount,
+					failCount: aiAgentPlaybooks.failCount,
+					lastUsedAt: aiAgentPlaybooks.lastUsedAt,
+					signature: aiAgentPlaybooks.signature,
+					distance: distanceExpr,
+				})
+				.from(aiAgentPlaybooks)
+				.where(
+					and(
+						eq(aiAgentPlaybooks.organizationId, params.organizationId),
+						gt(aiAgentPlaybooks.expiresAt, nowIso),
+					),
+				)
+				.orderBy(distanceExpr, desc(aiAgentPlaybooks.successCount), desc(aiAgentPlaybooks.lastUsedAt))
+				.limit(limit);
+		};
+
+		const rows = (await queryEmbedding()) || [];
+		const picked = rows.length > 0 ? rows : (await queryHash()) || [];
+
+		if (picked.length > 0) {
+			const ids = picked
+				.map((p) => p.playbookId)
+				.filter((id) => typeof id === "string" && id.trim().length > 0);
+			const nextExpiry = addDaysIso(PLAYBOOK_RETENTION_DAYS);
+			if (ids.length > 0) {
+				try {
+					await db
+						.update(aiAgentPlaybooks)
+						.set({ lastUsedAt: nowIso, expiresAt: nextExpiry })
+						.where(inArray(aiAgentPlaybooks.playbookId, ids));
+				} catch {}
+			}
+		}
+
+		return picked.map((p) => ({
+			...p,
+			steps: Array.isArray(p.steps) ? (p.steps as PlaybookStep[]) : [],
+		}));
+	}
+
+	function buildPlaybookMemoryPrompt(playbooks: Array<{
+		intent: string;
+		summary: string | null;
+		steps: PlaybookStep[];
+		successCount: number;
+		lastUsedAt: string | null;
+		distance: number;
+	}>): string {
+		if (!Array.isArray(playbooks) || playbooks.length === 0) return "";
+
+		const items = playbooks
+			.map((p, idx) => {
+				const title = safeTruncateString(p.summary?.trim() || p.intent.trim(), 140);
+				const meta = [
+					`success=${Number(p.successCount) || 0}`,
+					p.lastUsedAt ? `lastUsed=${p.lastUsedAt}` : "",
+				]
+					.filter(Boolean)
+					.join(" ");
+
+				const steps = p.steps
+					.slice(0, 12)
+					.map((s) => {
+						if (s.toolName === "trpc_procedure_call" && s.procedureName) {
+							const keys =
+								Array.isArray(s.inputKeys) && s.inputKeys.length > 0
+									? ` (input keys: ${s.inputKeys.join(", ")})`
+									: "";
+							return `- ${s.toolName}: ${s.procedureName}${keys}`;
+						}
+						return `- ${s.toolName}${s.procedureName ? `: ${s.procedureName}` : ""}`;
+					})
+					.join("\n");
+
+				return [
+					`#${idx + 1} ${title}${meta ? ` [${meta}]` : ""}`,
+					steps.length > 0 ? steps : "- (no steps recorded)",
+				].join("\n");
+			})
+			.join("\n\n");
+
+		return [
+			"PLAYBOOK MEMORY (organization-scoped, from past successful runs):",
+			"- If the user request matches a playbook below, follow its steps directly and SKIP exploratory calls (tool_search/trpc_procedure_search/suggest) unless needed.",
+			"- Prefer calling trpc_procedure_call with the correct procedureName and input. Use trpc_procedure_describe only if you need the latest schema.",
+			"- If a required tool needs approval and approvals are manual, create the pending_approval tool_call and stop.",
+			"",
+			items,
+		].join("\n");
+	}
+
+	async function upsertPlaybookFromSuccessfulRun(params: {
+		organizationId: string;
+		aiSettings: {
+			apiUrl: string;
+			apiKey: string;
+			providerType?: string | null;
+			embeddingModel?: string | null;
+		};
+		goal: string;
+		runId: string;
+		finalSummary: string;
+	}): Promise<void> {
+		const goal = params.goal.trim();
+		if (!goal) return;
+
+		const executions = await db.query.aiToolExecutions.findMany({
+			where: eq(aiToolExecutions.runId, params.runId),
+			orderBy: desc(aiToolExecutions.createdAt),
+			limit: 200,
+		});
+		if (executions.length === 0) return;
+
+		const ordered = executions.slice().reverse();
+		const steps: PlaybookStep[] = [];
+		for (const exec of ordered) {
+			if (exec.status !== "completed") continue;
+			const result = exec.result as unknown as { success?: unknown } | undefined;
+			if (!result || result.success !== true) continue;
+
+			if (exec.toolName === "trpc_procedure_call") {
+				const paramsObj = exec.parameters as unknown as Record<string, unknown> | undefined;
+				const procedureName =
+					paramsObj && typeof paramsObj.procedureName === "string"
+						? paramsObj.procedureName.trim()
+						: "";
+				if (!procedureName) continue;
+				const input =
+					paramsObj && typeof paramsObj.input !== "undefined"
+						? paramsObj.input
+						: paramsObj && typeof paramsObj.params !== "undefined"
+							? paramsObj.params
+							: undefined;
+				steps.push({
+					toolName: "trpc_procedure_call",
+					procedureName,
+					inputKeys: extractTopLevelKeys(input),
+				});
+			}
+		}
+
+		if (steps.length === 0) return;
+
+		const tags = derivePlaybookTagsFromSteps(steps);
+		const vectorText = buildPlaybookVectorText({ intent: goal, steps, tags });
+		const hashVector = hashTextToUnitVector(vectorText, PLAYBOOK_HASH_DIMENSIONS);
+		const signature = buildPlaybookSignature(steps);
+
+		const now = new Date();
+		const nowIso = now.toISOString();
+		const expiresAt = addDaysIso(PLAYBOOK_RETENTION_DAYS, now);
+
+		const embedding = await tryEmbedText({
+			aiSettings: params.aiSettings,
+			text: vectorText,
+		});
+
+		await db
+			.insert(aiAgentPlaybooks)
+			.values({
+				organizationId: params.organizationId,
+				signature,
+				intent: goal,
+				summary: safeTruncateString(params.finalSummary.trim(), 600),
+				tags,
+				steps,
+				successCount: 1,
+				failCount: 0,
+				lastUsedAt: nowIso,
+				expiresAt,
+				hashVector,
+				embeddingModel: embedding?.model ?? null,
+				embeddingDim: embedding?.dim ?? null,
+				embeddingVector: embedding?.vector ?? null,
+			})
+			.onConflictDoUpdate({
+				target: [aiAgentPlaybooks.organizationId, aiAgentPlaybooks.signature],
+				set: {
+					intent: goal,
+					summary: safeTruncateString(params.finalSummary.trim(), 600),
+					tags,
+					steps,
+					lastUsedAt: nowIso,
+					expiresAt,
+					hashVector,
+					embeddingModel: embedding?.model ?? null,
+					embeddingDim: embedding?.dim ?? null,
+					embeddingVector: embedding?.vector ?? null,
+					successCount: sql`${aiAgentPlaybooks.successCount} + 1`,
+				},
+			});
+	}
+
+	function buildSystemPrompt(
+		conversation: Awaited<ReturnType<typeof getConversationById>>,
+		availableTools: ToolPromptInfo[],
 ) {
 	let context = "";
 	if (conversation.projectId) {
@@ -3408,6 +3968,794 @@ const saveAgentEventMessage = async (params: {
 	});
 };
 
+const AGENT_RUN_MAX_CONCURRENCY = Math.max(
+	1,
+	Number(process.env.DOKPLOY_AI_AGENT_MAX_CONCURRENCY ?? "2") || 2,
+);
+let agentRunActive = 0;
+const agentRunQueue: Array<() => Promise<void>> = [];
+const agentRunInFlight = new Set<string>();
+
+function drainAgentRunQueue() {
+	while (agentRunActive < AGENT_RUN_MAX_CONCURRENCY && agentRunQueue.length > 0) {
+		const next = agentRunQueue.shift();
+		if (!next) break;
+		agentRunActive++;
+		void (async () => {
+			try {
+				await next();
+			} finally {
+				agentRunActive = Math.max(0, agentRunActive - 1);
+				drainAgentRunQueue();
+			}
+		})();
+	}
+}
+
+function enqueueAgentRun(runId: string, task: () => Promise<void>) {
+	if (!runId) return;
+	if (agentRunInFlight.has(runId)) return;
+	agentRunInFlight.add(runId);
+	agentRunQueue.push(async () => {
+		try {
+			await task();
+		} finally {
+			agentRunInFlight.delete(runId);
+		}
+	});
+	drainAgentRunQueue();
+}
+
+async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
+	initializeTools();
+
+	const run = await db.query.aiRuns.findFirst({
+		where: eq(aiRuns.runId, runId),
+	});
+	if (!run) {
+		throw new TRPCError({ code: "NOT_FOUND", message: "Run not found" });
+	}
+	if (["completed", "failed", "cancelled"].includes(run.status)) return;
+
+	const conversation = await getConversationById(run.conversationId);
+	if (conversation.organizationId !== ctx.organizationId) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You don't have access to this run",
+		});
+	}
+
+	const conversationAiId =
+		typeof conversation.aiId === "string" ? conversation.aiId.trim() : "";
+	if (!conversationAiId) {
+		const msg = "Conversation has no AI configuration";
+		await updateRun(runId, {
+			status: "failed",
+			error: msg,
+			completedAt: new Date().toISOString(),
+		});
+		await saveAgentEventMessage({
+			conversationId: run.conversationId,
+			payload: { type: "agent.run.finish", runId, status: "failed" },
+		});
+		await saveAgentEventMessage({
+			conversationId: run.conversationId,
+			payload: { type: "agent.run.summary", runId, summary: msg },
+		});
+		return;
+	}
+
+	const aiSettings = await getAiSettingById(conversationAiId);
+	if (!aiSettings || !aiSettings.isEnabled) {
+		const msg = "AI features are not enabled for this configuration";
+		await updateRun(runId, {
+			status: "failed",
+			error: msg,
+			completedAt: new Date().toISOString(),
+		});
+		await saveAgentEventMessage({
+			conversationId: run.conversationId,
+			payload: { type: "agent.run.finish", runId, status: "failed" },
+		});
+		await saveAgentEventMessage({
+			conversationId: run.conversationId,
+			payload: { type: "agent.run.summary", runId, summary: msg },
+		});
+		return;
+	}
+
+	const toolApprovalsDisabled = getToolApprovalsDisabledFromMetadata(
+		conversation.metadata,
+	);
+	const tools = buildChatTools({
+		conversationId: run.conversationId,
+		runId,
+		toolContext: ctx,
+		messageId: undefined,
+		toolApprovalsDisabled,
+	});
+
+	const provider = selectAIProvider(aiSettings);
+	const model = provider(aiSettings.model);
+	const goal = typeof run.goal === "string" ? run.goal : "";
+
+	let lastOutputDelta = "";
+
+	// Execute any approved executions first (agent-mode approvals).
+	{
+		const pendingApproved = await db.query.aiToolExecutions.findMany({
+			where: and(
+				eq(aiToolExecutions.runId, runId),
+				eq(aiToolExecutions.status, "approved"),
+			),
+			orderBy: desc(aiToolExecutions.createdAt),
+			limit: 20,
+		});
+		for (const exec of pendingApproved.slice().reverse()) {
+			if (!exec.toolName) continue;
+			await updateToolExecution(exec.executionId, {
+				status: "executing",
+				startedAt: exec.startedAt || new Date().toISOString(),
+			});
+			let rawResult: unknown;
+			try {
+				rawResult = await toolRegistry.execute(
+					exec.toolName,
+					exec.parameters || {},
+					ctx,
+				);
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				await updateToolExecution(exec.executionId, {
+					status: "failed",
+					error: errorMessage,
+					completedAt: new Date().toISOString(),
+				});
+				await saveAgentEventMessage({
+					conversationId: run.conversationId,
+					payload: {
+						type: "agent.step.result",
+						runId,
+						stepId: exec.executionId,
+						executionId: exec.executionId,
+						toolName: exec.toolName,
+						success: false,
+						summary: errorMessage,
+					},
+				});
+				await updateRun(runId, {
+					status: "failed",
+					error: errorMessage,
+					completedAt: new Date().toISOString(),
+				});
+				await saveAgentEventMessage({
+					conversationId: run.conversationId,
+					payload: { type: "agent.run.finish", runId, status: "failed" },
+				});
+				await saveAgentEventMessage({
+					conversationId: run.conversationId,
+					payload: { type: "agent.run.summary", runId, summary: errorMessage },
+				});
+				return;
+			}
+
+			const result = normalizeToolResultForStorage(rawResult);
+			await updateToolExecution(exec.executionId, {
+				status: result.success ? "completed" : "failed",
+				result,
+				error: result.success ? undefined : result.error || result.message,
+				completedAt: new Date().toISOString(),
+			});
+			await saveAgentEventMessage({
+				conversationId: run.conversationId,
+				payload: {
+					type: "agent.step.result",
+					runId,
+					stepId: exec.executionId,
+					executionId: exec.executionId,
+					toolName: exec.toolName,
+					success: result.success,
+					summary: result.message || (result.success ? "Success" : "Failed"),
+					dataPreview:
+						result.data != null ? safeJsonForPrompt(result.data, 4000) : undefined,
+				},
+			});
+			if (!result.success) {
+				const errorMessage = result.error || result.message || "Tool execution failed";
+				await updateRun(runId, {
+					status: "failed",
+					error: errorMessage,
+					completedAt: new Date().toISOString(),
+				});
+				await saveAgentEventMessage({
+					conversationId: run.conversationId,
+					payload: { type: "agent.run.finish", runId, status: "failed" },
+				});
+				await saveAgentEventMessage({
+					conversationId: run.conversationId,
+					payload: { type: "agent.run.summary", runId, summary: errorMessage },
+				});
+				return;
+			}
+		}
+	}
+
+	const history = await getMessages({ conversationId: run.conversationId, limit: 20 });
+	let messages: CoreMessage[] = history
+		.map((msg) => {
+			if (msg.role !== "user" && msg.role !== "assistant") return null;
+			const content = (msg.content || "").trim();
+			if (content.length > 0) {
+				return {
+					role: msg.role as "user" | "assistant",
+					content,
+				};
+			}
+			const toolNames = (msg.toolCalls ?? [])
+				.map((tc) => tc.function?.name)
+				.filter(Boolean)
+				.join(", ");
+			if (toolNames.length > 0) {
+				return {
+					role: msg.role as "user" | "assistant",
+					content: `[tool_calls: ${toolNames}]`,
+				};
+			}
+			return null;
+		})
+		.filter(Boolean) as CoreMessage[];
+
+		let playbookPrompt = "";
+		try {
+			const playbooks = await findRelevantPlaybooks({
+				organizationId: conversation.organizationId,
+				aiSettings: {
+					apiUrl: aiSettings.apiUrl,
+					apiKey: aiSettings.apiKey,
+					providerType: aiSettings.providerType,
+					embeddingModel: aiSettings.embeddingModel,
+				},
+				queryText: goal,
+			});
+			playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
+		} catch {}
+
+		const baseSystemPrompt = [
+			buildSystemPrompt(
+				conversation,
+				buildMetaToolPromptInfo().concat(
+					buildToolCatalogPromptInfo({
+						userMessage: goal,
+						projectId: conversation.projectId || undefined,
+						serverId: conversation.serverId || undefined,
+					}),
+				),
+			),
+			playbookPrompt,
+		]
+			.filter((s) => typeof s === "string" && s.trim().length > 0)
+			.join("\n\n");
+	let systemPrompt = baseSystemPrompt;
+	const refreshSystemPrompt = async () => {
+		const toolExecutionContextMessage = await buildToolExecutionContextMessage({
+			conversationId: run.conversationId,
+		});
+		systemPrompt =
+			toolExecutionContextMessage.trim().length > 0
+				? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
+				: baseSystemPrompt;
+	};
+
+	const initialSystemMode = getInitialSystemMode(aiSettings);
+
+	const buildAgentContinuePrompt = () => {
+		const clipped = safeTruncateString(goal.trim(), 500);
+		return [
+			"Continue the task based on the conversation so far.",
+			`User request: ${clipped}`,
+			"",
+			"Rules:",
+			"- Use the recent tool execution context to avoid repeating completed work.",
+			"- If more actions are required, call tools.",
+			"- If the task is complete, provide a concise final confirmation and DO NOT call any tools.",
+			'- Never ask the user to \"wait\" or say you are still \"processing\".',
+		].join("\n");
+	};
+
+	const runGenerate = async (
+		withTools: boolean,
+		systemMode: "system" | "inline" = "system",
+		overrideSystemPrompt?: string,
+	) => {
+		const effectiveSystemPrompt = overrideSystemPrompt ?? systemPrompt;
+		const nextMessages =
+			systemMode === "inline"
+				? [
+						{
+							role: "user" as const,
+							content: `SYSTEM INSTRUCTIONS (treat as system):\n${effectiveSystemPrompt}`,
+						},
+						...messages,
+					]
+				: messages;
+		return await generateText({
+			model,
+			system: systemMode === "system" ? effectiveSystemPrompt : undefined,
+			messages: nextMessages,
+			tools: withTools ? tools : undefined,
+			stopWhen: stepCountIs(10),
+		});
+	};
+
+	type GeneratedTurn = Awaited<ReturnType<typeof generateText>>;
+
+	const runGenerateWithFallback = async (
+		overrideSystemPrompt?: string,
+	): Promise<GeneratedTurn> => {
+		let result: GeneratedTurn;
+		try {
+			result = await runGenerate(true, initialSystemMode, overrideSystemPrompt);
+		} catch (error) {
+			const aborted = false;
+			if (isSystemMessagePlacementError(error) && !aborted) {
+				try {
+					result = await runGenerate(true, "inline", overrideSystemPrompt);
+				} catch (retryError) {
+					if (isMissingToolUseIdError(retryError)) {
+						result = await runGenerate(false, "inline", overrideSystemPrompt);
+					} else {
+						throw retryError;
+					}
+				}
+			} else if (isMissingToolUseIdError(error) && !aborted) {
+				try {
+					result = await runGenerate(false, initialSystemMode, overrideSystemPrompt);
+				} catch (retryError) {
+					if (isSystemMessagePlacementError(retryError)) {
+						result = await runGenerate(false, "inline", overrideSystemPrompt);
+					} else {
+						throw retryError;
+					}
+				}
+			} else throw error;
+		}
+		return result;
+	};
+
+	const isLikelyActionRequest = (text: string): boolean => {
+		const t = text.trim();
+		if (t.length === 0) return false;
+		const hasAction =
+			/(备份|backup|恢复|restore|迁移|migrate|部署|deploy|创建|create|删除|delete|移除|remove|更新|update|设置|set|配置|config|启动|start|停止|stop|重启|restart|导入|import|导出|export|挂载|mount|日志|log|logs|容器|container|docker)/i.test(
+				t,
+			);
+		if (!hasAction) return false;
+		return !/(\?|？)/.test(t);
+	};
+
+	const safeSuccessTools = new Set([
+		"trpc_procedure_search",
+		"trpc_procedure_suggest",
+		"trpc_procedure_describe",
+		"tool_search",
+		"tool_suggest",
+		"tool_describe",
+	]);
+	const isSafeSuccessTool = (toolName: string) => {
+		if (safeSuccessTools.has(toolName)) return true;
+		const t = toolRegistry.get(toolName);
+		return !!t && t.riskLevel === "low" && !t.requiresApproval;
+	};
+
+	const maxTurns = 12;
+	const maxPlatformToolCalls = 120;
+	let platformToolCalls = 0;
+
+	let finalText = "";
+	const allToolCalls: NonNullable<GeneratedTurn["toolCalls"]> = [];
+	const allToolResults: unknown[] = [];
+	const aggregatedUsage: { inputTokens?: number; outputTokens?: number } = {
+		inputTokens: 0,
+		outputTokens: 0,
+	};
+
+	await refreshSystemPrompt();
+	await updateRun(runId, {
+		status: "executing",
+		startedAt: run.startedAt || new Date().toISOString(),
+	});
+
+	for (let turn = 0; turn < maxTurns; turn++) {
+		const refreshed = await db.query.aiRuns.findFirst({
+			where: eq(aiRuns.runId, runId),
+			columns: { status: true },
+		});
+		if (refreshed?.status === "cancelled") return;
+
+		await refreshSystemPrompt();
+
+		const turnResults: GeneratedTurn[] = [];
+		let result = await runGenerateWithFallback(systemPrompt);
+		turnResults.push(result);
+
+		if (isLikelyActionRequest(goal)) {
+			const toolResults = (result as unknown as { toolResults?: unknown }).toolResults;
+			const retryable = getRetryableToolCallFailures(toolResults);
+			const needsToolKickoff = !Array.isArray(result.toolCalls)
+				? true
+				: !result.toolCalls.some((tc) => tc.toolName === "tool_call");
+			const onlySafeSuccesses =
+				retryable.successfulTools.length === 0 ||
+				retryable.successfulTools.every(isSafeSuccessTool);
+			const needsParamRepair =
+				retryable.failures.length > 0 &&
+				!retryable.hasPendingApproval &&
+				onlySafeSuccesses;
+
+			if ((turn === 0 && needsToolKickoff) || needsParamRepair) {
+				const hint = safeTruncateString(goal.trim(), 200);
+				const hintForPrompt = hint
+					.replaceAll("\\", "\\\\")
+					.replaceAll("\"", "\\\"")
+					.replaceAll("\n", " ")
+					.replaceAll("\r", " ");
+				const failureDetails = needsParamRepair
+					? safeJsonForPrompt(retryable.failures, 2500)
+					: "";
+				const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_suggest\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_call as needed (or call tool_call with toolName=\"<router>.<procedure>\"). Use trpc_procedure_describe only if you still need schema details.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
+				try {
+					await refreshSystemPrompt();
+					result = await runGenerateWithFallback(`${systemPrompt}${extra}`);
+					turnResults.push(result);
+				} catch {}
+			}
+		}
+
+		const turnToolCalls: NonNullable<GeneratedTurn["toolCalls"]> = [];
+		const turnToolResults: unknown[] = [];
+		for (const r of turnResults) {
+			finalText += typeof r.text === "string" ? r.text : "";
+			if (Array.isArray(r.toolCalls)) {
+				allToolCalls.push(...r.toolCalls);
+				turnToolCalls.push(...r.toolCalls);
+			}
+			const toolResults = (r as unknown as { toolResults?: unknown }).toolResults;
+			if (Array.isArray(toolResults)) {
+				allToolResults.push(...toolResults);
+				turnToolResults.push(...toolResults);
+			}
+			aggregatedUsage.inputTokens =
+				(aggregatedUsage.inputTokens ?? 0) + (r.usage?.inputTokens ?? 0);
+			aggregatedUsage.outputTokens =
+				(aggregatedUsage.outputTokens ?? 0) + (r.usage?.outputTokens ?? 0);
+		}
+
+		const assistantSnippet = safeTruncateString(
+			(typeof result.text === "string" ? result.text : "").trim(),
+			4000,
+		);
+		if (assistantSnippet.length > 0 && assistantSnippet !== lastOutputDelta) {
+			lastOutputDelta = assistantSnippet;
+			await saveAgentEventMessage({
+				conversationId: run.conversationId,
+				payload: {
+					type: "agent.output.delta",
+					runId,
+					delta: assistantSnippet,
+				},
+			});
+		}
+
+			const retryable = getRetryableToolCallFailures(turnToolResults);
+			if (retryable.hasPendingApproval) {
+				let pendingExecutionId = "";
+				let pendingToolName = "";
+				for (const tr of turnToolResults) {
+					if (!tr || typeof tr !== "object") continue;
+					const resultValue =
+						(tr as { result?: unknown }).result ??
+						(tr as { output?: unknown }).output ??
+						tr;
+					if (!isRecord(resultValue)) continue;
+					if (resultValue.success !== true) continue;
+					if (resultValue.status !== "pending_approval") continue;
+					if (typeof resultValue.executionId === "string") {
+						pendingExecutionId = resultValue.executionId;
+					}
+					const invokedTool =
+						typeof resultValue.invokedTool === "string"
+							? resultValue.invokedTool
+							: typeof resultValue.toolName === "string"
+								? resultValue.toolName
+								: "";
+					pendingToolName = invokedTool;
+					break;
+				}
+				const exec =
+					pendingExecutionId.trim().length > 0
+						? await db.query.aiToolExecutions.findFirst({
+								where: eq(aiToolExecutions.executionId, pendingExecutionId.trim()),
+							})
+						: null;
+				await updateRun(runId, { status: "waiting_approval" });
+				await saveAgentEventMessage({
+					conversationId: run.conversationId,
+					payload: {
+						type: "agent.step.wait_approval",
+						runId,
+						stepId: pendingExecutionId.trim(),
+						executionId: pendingExecutionId.trim(),
+						toolName: pendingToolName,
+						parametersPreview:
+							exec?.parameters != null
+								? safeJsonForPrompt(exec.parameters, 4000)
+								: undefined,
+					},
+				});
+				return;
+			}
+
+		const platformThisTurn = turnToolCalls.filter(
+			(tc) => tc.toolName === "tool_call",
+		).length;
+		platformToolCalls += platformThisTurn;
+		if (platformToolCalls >= maxPlatformToolCalls) {
+			const msg = "Agent tool call budget exceeded";
+			await updateRun(runId, {
+				status: "failed",
+				error: msg,
+				completedAt: new Date().toISOString(),
+			});
+			await saveAgentEventMessage({
+				conversationId: run.conversationId,
+				payload: { type: "agent.run.finish", runId, status: "failed" },
+			});
+			await saveAgentEventMessage({
+				conversationId: run.conversationId,
+				payload: { type: "agent.run.summary", runId, summary: msg },
+			});
+			return;
+		}
+
+		{
+			const executionIds = Array.from(
+				new Set(
+					turnToolResults
+						.map((tr) => {
+							if (!tr || typeof tr !== "object") return "";
+							const resultValue = (tr as { result?: unknown }).result;
+							if (!isRecord(resultValue)) return "";
+							return typeof resultValue.executionId === "string"
+								? resultValue.executionId
+								: "";
+						})
+						.filter((id) => id.trim().length > 0),
+				),
+			).slice(0, 20);
+
+			if (executionIds.length > 0) {
+				const executions = await db.query.aiToolExecutions.findMany({
+					where: inArray(aiToolExecutions.executionId, executionIds),
+				});
+
+				const currentRun = await db.query.aiRuns.findFirst({
+					where: eq(aiRuns.runId, runId),
+					columns: { plan: true },
+				});
+				const prevSteps = Array.isArray(currentRun?.plan?.steps)
+					? currentRun?.plan?.steps
+					: [];
+				const nextSteps = prevSteps.slice();
+				const existingIds = new Set(prevSteps.map((s) => s.id));
+
+				for (const exec of executions) {
+					if (!exec.executionId) continue;
+					if (!existingIds.has(exec.executionId)) {
+						existingIds.add(exec.executionId);
+						nextSteps.push({
+							id: exec.executionId,
+							toolName: exec.toolName,
+							description: `Execute ${exec.toolName}`,
+							parameters: (exec.parameters || {}) as Record<string, unknown>,
+							requiresApproval: !!exec.requiresApproval,
+						});
+					}
+
+					const success =
+						typeof exec.result?.success === "boolean" ? exec.result.success : false;
+					const summary =
+						(typeof exec.result?.message === "string" && exec.result.message) ||
+						exec.error ||
+						(success ? "Success" : "Failed");
+					await saveAgentEventMessage({
+						conversationId: run.conversationId,
+						payload: {
+							type: "agent.step.result",
+							runId,
+							stepId: exec.executionId,
+							executionId: exec.executionId,
+							toolName: exec.toolName,
+							success,
+							summary,
+							dataPreview:
+								exec.result?.data != null
+									? safeJsonForPrompt(exec.result.data, 4000)
+									: undefined,
+						},
+					});
+				}
+
+				if (nextSteps.length !== prevSteps.length) {
+					await updateRun(runId, { plan: { steps: nextSteps } });
+					await saveAgentEventMessage({
+						conversationId: run.conversationId,
+						payload: {
+							type: "agent.plan",
+							runId,
+							plan: { steps: nextSteps },
+						},
+					});
+				}
+			}
+		}
+
+		if (turnToolCalls.length === 0) break;
+
+		if (assistantSnippet.length > 0) {
+			messages = messages.concat({ role: "assistant", content: assistantSnippet });
+		}
+		messages = messages.concat({ role: "user", content: buildAgentContinuePrompt() });
+	}
+
+	if (finalText.trim().length === 0 && allToolCalls.length > 0) {
+		const summary = await generateToolOutcomeSummary({
+			model,
+			userMessage: goal,
+			toolCalls: allToolCalls.map((tc) => ({
+				id: tc.toolCallId,
+				name: tc.toolName,
+				arguments:
+					(tc as unknown as { args?: unknown; input?: unknown }).args ??
+					(tc as unknown as { args?: unknown; input?: unknown }).input ??
+					{},
+			})),
+			toolResults: allToolResults
+				.map((tr) => {
+					const toolCallId =
+						(tr as { toolCallId?: unknown }).toolCallId ?? (tr as { id?: unknown }).id;
+					const toolName =
+						(tr as { toolName?: unknown }).toolName ?? (tr as { name?: unknown }).name;
+					const resultValue =
+						(tr as { result?: unknown }).result ??
+						(tr as { output?: unknown }).output ??
+						tr;
+					return {
+						toolCallId: typeof toolCallId === "string" ? toolCallId : "",
+						toolName: typeof toolName === "string" ? toolName : "",
+						result: resultValue,
+					};
+				})
+				.slice(0, 25),
+		});
+		finalText = summary || finalText;
+	}
+
+	if (finalText.trim().length === 0) {
+		finalText = buildEmptyModelOutputFallback(goal);
+	}
+
+	{
+		const executionIdByToolCallId = new Map<string, string>();
+		const invokedToolNameByToolCallId = new Map<string, string>();
+		for (const tr of allToolResults) {
+			if (!tr || typeof tr !== "object") continue;
+			const resultValue = (tr as { result?: unknown }).result;
+			if (!resultValue || typeof resultValue !== "object") continue;
+
+			const toolCallId =
+				(tr as { toolCallId?: unknown }).toolCallId ?? (tr as { id?: unknown }).id;
+			if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) continue;
+			const toolCallIdKey = toolCallId.trim();
+
+			const invokedTool =
+				(resultValue as { invokedTool?: unknown }).invokedTool ??
+				(resultValue as { toolName?: unknown }).toolName;
+			if (typeof invokedTool === "string" && invokedTool.trim().length > 0) {
+				invokedToolNameByToolCallId.set(toolCallIdKey, invokedTool.trim());
+			}
+
+			const executionId = (resultValue as { executionId?: unknown }).executionId;
+			const nestedExecutionId =
+				(resultValue as { data?: unknown }).data &&
+				typeof (resultValue as { data?: unknown }).data === "object"
+					? ((resultValue as { data?: { executionId?: unknown } }).data
+							?.executionId as unknown)
+					: undefined;
+			const picked =
+				typeof executionId === "string"
+					? executionId
+					: typeof nestedExecutionId === "string"
+						? nestedExecutionId
+						: "";
+			if (picked.trim().length > 0) {
+				executionIdByToolCallId.set(toolCallIdKey, picked.trim());
+			}
+		}
+
+		const toolCallsToPersist = (allToolCalls ?? [])
+			.filter((tc) => tc.toolName === "tool_call")
+			.map((tc) => {
+				const rawArgs =
+					(tc as unknown as { args?: unknown; input?: unknown }).args ??
+					(tc as unknown as { args?: unknown; input?: unknown }).input ??
+					{};
+				const toolNameFromArgs =
+					rawArgs &&
+					typeof rawArgs === "object" &&
+					"toolName" in (rawArgs as any) &&
+					typeof (rawArgs as any).toolName === "string"
+						? String((rawArgs as any).toolName)
+						: tc.toolName;
+				const toolName =
+					invokedToolNameByToolCallId.get(tc.toolCallId.trim()) ??
+					toolNameFromArgs;
+				const toolParams =
+					rawArgs && typeof rawArgs === "object" && "params" in (rawArgs as any)
+						? (rawArgs as any).params
+						: rawArgs;
+				return {
+					id: tc.toolCallId,
+					type: "function" as const,
+					executionId: executionIdByToolCallId.get(tc.toolCallId),
+					function: {
+						name: toolName,
+						arguments: JSON.stringify(toolParams ?? {}),
+					},
+				};
+			});
+
+		await saveMessage({
+			conversationId: run.conversationId,
+			role: "assistant",
+			content: finalText,
+			toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : undefined,
+			promptTokens: aggregatedUsage.inputTokens,
+			completionTokens: aggregatedUsage.outputTokens,
+		});
+	}
+
+	await updateRun(runId, {
+		status: "completed",
+		result: { success: true, summary: safeTruncateString(finalText.trim(), 2000) },
+		completedAt: new Date().toISOString(),
+	});
+	await saveAgentEventMessage({
+		conversationId: run.conversationId,
+		payload: { type: "agent.run.finish", runId, status: "completed" },
+	});
+		await saveAgentEventMessage({
+			conversationId: run.conversationId,
+			payload: {
+				type: "agent.run.summary",
+				runId,
+				summary: safeTruncateString(finalText.trim(), 4000),
+			},
+		});
+
+		void upsertPlaybookFromSuccessfulRun({
+			organizationId: ctx.organizationId,
+			aiSettings: {
+				apiUrl: aiSettings.apiUrl,
+				apiKey: aiSettings.apiKey,
+				providerType: aiSettings.providerType,
+				embeddingModel: aiSettings.embeddingModel,
+			},
+			goal,
+			runId,
+			finalSummary: finalText,
+		}).catch(() => {});
+	}
+
 export const startAgentRun = async (params: {
 	conversationId: string;
 	goal: string;
@@ -3432,22 +4780,6 @@ export const startAgentRun = async (params: {
 	}
 
 	initializeTools();
-	const picked = searchToolCatalog({ query: params.goal, limit: 1 });
-	const nextCall = picked.meta.nextCall;
-	if (!nextCall) {
-		throw new TRPCError({
-			code: "BAD_REQUEST",
-			message: `Unable to derive an initial plan for goal: ${params.goal}`,
-		});
-	}
-
-	const tool = toolRegistry.get(nextCall.toolName);
-	if (!tool) {
-		throw new TRPCError({
-			code: "BAD_REQUEST",
-			message: `Planned tool not found: ${nextCall.toolName}`,
-		});
-	}
 
 	const run = await createRun({
 		conversationId: params.conversationId,
@@ -3460,20 +4792,14 @@ export const startAgentRun = async (params: {
 		});
 	}
 
-	const stepId = nanoid();
-	const plan = {
-		steps: [
-			{
-				id: stepId,
-				toolName: tool.name,
-				description: `Execute ${tool.name} for goal: ${params.goal}`,
-				parameters: nextCall.params,
-				requiresApproval: tool.requiresApproval,
-			},
-		],
-	};
-
-	await updateRun(run.runId, { plan });
+	try {
+		await saveMessage({
+			conversationId: params.conversationId,
+			role: "user",
+			content: params.goal,
+		});
+	} catch {}
+	await updateRun(run.runId, { plan: { steps: [] } });
 
 	await saveAgentEventMessage({
 		conversationId: params.conversationId,
@@ -3488,7 +4814,7 @@ export const startAgentRun = async (params: {
 		payload: {
 			type: "agent.plan",
 			runId: run.runId,
-			plan,
+			plan: { steps: [] },
 		},
 	});
 
@@ -3499,9 +4825,9 @@ export const startAgentRun = async (params: {
 		serverId: conversation.serverId ?? undefined,
 	};
 
-	void (async () => {
+	enqueueAgentRun(run.runId, async () => {
 		try {
-			await orchestrateRun(run.runId, toolContext);
+			await runLlmAgentRun(run.runId, toolContext);
 		} catch (e) {
 			const errorMessage = e instanceof Error ? e.message : String(e);
 			await updateRun(run.runId, {
@@ -3518,8 +4844,16 @@ export const startAgentRun = async (params: {
 					error: errorMessage,
 				},
 			});
+			await saveAgentEventMessage({
+				conversationId: params.conversationId,
+				payload: {
+					type: "agent.run.summary",
+					runId: run.runId,
+					summary: errorMessage,
+				},
+			});
 		}
-	})();
+	});
 
 	return run;
 };
@@ -3545,11 +4879,11 @@ export const resumeAgentRun = async (params: {
 		serverId: conversation.serverId ?? undefined,
 	};
 
-	void (async () => {
+	enqueueAgentRun(params.runId, async () => {
 		try {
-			await orchestrateRun(params.runId, toolContext);
+			await runLlmAgentRun(params.runId, toolContext);
 		} catch {}
-	})();
+	});
 };
 
 // ============================================
@@ -3784,19 +5118,39 @@ async function autoContinueAfterApprovedToolExecution(params: {
 		conversationId: params.conversationId,
 	});
 
-	const provider = selectAIProvider(aiSettings);
-	const model = provider(aiSettings.model);
+		const provider = selectAIProvider(aiSettings);
+		const model = provider(aiSettings.model);
 
-	const baseSystemPrompt = buildSystemPrompt(
-		conversation,
-		buildMetaToolPromptInfo().concat(
-			buildToolCatalogPromptInfo({
-				userMessage: lastUserMessageForTools,
-				projectId: conversation.projectId || undefined,
-				serverId: conversation.serverId || undefined,
-			}),
-		),
-	);
+		let playbookPrompt = "";
+		try {
+			const playbooks = await findRelevantPlaybooks({
+				organizationId: conversation.organizationId,
+				aiSettings: {
+					apiUrl: aiSettings.apiUrl,
+					apiKey: aiSettings.apiKey,
+					providerType: aiSettings.providerType,
+					embeddingModel: aiSettings.embeddingModel,
+				},
+				queryText: lastUserMessageForTools,
+			});
+			playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
+		} catch {}
+
+		const baseSystemPrompt = [
+			buildSystemPrompt(
+				conversation,
+				buildMetaToolPromptInfo().concat(
+					buildToolCatalogPromptInfo({
+						userMessage: lastUserMessageForTools,
+						projectId: conversation.projectId || undefined,
+						serverId: conversation.serverId || undefined,
+					}),
+				),
+			),
+			playbookPrompt,
+		]
+			.filter((s) => typeof s === "string" && s.trim().length > 0)
+			.join("\n\n");
 	const systemPrompt =
 		toolExecutionContextMessage.trim().length > 0
 			? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`

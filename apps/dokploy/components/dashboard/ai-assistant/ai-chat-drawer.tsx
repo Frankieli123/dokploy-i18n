@@ -1,13 +1,19 @@
 "use client";
 
 import {
+	AlertTriangle,
 	Bot,
+	Check,
 	History,
 	Loader2,
+	MessageSquare,
 	MessageSquarePlus,
 	Search,
 	Send,
+	ShieldAlert,
+	ShieldCheck,
 	Square,
+	X,
 } from "lucide-react";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
@@ -22,6 +28,13 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -31,7 +44,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import {
 	Sheet,
 	SheetContent,
@@ -63,6 +75,7 @@ export function AIChatDrawer({
 	const [autoLoadHistory, setAutoLoadHistory] = useState(true);
 	const [input, setInput] = useState("");
 	const [selectedAiId, setSelectedAiId] = useState<string>("");
+	const [isAgentMode, setIsAgentMode] = useState(false);
 	const viewportRef = useRef<HTMLDivElement>(null);
 	const isNearBottomRef = useRef(true);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -147,6 +160,9 @@ export function AIChatDrawer({
 		rejectToolCall,
 		stopGeneration,
 		openConversation,
+		pendingApproval,
+		approvePending,
+		rejectPending,
 	} = useChat({
 		onError: (error) => {
 			const errorMessage = error.message || t("ai.chat.sendError");
@@ -279,7 +295,7 @@ export function AIChatDrawer({
 
 		const message = input;
 		setInput("");
-		await send(message, selectedAiId);
+		await send(message, selectedAiId, isAgentMode);
 	};
 
 	const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -302,7 +318,7 @@ export function AIChatDrawer({
 
 	const handleRetry = async (messageId: string) => {
 		if (selectedAiId) {
-			await retryMessage(messageId, selectedAiId);
+			await retryMessage(messageId, selectedAiId, isAgentMode);
 		}
 	};
 
@@ -395,39 +411,25 @@ export function AIChatDrawer({
 							</div>
 						</div>
 					</div>
-					{hasAiConfigs && (
-						<Select value={selectedAiId} onValueChange={setSelectedAiId}>
-							<SelectTrigger
-								className="w-full mt-2"
-								aria-label={t("ai.chat.selectModel")}
-							>
-								<SelectValue placeholder={t("ai.chat.selectModel")} />
-							</SelectTrigger>
-							<SelectContent>
-								{aiConfigs
-									.filter((c) => c.isEnabled)
-									.map((config) => (
-										<SelectItem key={config.aiId} value={config.aiId}>
-											{config.name} ({config.model})
-										</SelectItem>
-									))}
-							</SelectContent>
-						</Select>
-					)}
-					<div className="flex flex-row items-center justify-between rounded-lg border p-3 mt-2">
-						<div className="space-y-0.5 min-w-0">
-							<div className="text-sm font-medium truncate">
-								{t("ai.chat.autoApproveLabel")}
-							</div>
-							<div className="text-xs text-muted-foreground leading-snug">
-								{t("ai.chat.autoApproveDescription")}
-							</div>
-						</div>
-						<Switch
-							checked={areToolApprovalsDisabled}
-							onCheckedChange={setToolApprovalsDisabled}
-						/>
-					</div>
+						{hasAiConfigs && (
+							<Select value={selectedAiId} onValueChange={setSelectedAiId}>
+								<SelectTrigger
+									className="w-full mt-2"
+									aria-label={t("ai.chat.selectModel")}
+								>
+									<SelectValue placeholder={t("ai.chat.selectModel")} />
+								</SelectTrigger>
+								<SelectContent>
+									{aiConfigs
+										.filter((c) => c.isEnabled)
+										.map((config) => (
+											<SelectItem key={config.aiId} value={config.aiId}>
+												{config.name} ({config.model})
+											</SelectItem>
+										))}
+								</SelectContent>
+							</Select>
+						)}
 				</SheetHeader>
 
 				<ScrollArea
@@ -482,27 +484,145 @@ export function AIChatDrawer({
 							))}
 						</div>
 					)}
-				</ScrollArea>
+					</ScrollArea>
 
-				<div className="border-t p-4">
-					<div className="flex gap-2">
-						<Textarea
-							ref={inputRef}
-							value={input}
+					{pendingApproval && (
+						<div className="mx-4 mt-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+							<div className="flex items-start gap-2 text-amber-900 dark:text-amber-200">
+								<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+								<div className="min-w-0 flex-1">
+									<div className="text-sm font-medium">
+										{t("ai.toolCall.pendingApproval")}
+									</div>
+									{pendingApproval.toolName.trim().length > 0 && (
+										<div className="mt-1 text-xs">
+											<span className="opacity-80">Tool:</span>{" "}
+											<span className="font-mono break-words [overflow-wrap:anywhere]">
+												{pendingApproval.toolName}
+											</span>
+										</div>
+									)}
+									{pendingApproval.parametersPreview && (
+										<pre className="mt-2 max-h-32 overflow-y-auto rounded bg-background/60 p-2 text-xs font-mono whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+											{pendingApproval.parametersPreview}
+										</pre>
+									)}
+								</div>
+							</div>
+							<div className="mt-2 flex gap-2 justify-end">
+								<Button
+									size="sm"
+									variant="outline"
+									onClick={rejectPending}
+									className="h-7 text-xs border-amber-500/30 hover:bg-amber-500/10 hover:text-destructive hover:border-destructive/50"
+								>
+									<X className="mr-1 h-3 w-3" />
+									{t("ai.toolCall.reject")}
+								</Button>
+								<Button
+									size="sm"
+									onClick={approvePending}
+									className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white"
+								>
+									<Check className="mr-1 h-3 w-3" />
+									{t("ai.toolCall.reviewApprove")}
+								</Button>
+							</div>
+						</div>
+					)}
+
+					<div className="border-t p-4">
+						<div className="flex gap-2 items-end">
+							<Textarea
+								ref={inputRef}
+								value={input}
 							onChange={(e) => setInput(e.target.value)}
 							onKeyDown={handleKeyPress}
 							rows={1}
 							placeholder={
-								hasAiConfigs
-									? t("ai.chat.inputPlaceholder")
-									: t("ai.chat.configureFirst")
-							}
-							disabled={!hasAiConfigs || isLoading}
-							className="flex-1 min-h-[40px] max-h-[180px] resize-none overflow-y-auto"
-							aria-label={t("ai.chat.inputLabel")}
-						/>
-						{isLoading ? (
-							<Button
+									hasAiConfigs
+										? t("ai.chat.inputPlaceholder")
+										: t("ai.chat.configureFirst")
+								}
+								disabled={!hasAiConfigs || isLoading || !!pendingApproval}
+								className="flex-1 min-h-[40px] max-h-[180px] resize-none overflow-y-auto"
+								aria-label={t("ai.chat.inputLabel")}
+							/>
+							<div className="flex flex-col gap-1 self-end">
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<Button
+											variant="ghost"
+											size="icon"
+											className="h-5 w-9 p-0"
+											disabled={!hasAiConfigs || isLoading}
+											title={
+												`${t("ai.chat.mode.switchTitle")}: ${
+													isAgentMode
+														? t("ai.chat.mode.agent")
+														: t("ai.chat.mode.chat")
+												}`
+											}
+											aria-label={t("ai.chat.mode.switchTitle")}
+										>
+											{isAgentMode ? (
+												<Bot className="h-4 w-4" />
+											) : (
+												<MessageSquare className="h-4 w-4" />
+											)}
+										</Button>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent align="end" side="top" sideOffset={6}>
+										<DropdownMenuLabel className="text-xs text-muted-foreground">
+											{t("ai.chat.mode.switchTitle")}
+										</DropdownMenuLabel>
+										<DropdownMenuItem
+											onClick={() => setIsAgentMode(false)}
+											disabled={!hasAiConfigs || isLoading}
+										>
+											<MessageSquare className="mr-2 h-4 w-4" />
+											<span>{t("ai.chat.mode.chat")}</span>
+											{!isAgentMode && <Check className="ml-auto h-4 w-4" />}
+										</DropdownMenuItem>
+										<DropdownMenuItem
+											onClick={() => setIsAgentMode(true)}
+											disabled={!hasAiConfigs || isLoading}
+										>
+											<Bot className="mr-2 h-4 w-4" />
+											<span>{t("ai.chat.mode.agent")}</span>
+											{isAgentMode && <Check className="ml-auto h-4 w-4" />}
+										</DropdownMenuItem>
+									</DropdownMenuContent>
+								</DropdownMenu>
+
+								<Button
+									variant="ghost"
+									size="icon"
+									className="h-5 w-9 p-0"
+									disabled={!hasAiConfigs || isLoading}
+									title={
+										areToolApprovalsDisabled
+											? t("ai.chat.toolApprovals.auto")
+											: t("ai.chat.toolApprovals.manual")
+									}
+									aria-label={
+										areToolApprovalsDisabled
+											? t("ai.chat.toolApprovals.auto")
+											: t("ai.chat.toolApprovals.manual")
+									}
+									onClick={() =>
+										void setToolApprovalsDisabled(!areToolApprovalsDisabled)
+									}
+								>
+									{areToolApprovalsDisabled ? (
+										<ShieldCheck className="h-4 w-4" />
+									) : (
+										<ShieldAlert className="h-4 w-4" />
+									)}
+								</Button>
+							</div>
+							{isLoading ? (
+								<Button
 								onClick={stopGeneration}
 								variant="destructive"
 								size="icon"
@@ -511,15 +631,15 @@ export function AIChatDrawer({
 								<Square className="h-4 w-4 fill-current" />
 							</Button>
 						) : (
-							<Button
-								onClick={handleSend}
-								disabled={
-									!hasAiConfigs || !input.trim()
-								}
-								size="icon"
-								aria-label={t("ai.chat.sendMessage")}
-							>
-								<Send className="h-4 w-4" />
+								<Button
+									onClick={handleSend}
+									disabled={
+										!hasAiConfigs || !input.trim() || !!pendingApproval
+									}
+									size="icon"
+									aria-label={t("ai.chat.sendMessage")}
+								>
+									<Send className="h-4 w-4" />
 							</Button>
 						)}
 					</div>
