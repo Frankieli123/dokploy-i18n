@@ -1,4 +1,5 @@
 import { validateRequest } from "@dokploy/server";
+import { apiStartAgent } from "@dokploy/server/db/schema/ai";
 import { db } from "@dokploy/server/db";
 import { aiMessages } from "@dokploy/server/db/schema";
 import {
@@ -7,13 +8,8 @@ import {
 } from "@dokploy/server/services/ai";
 import { and, asc, eq, gte } from "drizzle-orm";
 import type { NextApiRequest, NextApiResponse } from "next";
-import { z } from "zod";
 
-const bodySchema = z.object({
-	conversationId: z.string().min(1),
-	aiId: z.string().min(1),
-	goal: z.string().min(1),
-});
+const bodySchema = apiStartAgent;
 
 function writeSseEvent(res: NextApiResponse, event: string, data: unknown) {
 	res.write(`event: ${event}\n`);
@@ -118,6 +114,7 @@ export default async function handler(
 			conversationId,
 			goal: parsed.data.goal,
 			aiId: parsed.data.aiId,
+			attachments: parsed.data.attachments,
 			organizationId: session.activeOrganizationId,
 			userId: user.id,
 		});

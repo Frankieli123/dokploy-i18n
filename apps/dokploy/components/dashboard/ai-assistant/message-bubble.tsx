@@ -131,6 +131,8 @@ export function MessageBubble({
 	const isError = message.status === "error";
 	const isSending = message.status === "sending";
 	const hasToolCalls = message.toolCalls && message.toolCalls.length > 0;
+	const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+	const hasAttachments = attachments.length > 0;
 	const bubbleText = (() => {
 		if (isUser) return message.content ?? "";
 		return displayedContent;
@@ -145,6 +147,7 @@ export function MessageBubble({
 		!!isLast;
 	const shouldRenderBubble =
 		(bubbleText && bubbleText.length > 0) ||
+		hasAttachments ||
 		isSending ||
 		isError ||
 		shouldShowEmptyAssistantFallback;
@@ -214,23 +217,53 @@ export function MessageBubble({
 							isSending && "animate-pulse",
 						)}
 					>
+						{hasAttachments && (
+							<div
+								className={cn(
+									"grid gap-2 mb-2 last:mb-0",
+									attachments.length > 1 ? "grid-cols-2" : "grid-cols-1",
+								)}
+							>
+								{attachments.map((att, idx) => {
+									if (!att || att.type !== "image") return null;
+									if (!att.data || !att.mediaType) return null;
+									const src = `data:${att.mediaType};base64,${att.data}`;
+									/* biome-ignore lint/performance/noImgElement: inline image previews */
+									return (
+										<img
+											key={`${att.name ?? "image"}-${idx}`}
+											src={src}
+											alt={att.name ?? "attachment"}
+											className={cn(
+												"w-full rounded-md border border-border/50 object-cover",
+												isUser && "border-primary/20",
+											)}
+										/>
+									);
+								})}
+							</div>
+						)}
 						{isUser || shouldShowEmptyAssistantFallback || isSending ? (
-							<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed">
-								{shouldShowEmptyAssistantFallback
-									? t("common.unknownError")
-									: bubbleText}
-								{!isUser &&
-									isSending &&
-									(bubbleText.length === 0 ? (
-										<span className="inline-flex items-center gap-1 h-4 ml-1 align-middle">
-											<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
-											<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
-											<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" />
-										</span>
-									) : (
-										<span className="inline-block w-[2px] h-4 ml-1 bg-current align-middle animate-pulse" />
-									))}
-							</p>
+							bubbleText.length > 0 ||
+							shouldShowEmptyAssistantFallback ||
+							(isSending && !isUser) ? (
+								<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed">
+									{shouldShowEmptyAssistantFallback
+										? t("common.unknownError")
+										: bubbleText}
+									{!isUser &&
+										isSending &&
+										(bubbleText.length === 0 ? (
+											<span className="inline-flex items-center gap-1 h-4 ml-1 align-middle">
+												<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
+												<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
+												<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" />
+											</span>
+										) : (
+											<span className="inline-block w-[2px] h-4 ml-1 bg-current align-middle animate-pulse" />
+										))}
+								</p>
+							) : null
 						) : (
 							<ReactMarkdown
 								skipHtml

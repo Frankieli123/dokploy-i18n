@@ -2,14 +2,15 @@
 
 import {
 	AlertTriangle,
+	ArrowUp,
 	Bot,
 	Check,
 	History,
+	ImagePlus,
 	Loader2,
 	MessageSquare,
 	MessageSquarePlus,
 	Search,
-	Send,
 	ShieldAlert,
 	ShieldCheck,
 	Square,
@@ -58,6 +59,12 @@ import { MessageBubble } from "./message-bubble";
 import { ToolExecutionHistory } from "./tool-execution-history";
 import { useChat } from "./use-chat";
 
+type DraftImage = {
+	id: string;
+	file: File;
+	previewUrl: string;
+};
+
 interface AIChatDrawerProps {
 	projectId?: string;
 	serverId?: string;
@@ -79,12 +86,44 @@ export function AIChatDrawer({
 	const viewportRef = useRef<HTMLDivElement>(null);
 	const isNearBottomRef = useRef(true);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
+	const [draftImages, setDraftImages] = useState<DraftImage[]>([]);
+	const draftImagesRef = useRef<DraftImage[]>([]);
+	const fileInputRef = useRef<HTMLInputElement>(null);
+
+	const MAX_IMAGE_ATTACHMENTS = 4;
+	const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+
+	const clearDraftImages = useCallback(() => {
+		setDraftImages((prev) => {
+			for (const img of prev) {
+				try {
+					URL.revokeObjectURL(img.previewUrl);
+				} catch {}
+			}
+			return [];
+		});
+	}, []);
+
+	useEffect(() => {
+		draftImagesRef.current = draftImages;
+	}, [draftImages]);
+
+	useEffect(() => {
+		return () => {
+			for (const img of draftImagesRef.current) {
+				try {
+					URL.revokeObjectURL(img.previewUrl);
+				} catch {}
+			}
+		};
+	}, []);
 
 	useEffect(() => {
 		if (!isOpen) {
 			setAutoLoadHistory(true);
+			clearDraftImages();
 		}
-	}, [isOpen]);
+	}, [clearDraftImages, isOpen]);
 
 	const routeProjectId =
 		typeof router.query.projectId === "string"
@@ -235,10 +274,88 @@ export function AIChatDrawer({
 		viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
 	}, [isOpen]);
 
-	const handleSend = async () => {
-		if (!input.trim()) return;
+	const addDraftImages = useCallback(
+		(files: File[]) => {
+			if (files.length === 0) return;
 
-		const normalized = input.trim().toLowerCase();
+			setDraftImages((prev) => {
+				const remaining = MAX_IMAGE_ATTACHMENTS - prev.length;
+				if (remaining <= 0) {
+					toast.error(`Max ${MAX_IMAGE_ATTACHMENTS} images allowed`);
+					return prev;
+				}
+
+				const next: DraftImage[] = [];
+				for (const file of files) {
+					if (!file.type.startsWith("image/")) continue;
+					if (file.size > MAX_IMAGE_BYTES) {
+						toast.error(
+							`Max ${(MAX_IMAGE_BYTES / (1024 * 1024)).toFixed(0)}MB per image`,
+						);
+						continue;
+					}
+					if (next.length >= remaining) break;
+					const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+					next.push({ id, file, previewUrl: URL.createObjectURL(file) });
+				}
+				return [...prev, ...next];
+			});
+		},
+		[MAX_IMAGE_ATTACHMENTS, MAX_IMAGE_BYTES],
+	);
+
+	const handleSelectImages = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			const picked = Array.from(e.target.files ?? []);
+			addDraftImages(picked);
+			e.target.value = "";
+		},
+		[addDraftImages],
+	);
+
+	const handlePaste = useCallback(
+		(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+			const items = e.clipboardData?.items;
+			if (!items) return;
+
+			const files: File[] = [];
+			for (let index = 0; index < items.length; index++) {
+				const item = items[index];
+				if (item?.kind !== "file") continue;
+				if (!item.type.startsWith("image/")) continue;
+				const file = item.getAsFile();
+				if (file) files.push(file);
+			}
+
+			if (files.length === 0) return;
+
+			const text = e.clipboardData?.getData("text/plain") ?? "";
+			const hasText = typeof text === "string" && text.length > 0;
+			if (!hasText) {
+				e.preventDefault();
+			}
+			addDraftImages(files);
+		},
+		[addDraftImages],
+	);
+
+	const removeDraftImage = useCallback((id: string) => {
+		setDraftImages((prev) => {
+			const target = prev.find((img) => img.id === id);
+			if (target) {
+				try {
+					URL.revokeObjectURL(target.previewUrl);
+				} catch {}
+			}
+			return prev.filter((img) => img.id !== id);
+		});
+	}, []);
+
+	const handleSend = async () => {
+		const trimmedInput = input.trim();
+		if (trimmedInput.length === 0 && draftImages.length === 0) return;
+
+		const normalized = trimmedInput.toLowerCase();
 		const isApproveCommand =
 			normalized === "批准" ||
 			normalized === "同意" ||
@@ -250,7 +367,7 @@ export function AIChatDrawer({
 			normalized === "reject" ||
 			normalized === "rejected";
 
-		if (isApproveCommand || isRejectCommand) {
+		if (draftImages.length === 0 && (isApproveCommand || isRejectCommand)) {
 			const pendingToolCallId = (() => {
 				for (const msg of messages) {
 					for (const tc of msg.toolCalls || []) {
@@ -293,9 +410,57 @@ export function AIChatDrawer({
 
 		if (!selectedAiId || isLoading) return;
 
-		const message = input;
+		type ImageAttachment = {
+			type: "image";
+			data: string;
+			mediaType: string;
+			name: string;
+			size: number;
+		};
+
+		const toDataUrl = (file: File) =>
+			new Promise<string>((resolve, reject) => {
+				const reader = new FileReader();
+				reader.onload = () => resolve(String(reader.result ?? ""));
+				reader.onerror = () => reject(new Error("Failed to read image"));
+				reader.readAsDataURL(file);
+			});
+
+		const parseBase64DataUrl = (
+			dataUrl: string,
+		): { mediaType: string; data: string } | null => {
+			const match = /^data:([^;]+);base64,(.*)$/i.exec(dataUrl.trim());
+			if (!match) return null;
+			return { mediaType: match[1] ?? "", data: match[2] ?? "" };
+		};
+
+		const maybeAttachments = await Promise.all(
+			draftImages.map(async (img) => {
+				try {
+					const parsed = parseBase64DataUrl(await toDataUrl(img.file));
+					if (!parsed) return null;
+					if (!parsed.mediaType.startsWith("image/")) return null;
+					if (!parsed.data) return null;
+					return {
+						type: "image",
+						data: parsed.data,
+						mediaType: parsed.mediaType,
+						name: img.file.name,
+						size: img.file.size,
+					} satisfies ImageAttachment;
+				} catch {
+					return null;
+				}
+			}),
+		);
+		const attachments = maybeAttachments.filter(
+			(att): att is ImageAttachment => att != null,
+		);
+
+		const message = trimmedInput;
 		setInput("");
-		await send(message, selectedAiId, isAgentMode);
+		clearDraftImages();
+		await send(message, selectedAiId, isAgentMode, attachments);
 	};
 
 	const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -532,118 +697,218 @@ export function AIChatDrawer({
 					)}
 
 					<div className="border-t p-4">
-						<div className="flex gap-2 items-end">
+						<div className="flex flex-col gap-2 rounded-xl border bg-background p-3 shadow-sm focus-within:ring-1 focus-within:ring-ring">
+							{draftImages.length > 0 && (
+								<div className="flex gap-2 overflow-x-auto pb-1">
+									{draftImages.map((img) => (
+										<div
+											key={img.id}
+											className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md border"
+										>
+											{/* biome-ignore lint/performance/noImgElement: preview thumbnails */}
+											<img
+												src={img.previewUrl}
+												alt={img.file.name || "attachment"}
+												className="h-full w-full object-cover"
+											/>
+											<Button
+												type="button"
+												variant="secondary"
+												size="icon"
+												className="absolute right-1 top-1 h-6 w-6 rounded-full bg-background/80 hover:bg-background"
+												onClick={() => removeDraftImage(img.id)}
+												aria-label={t("common.delete")}
+											>
+												<X className="h-3 w-3" />
+											</Button>
+										</div>
+									))}
+								</div>
+							)}
+
 							<Textarea
 								ref={inputRef}
 								value={input}
-							onChange={(e) => setInput(e.target.value)}
-							onKeyDown={handleKeyPress}
-							rows={1}
-							placeholder={
+								onChange={(e) => setInput(e.target.value)}
+								onKeyDown={handleKeyPress}
+								onPaste={handlePaste}
+								rows={1}
+								placeholder={
 									hasAiConfigs
 										? t("ai.chat.inputPlaceholder")
 										: t("ai.chat.configureFirst")
 								}
 								disabled={!hasAiConfigs || isLoading || !!pendingApproval}
-								className="flex-1 min-h-[40px] max-h-[180px] resize-none overflow-y-auto"
+								className="min-h-[40px] max-h-[180px] resize-none overflow-y-auto border-0 p-0 shadow-none focus-visible:ring-0"
 								aria-label={t("ai.chat.inputLabel")}
 							/>
-							<div className="flex flex-col gap-1 self-end">
-								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
-										<Button
-											variant="ghost"
-											size="icon"
-											className="h-5 w-9 p-0"
-											disabled={!hasAiConfigs || isLoading}
-											title={
-												`${t("ai.chat.mode.switchTitle")}: ${
-													isAgentMode
-														? t("ai.chat.mode.agent")
-														: t("ai.chat.mode.chat")
-												}`
-											}
-											aria-label={t("ai.chat.mode.switchTitle")}
-										>
-											{isAgentMode ? (
-												<Bot className="h-4 w-4" />
-											) : (
-												<MessageSquare className="h-4 w-4" />
-											)}
-										</Button>
-									</DropdownMenuTrigger>
-									<DropdownMenuContent align="end" side="top" sideOffset={6}>
-										<DropdownMenuLabel className="text-xs text-muted-foreground">
-											{t("ai.chat.mode.switchTitle")}
-										</DropdownMenuLabel>
-										<DropdownMenuItem
-											onClick={() => setIsAgentMode(false)}
-											disabled={!hasAiConfigs || isLoading}
-										>
-											<MessageSquare className="mr-2 h-4 w-4" />
-											<span>{t("ai.chat.mode.chat")}</span>
-											{!isAgentMode && <Check className="ml-auto h-4 w-4" />}
-										</DropdownMenuItem>
-										<DropdownMenuItem
-											onClick={() => setIsAgentMode(true)}
-											disabled={!hasAiConfigs || isLoading}
-										>
-											<Bot className="mr-2 h-4 w-4" />
-											<span>{t("ai.chat.mode.agent")}</span>
-											{isAgentMode && <Check className="ml-auto h-4 w-4" />}
-										</DropdownMenuItem>
-									</DropdownMenuContent>
-								</DropdownMenu>
 
-								<Button
-									variant="ghost"
-									size="icon"
-									className="h-5 w-9 p-0"
-									disabled={!hasAiConfigs || isLoading}
-									title={
-										areToolApprovalsDisabled
-											? t("ai.chat.toolApprovals.auto")
-											: t("ai.chat.toolApprovals.manual")
-									}
-									aria-label={
-										areToolApprovalsDisabled
-											? t("ai.chat.toolApprovals.auto")
-											: t("ai.chat.toolApprovals.manual")
-									}
-									onClick={() =>
-										void setToolApprovalsDisabled(!areToolApprovalsDisabled)
-									}
-								>
-									{areToolApprovalsDisabled ? (
-										<ShieldCheck className="h-4 w-4" />
+							<div className="flex items-end justify-between gap-2">
+								<div className="flex items-center gap-1">
+									<input
+										ref={fileInputRef}
+										type="file"
+										accept="image/*"
+										multiple
+										className="hidden"
+										onChange={handleSelectImages}
+									/>
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon"
+										className="h-8 w-8 text-muted-foreground hover:text-foreground"
+										disabled={!hasAiConfigs || isLoading || !!pendingApproval}
+										onClick={() => fileInputRef.current?.click()}
+										title="Attach images"
+										aria-label="Attach images"
+									>
+										<ImagePlus className="h-5 w-5" />
+									</Button>
+								</div>
+
+								<div className="flex items-end gap-2">
+									<div className="flex flex-col gap-1 self-end">
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild>
+												<Button
+													variant="ghost"
+													size="icon"
+													className="h-8 w-8 text-muted-foreground hover:text-foreground"
+													disabled={!hasAiConfigs || isLoading}
+													title={
+														`${t("ai.chat.mode.switchTitle")}: ${
+															isAgentMode
+																? t("ai.chat.mode.agent")
+																: t("ai.chat.mode.chat")
+														}`
+													}
+													aria-label={t("ai.chat.mode.switchTitle")}
+												>
+													{isAgentMode ? (
+														<Bot className="h-5 w-5" />
+													) : (
+														<MessageSquare className="h-5 w-5" />
+													)}
+												</Button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent
+												align="end"
+												side="top"
+												sideOffset={6}
+											>
+												<DropdownMenuLabel className="text-xs text-muted-foreground">
+													{t("ai.chat.mode.switchTitle")}
+												</DropdownMenuLabel>
+												<DropdownMenuItem
+													onClick={() => setIsAgentMode(false)}
+													disabled={!hasAiConfigs || isLoading}
+												>
+													<MessageSquare className="mr-2 h-4 w-4" />
+													<span>{t("ai.chat.mode.chat")}</span>
+													{!isAgentMode && (
+														<Check className="ml-auto h-4 w-4" />
+													)}
+												</DropdownMenuItem>
+												<DropdownMenuItem
+													onClick={() => setIsAgentMode(true)}
+													disabled={!hasAiConfigs || isLoading}
+												>
+													<Bot className="mr-2 h-4 w-4" />
+													<span>{t("ai.chat.mode.agent")}</span>
+													{isAgentMode && (
+														<Check className="ml-auto h-4 w-4" />
+													)}
+												</DropdownMenuItem>
+											</DropdownMenuContent>
+										</DropdownMenu>
+
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild>
+												<Button
+													variant="ghost"
+													size="icon"
+													className="h-8 w-8 text-muted-foreground hover:text-foreground"
+													disabled={!hasAiConfigs || isLoading}
+													title={
+														areToolApprovalsDisabled
+															? t("ai.chat.toolApprovals.auto")
+															: t("ai.chat.toolApprovals.manual")
+													}
+													aria-label={
+														areToolApprovalsDisabled
+															? t("ai.chat.toolApprovals.auto")
+															: t("ai.chat.toolApprovals.manual")
+													}
+												>
+													{areToolApprovalsDisabled ? (
+														<ShieldCheck className="h-5 w-5" />
+													) : (
+														<ShieldAlert className="h-5 w-5" />
+													)}
+												</Button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent
+												align="end"
+												side="top"
+												sideOffset={6}
+											>
+												<DropdownMenuItem
+													disabled={!hasAiConfigs || isLoading}
+													onClick={() =>
+														void setToolApprovalsDisabled(false)
+													}
+												>
+													<ShieldAlert className="mr-2 h-4 w-4" />
+													<span>{t("ai.chat.toolApprovals.manual")}</span>
+													{!areToolApprovalsDisabled && (
+														<Check className="ml-auto h-4 w-4" />
+													)}
+												</DropdownMenuItem>
+												<DropdownMenuItem
+													disabled={!hasAiConfigs || isLoading}
+													onClick={() => void setToolApprovalsDisabled(true)}
+												>
+													<ShieldCheck className="mr-2 h-4 w-4" />
+													<span>{t("ai.chat.toolApprovals.auto")}</span>
+													{areToolApprovalsDisabled && (
+														<Check className="ml-auto h-4 w-4" />
+													)}
+												</DropdownMenuItem>
+											</DropdownMenuContent>
+										</DropdownMenu>
+									</div>
+
+									{isLoading ? (
+										<Button
+											onClick={stopGeneration}
+											variant="destructive"
+											size="icon"
+											className="h-8 w-8 rounded-full"
+											aria-label={t("common.stop")}
+										>
+											<Square className="h-4 w-4 fill-current" />
+										</Button>
 									) : (
-										<ShieldAlert className="h-4 w-4" />
+										<Button
+											onClick={handleSend}
+											disabled={
+												!hasAiConfigs ||
+												!!pendingApproval ||
+												(input.trim().length === 0 &&
+													draftImages.length === 0)
+											}
+											size="icon"
+											className="h-8 w-8 rounded-full"
+											aria-label={t("ai.chat.sendMessage")}
+										>
+											<ArrowUp className="h-4 w-4" />
+										</Button>
 									)}
-								</Button>
+								</div>
 							</div>
-							{isLoading ? (
-								<Button
-								onClick={stopGeneration}
-								variant="destructive"
-								size="icon"
-								aria-label={t("common.stop")}
-							>
-								<Square className="h-4 w-4 fill-current" />
-							</Button>
-						) : (
-								<Button
-									onClick={handleSend}
-									disabled={
-										!hasAiConfigs || !input.trim() || !!pendingApproval
-									}
-									size="icon"
-									aria-label={t("ai.chat.sendMessage")}
-								>
-									<Send className="h-4 w-4" />
-							</Button>
-						)}
+						</div>
 					</div>
-				</div>
 			</SheetContent>
 		</Sheet>
 	);

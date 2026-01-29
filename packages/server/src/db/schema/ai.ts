@@ -340,6 +340,15 @@ export const aiMessages = pgTable("ai_message", {
 		.references(() => aiConversations.conversationId, { onDelete: "cascade" }),
 	role: aiMessageRole("role").notNull(),
 	content: text("content"),
+	attachments: jsonb("attachments").$type<
+		Array<{
+			type: "image";
+			data: string;
+			mediaType: string;
+			name?: string;
+			size?: number;
+		}>
+	>(),
 	toolCalls:
 		jsonb("toolCalls").$type<
 			Array<{
@@ -506,15 +515,28 @@ export const apiSetToolApprovalsDisabled = z.object({
 	disabled: z.boolean(),
 });
 
+export const aiMessageAttachmentSchema = z.object({
+	type: z.literal("image"),
+	data: z.string().min(1),
+	mediaType: z.string().min(1),
+	name: z.string().optional(),
+	size: z.number().int().positive().optional(),
+});
+
 // ============================================
 // API Schemas for Chat
 // ============================================
 
-export const apiSendMessage = z.object({
-	conversationId: z.string().min(1),
-	message: z.string().min(1),
-	aiId: z.string().min(1),
-});
+export const apiSendMessage = z
+	.object({
+		conversationId: z.string().min(1),
+		message: z.string().optional().default(""),
+		aiId: z.string().min(1),
+		attachments: z.array(aiMessageAttachmentSchema).optional().default([]),
+	})
+	.refine((input) => input.message.trim().length > 0 || input.attachments.length > 0, {
+		message: "Message or attachments required",
+	});
 
 export const apiGetMessages = z.object({
 	conversationId: z.string().min(1),
@@ -526,11 +548,16 @@ export const apiGetMessages = z.object({
 // API Schemas for Agent
 // ============================================
 
-export const apiStartAgent = z.object({
-	conversationId: z.string().min(1),
-	goal: z.string().min(1),
-	aiId: z.string().min(1),
-});
+export const apiStartAgent = z
+	.object({
+		conversationId: z.string().min(1),
+		goal: z.string().optional().default(""),
+		aiId: z.string().min(1),
+		attachments: z.array(aiMessageAttachmentSchema).optional().default([]),
+	})
+	.refine((input) => input.goal.trim().length > 0 || input.attachments.length > 0, {
+		message: "Goal or attachments required",
+	});
 
 export const apiGetRun = z.object({
 	runId: z.string().min(1),

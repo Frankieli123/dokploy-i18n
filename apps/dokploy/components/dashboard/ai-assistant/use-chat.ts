@@ -112,6 +112,15 @@ export interface Message {
 	messageId: string;
 	role: "user" | "assistant" | "system" | "tool";
 	content: string | null;
+	attachments?:
+		| Array<{
+				type: "image";
+				data: string;
+				mediaType: string;
+				name?: string;
+				size?: number;
+		  }>
+		| null;
 	toolCalls?: ToolCall[] | null;
 	createdAt: string;
 	status?: "sending" | "sent" | "error";
@@ -430,7 +439,11 @@ export function useChat(options: UseChatOptions = {}) {
 			.filter((pm) => {
 				if (pm.status === "sending") return true;
 				return !server.some(
-					(sm) => sm.content === pm.content && sm.role === pm.role,
+					(sm) =>
+						sm.role === pm.role &&
+						sm.content === pm.content &&
+						JSON.stringify(sm.attachments ?? null) ===
+							JSON.stringify(pm.attachments ?? null),
 				);
 			})
 			.map(applyMeta);
@@ -722,8 +735,13 @@ export function useChat(options: UseChatOptions = {}) {
 	);
 
 	const send = useCallback(
-		async (content: string, aiId: string, isAgentMode = false) => {
-			if (!content.trim()) return;
+		async (
+			content: string,
+			aiId: string,
+			isAgentMode = false,
+			attachments: NonNullable<Message["attachments"]> = [],
+		) => {
+			if (!content.trim() && attachments.length === 0) return;
 
 			setIsLoading(true);
 
@@ -735,6 +753,7 @@ export function useChat(options: UseChatOptions = {}) {
 				messageId: userTempId,
 				role: "user",
 				content,
+				attachments: attachments.length > 0 ? attachments : undefined,
 				createdAt: new Date().toISOString(),
 				status: "sending",
 			};
@@ -826,6 +845,7 @@ export function useChat(options: UseChatOptions = {}) {
 							conversationId: currentConversationId,
 							goal: content,
 							aiId,
+							attachments,
 						}),
 						signal: controller.signal,
 					});
@@ -1063,6 +1083,7 @@ export function useChat(options: UseChatOptions = {}) {
 						conversationId: currentConversationId,
 						message: content,
 						aiId,
+						attachments,
 					}),
 					signal: controller.signal,
 				});
@@ -1452,13 +1473,16 @@ export function useChat(options: UseChatOptions = {}) {
 	const retryMessage = useCallback(
 		async (messageId: string, aiId: string, isAgentMode = false) => {
 			const message = pendingMessages.find((m) => m.messageId === messageId);
-			if (!message || !message.content) return;
+			if (!message) return;
+			const content = message.content ?? "";
+			const attachments = message.attachments ?? undefined;
+			if (!content.trim() && (!attachments || attachments.length === 0)) return;
 
 			setPendingMessages((prev) =>
 				prev.filter((m) => m.messageId !== messageId),
 			);
 
-			await send(message.content, aiId, isAgentMode);
+			await send(content, aiId, isAgentMode, attachments ?? []);
 		},
 		[pendingMessages, send],
 	);

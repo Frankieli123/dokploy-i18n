@@ -456,6 +456,7 @@ export const aiRouter = createTRPCRouter({
 					conversationId: input.conversationId,
 					message: input.message,
 					aiId: input.aiId,
+					attachments: input.attachments,
 					organizationId: ctx.session.activeOrganizationId,
 					userId: ctx.user.id,
 				});
@@ -487,6 +488,7 @@ export const aiRouter = createTRPCRouter({
 					conversationId: input.conversationId,
 					goal: input.goal,
 					aiId: input.aiId,
+					attachments: input.attachments,
 					organizationId: ctx.session.activeOrganizationId,
 					userId: ctx.user.id,
 				});

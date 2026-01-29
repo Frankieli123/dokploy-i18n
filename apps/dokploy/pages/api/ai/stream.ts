@@ -1,13 +1,9 @@
 import { validateRequest } from "@dokploy/server";
+import { apiSendMessage } from "@dokploy/server/db/schema/ai";
 import { chatStream, getConversationById } from "@dokploy/server/services/ai";
 import type { NextApiRequest, NextApiResponse } from "next";
-import { z } from "zod";
 
-const bodySchema = z.object({
-	conversationId: z.string().min(1),
-	aiId: z.string().min(1),
-	message: z.string().min(1),
-});
+const bodySchema = apiSendMessage;
 
 function writeSseEvent(
 	res: NextApiResponse,
@@ -129,6 +125,7 @@ export default async function handler(
 				conversationId: parsed.data.conversationId,
 				message: parsed.data.message,
 				aiId: parsed.data.aiId,
+				attachments: parsed.data.attachments,
 				organizationId: session.activeOrganizationId,
 				userId: user.id,
 			},

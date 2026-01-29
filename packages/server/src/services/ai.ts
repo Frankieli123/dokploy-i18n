@@ -42,6 +42,9 @@ import {
 import { selectRelevantTools } from "./ai-tools/selector";
 import { findServerById } from "./server";
 
+type AiMessageRow = typeof aiMessages.$inferSelect;
+type AiMessageAttachment = NonNullable<AiMessageRow["attachments"]>[number];
+
 type ToolPromptInfo = {
 	name: string;
 	description: string;
@@ -1329,6 +1332,7 @@ export const saveMessage = async (params: {
 	conversationId: string;
 	role: "user" | "assistant" | "system" | "tool";
 	content?: string;
+	attachments?: AiMessageRow["attachments"];
 	toolCalls?: Array<{
 		id: string;
 		type: "function";
@@ -1351,6 +1355,117 @@ export const saveMessage = async (params: {
 	return message;
 };
 
+const AI_MESSAGE_MAX_ATTACHMENTS = 4;
+const AI_MESSAGE_MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+
+function estimateBase64Bytes(base64: string): number {
+	const cleaned = base64.trim().replace(/\s/g, "");
+	const padding = cleaned.endsWith("==") ? 2 : cleaned.endsWith("=") ? 1 : 0;
+	const bytes = Math.floor((cleaned.length * 3) / 4) - padding;
+	return bytes > 0 ? bytes : 0;
+}
+
+function normalizeMessageAttachments(
+	attachments: AiMessageAttachment[] | undefined,
+): AiMessageAttachment[] {
+	if (!Array.isArray(attachments) || attachments.length === 0) return [];
+	if (attachments.length > AI_MESSAGE_MAX_ATTACHMENTS) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: `Too many attachments (max ${AI_MESSAGE_MAX_ATTACHMENTS})`,
+		});
+	}
+
+	const normalized: AiMessageAttachment[] = [];
+	for (const attachment of attachments) {
+		if (!attachment || attachment.type !== "image") continue;
+		if (typeof attachment.data !== "string" || attachment.data.trim().length === 0) {
+			continue;
+		}
+		if (
+			typeof attachment.mediaType !== "string" ||
+			attachment.mediaType.trim().length === 0
+		) {
+			continue;
+		}
+		const mediaType = attachment.mediaType.trim();
+		if (!mediaType.startsWith("image/")) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: `Unsupported attachment media type: ${mediaType}`,
+			});
+		}
+		const data = attachment.data.trim();
+		const bytes = estimateBase64Bytes(data);
+		if (bytes > AI_MESSAGE_MAX_IMAGE_BYTES) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: `Attachment too large (max ${AI_MESSAGE_MAX_IMAGE_BYTES} bytes)`,
+			});
+		}
+
+		normalized.push({
+			...attachment,
+			data,
+			mediaType,
+		});
+	}
+	return normalized;
+}
+
+function messageToCoreMessage(
+	msg: Pick<AiMessageRow, "role" | "content" | "toolCalls" | "attachments">,
+): CoreMessage | null {
+	if (msg.role !== "user" && msg.role !== "assistant") return null;
+
+	const content = typeof msg.content === "string" ? msg.content.trim() : "";
+	const attachments = Array.isArray(msg.attachments) ? msg.attachments : [];
+
+	if (msg.role === "user" && attachments.length > 0) {
+		const parts: Array<Record<string, unknown>> = [];
+		if (content.length > 0) {
+			parts.push({ type: "text", text: content });
+		}
+		for (const attachment of attachments) {
+			if (!attachment || attachment.type !== "image") continue;
+			if (typeof attachment.data !== "string" || attachment.data.length === 0) {
+				continue;
+			}
+			if (
+				typeof attachment.mediaType !== "string" ||
+				attachment.mediaType.length === 0
+			) {
+				continue;
+			}
+			parts.push({
+				type: "image",
+				image: attachment.data,
+				mediaType: attachment.mediaType,
+			});
+		}
+		if (parts.length > 0) {
+			return { role: "user", content: parts as any };
+		}
+	}
+
+	if (content.length > 0) {
+		return { role: msg.role as "user" | "assistant", content };
+	}
+
+	const toolNames = (msg.toolCalls ?? [])
+		.map((tc) => tc.function?.name)
+		.filter(Boolean)
+		.join(", ");
+	if (toolNames.length > 0) {
+		return {
+			role: msg.role as "user" | "assistant",
+			content: `[tool_calls: ${toolNames}]`,
+		};
+	}
+
+	return null;
+}
+
 // ============================================
 // Chat Function
 // ============================================
@@ -1358,6 +1473,7 @@ export const saveMessage = async (params: {
 interface ChatParams {
 	conversationId: string;
 	message: string;
+	attachments?: AiMessageAttachment[];
 	aiId: string;
 	organizationId: string;
 	userId: string;
@@ -2355,6 +2471,7 @@ export type ChatResult = {
 export const chat = async ({
 	conversationId,
 	message,
+	attachments,
 	aiId,
 	organizationId,
 	userId,
@@ -2385,10 +2502,13 @@ export const chat = async ({
 	initializeTools();
 
 	// Save user message
+	const normalizedAttachments = normalizeMessageAttachments(attachments);
 	const userMessage = await saveMessage({
 		conversationId,
 		role: "user",
 		content: message,
+		attachments:
+			normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
 	});
 	if (!userMessage) {
 		throw new TRPCError({
@@ -2402,27 +2522,7 @@ export const chat = async ({
 
 	// Build messages array for AI
 	let messages: CoreMessage[] = history
-		.map((msg) => {
-			if (msg.role !== "user" && msg.role !== "assistant") return null;
-			const content = (msg.content || "").trim();
-			if (content.length > 0) {
-				return {
-					role: msg.role as "user" | "assistant",
-					content,
-				};
-			}
-			const toolNames = (msg.toolCalls ?? [])
-				.map((tc) => tc.function?.name)
-				.filter(Boolean)
-				.join(", ");
-			if (toolNames.length > 0) {
-				return {
-					role: msg.role as "user" | "assistant",
-					content: `[tool_calls: ${toolNames}]`,
-				};
-			}
-			return null;
-		})
+		.map(messageToCoreMessage)
 		.filter(Boolean) as CoreMessage[];
 
 	const provider = selectAIProvider(aiSettings);
@@ -2906,7 +3006,7 @@ export type ChatStreamOptions = {
 };
 
 export const chatStream = async (
-	{ conversationId, message, aiId, organizationId, userId }: ChatParams,
+	{ conversationId, message, attachments, aiId, organizationId, userId }: ChatParams,
 	options: ChatStreamOptions = {},
 ) => {
 	const aiSettings = await getAiSettingById(aiId);
@@ -2934,10 +3034,13 @@ export const chatStream = async (
 
 	initializeTools();
 
+	const normalizedAttachments = normalizeMessageAttachments(attachments);
 	const userMessage = await saveMessage({
 		conversationId,
 		role: "user",
 		content: message,
+		attachments:
+			normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
 	});
 	if (!userMessage) {
 		throw new TRPCError({
@@ -2948,27 +3051,7 @@ export const chatStream = async (
 
 	const history = await getMessages({ conversationId, limit: 20 });
 	let messages: CoreMessage[] = history
-		.map((msg) => {
-			if (msg.role !== "user" && msg.role !== "assistant") return null;
-			const content = (msg.content ?? "").trim();
-			if (content.length > 0) {
-				return {
-					role: msg.role as "user" | "assistant",
-					content,
-				};
-			}
-			const toolNames = (msg.toolCalls ?? [])
-				.map((tc) => tc.function?.name)
-				.filter(Boolean)
-				.join(", ");
-			if (toolNames.length > 0) {
-				return {
-					role: msg.role as "user" | "assistant",
-					content: `[tool_calls: ${toolNames}]`,
-				};
-			}
-			return null;
-		})
+		.map(messageToCoreMessage)
 		.filter(Boolean) as CoreMessage[];
 
 		const provider = selectAIProvider(aiSettings);
@@ -4271,27 +4354,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 
 	const history = await getMessages({ conversationId: run.conversationId, limit: 20 });
 	let messages: CoreMessage[] = history
-		.map((msg) => {
-			if (msg.role !== "user" && msg.role !== "assistant") return null;
-			const content = (msg.content || "").trim();
-			if (content.length > 0) {
-				return {
-					role: msg.role as "user" | "assistant",
-					content,
-				};
-			}
-			const toolNames = (msg.toolCalls ?? [])
-				.map((tc) => tc.function?.name)
-				.filter(Boolean)
-				.join(", ");
-			if (toolNames.length > 0) {
-				return {
-					role: msg.role as "user" | "assistant",
-					content: `[tool_calls: ${toolNames}]`,
-				};
-			}
-			return null;
-		})
+		.map(messageToCoreMessage)
 		.filter(Boolean) as CoreMessage[];
 
 			let playbookPrompt = "";
@@ -4848,6 +4911,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 export const startAgentRun = async (params: {
 	conversationId: string;
 	goal: string;
+	attachments?: AiMessageAttachment[];
 	aiId: string;
 	organizationId: string;
 	userId: string;
@@ -4881,11 +4945,15 @@ export const startAgentRun = async (params: {
 		});
 	}
 
+	const normalizedAttachments = normalizeMessageAttachments(params.attachments);
+
 	try {
 		await saveMessage({
 			conversationId: params.conversationId,
 			role: "user",
 			content: params.goal,
+			attachments:
+				normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
 		});
 	} catch {}
 	await updateRun(run.runId, { plan: { steps: [] } });
@@ -5160,28 +5228,8 @@ async function autoContinueAfterApprovedToolExecution(params: {
 
 	const history = await getMessages({ conversationId: params.conversationId, limit: 20 });
 	const messages: CoreMessage[] = history
-		.map((msg) => {
-			if (msg.role !== "user" && msg.role !== "assistant") return null;
-			const content = (msg.content ?? "").trim();
-			if (content.length > 0) {
-				return {
-					role: msg.role as "user" | "assistant",
-					content,
-				};
-			}
-			const toolNames = (msg.toolCalls ?? [])
-				.map((tc) => tc.function?.name)
-				.filter(Boolean)
-				.join(", ");
-			if (toolNames.length > 0) {
-				return {
-					role: msg.role as "user" | "assistant",
-					content: `[tool_calls: ${toolNames}]`,
-				};
-			}
-			return null;
-		})
-			.filter(Boolean) as CoreMessage[];
+		.map(messageToCoreMessage)
+		.filter(Boolean) as CoreMessage[];
 
 		const internalPrompt = [
 			"Continue the task based on the conversation so far.",
