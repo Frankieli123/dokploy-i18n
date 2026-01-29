@@ -101,6 +101,9 @@ export const aiProviderTypeSchema = z.enum([
 		apiKey: text("apiKey").notNull(),
 		model: text("model").notNull(),
 		embeddingModel: text("embeddingModel"),
+		embeddingProviderType: text("embeddingProviderType"),
+		embeddingApiUrl: text("embeddingApiUrl"),
+		embeddingApiKey: text("embeddingApiKey"),
 		isEnabled: boolean("isEnabled").notNull().default(true),
 		organizationId: text("organizationId")
 			.notNull()
@@ -117,6 +120,46 @@ export const aiRelations = relations(ai, ({ one }) => ({
 	}),
 }));
 
+export const aiEmbeddingProviders = pgTable("ai_embedding_provider", {
+	embeddingProviderId: text("embeddingProviderId")
+		.notNull()
+		.primaryKey()
+		.$defaultFn(() => nanoid()),
+	organizationId: text("organizationId")
+		.notNull()
+		.references(() => organization.id, { onDelete: "cascade" })
+		.unique(),
+	providerType: text("providerType").notNull().default("openai_compatible"),
+	apiUrl: text("apiUrl").notNull(),
+	apiKey: text("apiKey").notNull(),
+	model: text("model").notNull(),
+	createdAt: text("createdAt")
+		.notNull()
+		.$defaultFn(() => new Date().toISOString()),
+	updatedAt: text("updatedAt")
+		.notNull()
+		.$defaultFn(() => new Date().toISOString()),
+});
+
+export const aiEmbeddingProvidersRelations = relations(
+	aiEmbeddingProviders,
+	({ one }) => ({
+		organization: one(organization, {
+			fields: [aiEmbeddingProviders.organizationId],
+			references: [organization.id],
+		}),
+	}),
+);
+
+export const apiUpsertAiEmbeddingProvider = z
+	.object({
+		providerType: aiProviderTypeSchema.optional().default("openai_compatible"),
+		apiUrl: z.string().url(),
+		apiKey: z.string().optional().nullable(),
+		model: z.string().min(1),
+	})
+	.required();
+
 	const createSchema = createInsertSchema(ai, {
 		name: z.string().min(1, { message: "Name is required" }),
 		providerType: aiProviderTypeSchema.optional().default("openai_compatible"),
@@ -124,6 +167,9 @@ export const aiRelations = relations(ai, ({ one }) => ({
 		apiKey: z.string(),
 		model: z.string().min(1, { message: "Model is required" }),
 		embeddingModel: z.string().trim().min(1).optional().nullable(),
+		embeddingProviderType: aiProviderTypeSchema.optional().nullable(),
+		embeddingApiUrl: z.string().url().optional().nullable(),
+		embeddingApiKey: z.string().optional().nullable(),
 		isEnabled: z.boolean().optional(),
 	});
 
@@ -135,12 +181,18 @@ export const aiRelations = relations(ai, ({ one }) => ({
 			apiKey: true,
 			model: true,
 			embeddingModel: true,
+			embeddingProviderType: true,
+			embeddingApiUrl: true,
+			embeddingApiKey: true,
 			isEnabled: true,
 		})
 		.required()
 		.extend({
 			providerType: aiProviderTypeSchema.optional().default("openai_compatible"),
 			embeddingModel: z.string().trim().min(1).optional().nullable(),
+			embeddingProviderType: aiProviderTypeSchema.optional().nullable(),
+			embeddingApiUrl: z.string().url().optional().nullable(),
+			embeddingApiKey: z.string().optional().nullable(),
 		});
 
 	export const apiUpdateAi = createSchema
@@ -148,6 +200,9 @@ export const aiRelations = relations(ai, ({ one }) => ({
 		.extend({
 			aiId: z.string().min(1),
 			embeddingModel: z.string().trim().min(1).optional().nullable(),
+			embeddingProviderType: aiProviderTypeSchema.optional().nullable(),
+			embeddingApiUrl: z.string().url().optional().nullable(),
+			embeddingApiKey: z.string().optional().nullable(),
 		})
 		.omit({ organizationId: true });
 

@@ -252,7 +252,7 @@ EOF
     --env POSTGRES_DB=dokploy \
     --env POSTGRES_PASSWORD=amukds4wi9001583845717ad2 \
     --mount type=volume,source=dokploy-postgres,target=/var/lib/postgresql/data \
-    postgres:16
+    pgvector/pgvector:pg16
 
     docker service create \
     --name dokploy-redis \

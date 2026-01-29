@@ -7,14 +7,12 @@ const connectionString = process.env.DATABASE_URL!;
 const sql = postgres(connectionString, { max: 1 });
 const db = drizzle(sql);
 
-await migrate(db, { migrationsFolder: "drizzle" })
-	.then(() => {
-		console.log("Migration complete");
-		sql.end();
-	})
-	.catch((error) => {
-		console.log("Migration failed", error);
-	})
-	.finally(() => {
-		sql.end();
-	});
+try {
+	await migrate(db, { migrationsFolder: "drizzle" });
+	console.log("Migration complete");
+} catch (error) {
+	console.error("Migration failed", error);
+	process.exitCode = 1;
+} finally {
+	await sql.end({ timeout: 5 });
+}

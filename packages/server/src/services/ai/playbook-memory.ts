@@ -49,19 +49,24 @@ export function hashTextToUnitVector(
 	return l2Normalize(vec);
 }
 
+export type EmbeddingProviderConfig = {
+	apiUrl: string;
+	apiKey: string;
+	providerType?: string | null;
+	model: string;
+};
+
 export async function tryEmbedText(params: {
-	aiSettings: {
-		apiUrl: string;
-		apiKey: string;
-		providerType?: string | null;
-		embeddingModel?: string | null;
-	};
+	embeddingProvider?: EmbeddingProviderConfig | null;
 	text: string;
 }): Promise<{ vector: number[]; dim: number; model: string } | null> {
-	const modelId = String(params.aiSettings.embeddingModel ?? "").trim();
+	const embeddingProvider = params.embeddingProvider;
+	if (!embeddingProvider) return null;
+
+	const modelId = String(embeddingProvider.model ?? "").trim();
 	if (!modelId) return null;
 
-	const provider = selectAIProvider(params.aiSettings) as unknown as Record<
+	const provider = selectAIProvider(embeddingProvider) as unknown as Record<
 		string,
 		unknown
 	>;

@@ -1,6 +1,7 @@
 import { db } from "@dokploy/server/db";
 import {
 	ai,
+	aiEmbeddingProviders,
 	aiAgentPlaybooks,
 	aiConversations,
 	aiMessages,
@@ -29,6 +30,7 @@ import {
 	PLAYBOOK_HASH_DIMENSIONS,
 	PLAYBOOK_RETENTION_DAYS,
 	hashTextToUnitVector,
+	type EmbeddingProviderConfig,
 	tryEmbedText,
 } from "./ai/playbook-memory";
 import {
@@ -817,6 +819,105 @@ export const saveAiSettings = async (organizationId: string, settings: any) => {
 
 export const deleteAiSettings = async (aiId: string) => {
 	return db.delete(ai).where(eq(ai.aiId, aiId));
+};
+
+export const getAiEmbeddingProviderByOrganizationId = async (
+	organizationId: string,
+) => {
+	return (
+		(await db.query.aiEmbeddingProviders.findFirst({
+			where: eq(aiEmbeddingProviders.organizationId, organizationId),
+		})) ?? null
+	);
+};
+
+export const saveAiEmbeddingProvider = async (
+	organizationId: string,
+	settings: any,
+) => {
+	const providerType = String(settings?.providerType ?? "").trim() || "openai_compatible";
+	const apiUrl = String(settings?.apiUrl ?? "")
+		.trim()
+		.replace(/\/+$/, "");
+	const apiKey = String(settings?.apiKey ?? "");
+	const model = String(settings?.model ?? "").trim();
+
+	if (apiUrl.length === 0 || model.length === 0) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Embedding provider apiUrl/model is required",
+		});
+	}
+
+	return await db
+		.insert(aiEmbeddingProviders)
+		.values({
+			organizationId,
+			providerType,
+			apiUrl,
+			apiKey,
+			model,
+		})
+		.onConflictDoUpdate({
+			target: aiEmbeddingProviders.organizationId,
+			set: {
+				providerType,
+				apiUrl,
+				apiKey,
+				model,
+				updatedAt: new Date().toISOString(),
+			},
+		});
+};
+
+export const deleteAiEmbeddingProvider = async (organizationId: string) => {
+	return await db
+		.delete(aiEmbeddingProviders)
+		.where(eq(aiEmbeddingProviders.organizationId, organizationId));
+};
+
+const resolveEmbeddingProviderConfig = async (params: {
+	organizationId: string;
+	aiSettings: {
+		apiUrl: string;
+		apiKey: string;
+		providerType?: string | null;
+		embeddingModel?: string | null;
+		embeddingProviderType?: string | null;
+		embeddingApiUrl?: string | null;
+		embeddingApiKey?: string | null;
+	};
+}): Promise<EmbeddingProviderConfig | null> => {
+	const orgProvider = await getAiEmbeddingProviderByOrganizationId(
+		params.organizationId,
+	);
+	if (orgProvider) {
+		return {
+			providerType: orgProvider.providerType,
+			apiUrl: orgProvider.apiUrl,
+			apiKey: orgProvider.apiKey,
+			model: orgProvider.model,
+		};
+	}
+
+	const overrideModel = String(params.aiSettings.embeddingModel ?? "").trim();
+	if (overrideModel.length > 0) {
+		const overrideApiUrl = String(params.aiSettings.embeddingApiUrl ?? "")
+			.trim()
+			.replace(/\/+$/, "");
+		const hasOverrideApiUrl = overrideApiUrl.length > 0;
+		return {
+			providerType:
+				params.aiSettings.embeddingProviderType ?? params.aiSettings.providerType,
+			apiUrl: hasOverrideApiUrl ? overrideApiUrl : params.aiSettings.apiUrl,
+			apiKey: hasOverrideApiUrl
+				? String(params.aiSettings.embeddingApiKey ?? "")
+				: params.aiSettings.apiKey,
+			model: overrideModel,
+		};
+	}
+
+	return null;
 };
 
 interface Props {
@@ -2327,20 +2428,19 @@ export const chat = async ({
 	const provider = selectAIProvider(aiSettings);
 	const model = provider(aiSettings.model);
 
-	let playbookPrompt = "";
-	try {
-		const playbooks = await findRelevantPlaybooks({
-			organizationId: conversation.organizationId,
-			aiSettings: {
-				apiUrl: aiSettings.apiUrl,
-				apiKey: aiSettings.apiKey,
-				providerType: aiSettings.providerType,
-				embeddingModel: aiSettings.embeddingModel,
-			},
-			queryText: message,
-		});
-		playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
-	} catch {}
+		let playbookPrompt = "";
+		try {
+			const embeddingProvider = await resolveEmbeddingProviderConfig({
+				organizationId: conversation.organizationId,
+				aiSettings,
+			});
+			const playbooks = await findRelevantPlaybooks({
+				organizationId: conversation.organizationId,
+				embeddingProvider,
+				queryText: message,
+			});
+			playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
+		} catch {}
 
 	const baseSystemPrompt = [
 		buildSystemPrompt(
@@ -2875,14 +2975,13 @@ export const chatStream = async (
 		const model = provider(aiSettings.model);
 		let playbookPrompt = "";
 		try {
+			const embeddingProvider = await resolveEmbeddingProviderConfig({
+				organizationId: conversation.organizationId,
+				aiSettings,
+			});
 			const playbooks = await findRelevantPlaybooks({
 				organizationId: conversation.organizationId,
-				aiSettings: {
-					apiUrl: aiSettings.apiUrl,
-					apiKey: aiSettings.apiKey,
-					providerType: aiSettings.providerType,
-					embeddingModel: aiSettings.embeddingModel,
-				},
+				embeddingProvider,
 				queryText: message,
 			});
 			playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
@@ -3533,12 +3632,7 @@ export const chatStream = async (
 
 	async function findRelevantPlaybooks(params: {
 		organizationId: string;
-		aiSettings: {
-			apiUrl: string;
-			apiKey: string;
-			providerType?: string | null;
-			embeddingModel?: string | null;
-		};
+		embeddingProvider?: EmbeddingProviderConfig | null;
 		queryText: string;
 		limit?: number;
 	}): Promise<
@@ -3573,7 +3667,7 @@ export const chatStream = async (
 		} catch {}
 
 		const embedding = await tryEmbedText({
-			aiSettings: params.aiSettings,
+			embeddingProvider: params.embeddingProvider,
 			text: params.queryText,
 		});
 
@@ -3713,12 +3807,7 @@ export const chatStream = async (
 
 	async function upsertPlaybookFromSuccessfulRun(params: {
 		organizationId: string;
-		aiSettings: {
-			apiUrl: string;
-			apiKey: string;
-			providerType?: string | null;
-			embeddingModel?: string | null;
-		};
+		embeddingProvider?: EmbeddingProviderConfig | null;
 		goal: string;
 		runId: string;
 		finalSummary: string;
@@ -3773,7 +3862,7 @@ export const chatStream = async (
 		const expiresAt = addDaysIso(PLAYBOOK_RETENTION_DAYS, now);
 
 		const embedding = await tryEmbedText({
-			aiSettings: params.aiSettings,
+			embeddingProvider: params.embeddingProvider,
 			text: vectorText,
 		});
 
@@ -4205,20 +4294,19 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		})
 		.filter(Boolean) as CoreMessage[];
 
-		let playbookPrompt = "";
-		try {
-			const playbooks = await findRelevantPlaybooks({
-				organizationId: conversation.organizationId,
-				aiSettings: {
-					apiUrl: aiSettings.apiUrl,
-					apiKey: aiSettings.apiKey,
-					providerType: aiSettings.providerType,
-					embeddingModel: aiSettings.embeddingModel,
-				},
-				queryText: goal,
-			});
-			playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
-		} catch {}
+			let playbookPrompt = "";
+			try {
+				const embeddingProvider = await resolveEmbeddingProviderConfig({
+					organizationId: conversation.organizationId,
+					aiSettings,
+				});
+				const playbooks = await findRelevantPlaybooks({
+					organizationId: conversation.organizationId,
+					embeddingProvider,
+					queryText: goal,
+				});
+				playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
+			} catch {}
 
 		const baseSystemPrompt = [
 			buildSystemPrompt(
@@ -4742,19 +4830,20 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			},
 		});
 
-		void upsertPlaybookFromSuccessfulRun({
-			organizationId: ctx.organizationId,
-			aiSettings: {
-				apiUrl: aiSettings.apiUrl,
-				apiKey: aiSettings.apiKey,
-				providerType: aiSettings.providerType,
-				embeddingModel: aiSettings.embeddingModel,
-			},
-			goal,
-			runId,
-			finalSummary: finalText,
-		}).catch(() => {});
-	}
+			void (async () => {
+				const embeddingProvider = await resolveEmbeddingProviderConfig({
+					organizationId: ctx.organizationId,
+					aiSettings,
+				});
+				await upsertPlaybookFromSuccessfulRun({
+					organizationId: ctx.organizationId,
+					embeddingProvider,
+					goal,
+					runId,
+					finalSummary: finalText,
+				});
+			})().catch(() => {});
+		}
 
 export const startAgentRun = async (params: {
 	conversationId: string;
@@ -5121,20 +5210,19 @@ async function autoContinueAfterApprovedToolExecution(params: {
 		const provider = selectAIProvider(aiSettings);
 		const model = provider(aiSettings.model);
 
-		let playbookPrompt = "";
-		try {
-			const playbooks = await findRelevantPlaybooks({
-				organizationId: conversation.organizationId,
-				aiSettings: {
-					apiUrl: aiSettings.apiUrl,
-					apiKey: aiSettings.apiKey,
-					providerType: aiSettings.providerType,
-					embeddingModel: aiSettings.embeddingModel,
-				},
-				queryText: lastUserMessageForTools,
-			});
-			playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
-		} catch {}
+			let playbookPrompt = "";
+			try {
+				const embeddingProvider = await resolveEmbeddingProviderConfig({
+					organizationId: conversation.organizationId,
+					aiSettings,
+				});
+				const playbooks = await findRelevantPlaybooks({
+					organizationId: conversation.organizationId,
+					embeddingProvider,
+					queryText: lastUserMessageForTools,
+				});
+				playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
+			} catch {}
 
 		const baseSystemPrompt = [
 			buildSystemPrompt(

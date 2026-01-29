@@ -12,6 +12,7 @@ import {
 	apiSendMessage,
 	apiSetToolApprovalsDisabled,
 	apiStartAgent,
+	apiUpsertAiEmbeddingProvider,
 	apiUpdateAi,
 	apiUpdateConversation,
 	deploySuggestionSchema,
@@ -31,6 +32,7 @@ import {
 	executeApprovedTool,
 	getAiSettingById,
 	getAiSettingsByOrganizationId,
+	getAiEmbeddingProviderByOrganizationId,
 	getConversationById,
 	getConversationIdForToolExecution,
 	getMessages,
@@ -40,9 +42,11 @@ import {
 	listConversations,
 	resumeAgentRun,
 	saveAiSettings,
+	saveAiEmbeddingProvider,
 	startAgentRun,
 	suggestVariants,
 	updateConversation,
+	deleteAiEmbeddingProvider,
 } from "@dokploy/server/services/ai";
 import { createComposeByTemplate } from "@dokploy/server/services/compose";
 import { findProjectById } from "@dokploy/server/services/project";
@@ -191,6 +195,22 @@ export const aiRouter = createTRPCRouter({
 		return await getAiSettingsByOrganizationId(
 			ctx.session.activeOrganizationId,
 		);
+	}),
+
+	embeddingProvider: createTRPCRouter({
+		get: adminProcedure.query(async ({ ctx }) => {
+			return await getAiEmbeddingProviderByOrganizationId(
+				ctx.session.activeOrganizationId,
+			);
+		}),
+		upsert: adminProcedure
+			.input(apiUpsertAiEmbeddingProvider)
+			.mutation(async ({ ctx, input }) => {
+				return await saveAiEmbeddingProvider(ctx.session.activeOrganizationId, input);
+			}),
+		delete: adminProcedure.mutation(async ({ ctx }) => {
+			return await deleteAiEmbeddingProvider(ctx.session.activeOrganizationId);
+		}),
 	}),
 
 	get: protectedProcedure

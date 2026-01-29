@@ -96,6 +96,13 @@ curl -sSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/insta
 
 - 面板主服务：`a3180623/dokploy-i18n:<版本号>`
 
+> 注意：AI 记忆/向量检索依赖 PostgreSQL 的 pgvector 扩展。新安装会默认使用 `pgvector/pgvector:pg16` 作为 `dokploy-postgres` 镜像；如果你是旧版本升级且当前 `dokploy-postgres` 仍是 `postgres:16`，请先执行：
+>
+> ```bash
+> docker service update --force --image pgvector/pgvector:pg16 dokploy-postgres
+> docker service update --force dokploy
+> ```
+
 如需使用官方 Dokploy Cloud，请访问：[Dokploy Cloud](https://app.dokploy.com)。  
 更多使用文档可参考官方文档：[docs.dokploy.com](https://docs.dokploy.com)。
 

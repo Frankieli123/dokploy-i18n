@@ -13,6 +13,7 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { api } from "@/utils/api";
+import { AiEmbeddingProviderForm } from "./ai-embedding-provider-form";
 import { HandleAi } from "./handle-ai";
 
 export const AiForm = () => {
@@ -36,7 +37,8 @@ export const AiForm = () => {
 						</div>
 						{aiConfigs && aiConfigs?.length > 0 && <HandleAi />}
 					</CardHeader>
-					<CardContent className="space-y-2 py-8 border-t">
+					<CardContent className="space-y-6 py-8 border-t">
+						<AiEmbeddingProviderForm />
 						{isLoading ? (
 							<div className="flex flex-row gap-2 items-center justify-center text-sm text-muted-foreground min-h-[25vh]">
 								<span>{t("settings.common.loading")}</span>

@@ -76,5 +76,6 @@ void app.prepare().then(async () => {
 		}
 	} catch (e) {
 		console.error("Main Server Error", e);
+		process.exit(1);
 	}
 });
