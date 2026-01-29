@@ -6,10 +6,11 @@ import {
 	Bot,
 	Check,
 	History,
-	ImagePlus,
+	Laptop,
 	Loader2,
 	MessageSquare,
 	MessageSquarePlus,
+	Plus,
 	Search,
 	ShieldAlert,
 	ShieldCheck,
@@ -29,13 +30,6 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "@/components/ui/dialog";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuLabel,
-	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -505,7 +499,7 @@ export function AIChatDrawer({
 				hideClose
 				className="w-full sm:w-[440px] p-0 flex flex-col gap-0 overflow-x-hidden"
 			>
-				<SheetHeader className="px-4 py-3 border-b">
+				<SheetHeader className="px-4 py-3">
 					<div className="flex items-center justify-between gap-2 min-w-0">
 						<SheetTitle className="flex items-center gap-2 min-w-0 flex-1">
 							<Bot className="h-5 w-5" />
@@ -513,88 +507,32 @@ export function AIChatDrawer({
 								{t("ai.chat.title")}
 							</span>
 						</SheetTitle>
-						<div className="flex items-center shrink-0">
-							<Select
-								value={serverContext}
-								onValueChange={(next) => {
-									const normalized =
-										typeof next === "string" && next.trim().length > 0
-											? next.trim()
-											: LOCAL_SERVER_CONTEXT;
-									setServerContext(normalized);
-									try {
-										localStorage.setItem(
-											SERVER_CONTEXT_STORAGE_KEY,
-											normalized,
-										);
-									} catch {}
+						<div className="flex items-center gap-0 shrink-0">
+							<ConversationHistoryDialog
+								projectId={projectId}
+								serverId={effectiveServerId}
+								currentConversationId={conversationId}
+								onSelect={(nextId) => {
+									setAutoLoadHistory(false);
+									openConversation(nextId);
 								}}
+							/>
+							<ToolExecutionHistory messages={messages} />
+							<Button
+								variant="ghost"
+								size="icon"
+								onClick={() => {
+									setAutoLoadHistory(false);
+									reset();
+								}}
+								className="h-8 w-8 p-0 -ml-1"
+								title={t("ai.chat.newConversation")}
+								aria-label={t("ai.chat.newConversation")}
 							>
-									<SelectTrigger
-										className="h-8 w-[120px] sm:w-[140px] mr-0.5"
-										aria-label={t("server.select")}
-									>
-										<SelectValue placeholder={t("server.select")}>
-											<span className="truncate">{currentServerLabel}</span>
-										</SelectValue>
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value={LOCAL_SERVER_CONTEXT}>
-											{t("server.local")}
-										</SelectItem>
-									{serversForPicker.map((s) => (
-										<SelectItem key={s.serverId} value={s.serverId}>
-											{(s as any).name || s.serverId}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-							<div className="flex items-center gap-0">
-								<ConversationHistoryDialog
-									projectId={projectId}
-									serverId={effectiveServerId}
-									currentConversationId={conversationId}
-									onSelect={(nextId) => {
-										setAutoLoadHistory(false);
-										openConversation(nextId);
-									}}
-								/>
-								<ToolExecutionHistory messages={messages} />
-								<Button
-									variant="ghost"
-									size="icon"
-									onClick={() => {
-										setAutoLoadHistory(false);
-										reset();
-									}}
-									className="h-8 w-8 p-0 -ml-1"
-									title={t("ai.chat.newConversation")}
-									aria-label={t("ai.chat.newConversation")}
-								>
-									<MessageSquarePlus className="h-4 w-4" />
-								</Button>
-							</div>
+								<MessageSquarePlus className="h-4 w-4" />
+							</Button>
 						</div>
 					</div>
-						{hasAiConfigs && (
-							<Select value={selectedAiId} onValueChange={setSelectedAiId}>
-								<SelectTrigger
-									className="w-full mt-2"
-									aria-label={t("ai.chat.selectModel")}
-								>
-									<SelectValue placeholder={t("ai.chat.selectModel")} />
-								</SelectTrigger>
-								<SelectContent>
-									{aiConfigs
-										.filter((c) => c.isEnabled)
-										.map((config) => (
-											<SelectItem key={config.aiId} value={config.aiId}>
-												{config.name} ({config.model})
-											</SelectItem>
-										))}
-								</SelectContent>
-							</Select>
-						)}
 				</SheetHeader>
 
 				<ScrollArea
@@ -696,8 +634,20 @@ export function AIChatDrawer({
 						</div>
 					)}
 
-					<div className="border-t p-4">
-						<div className="flex flex-col gap-2 rounded-xl border bg-background p-3 shadow-sm focus-within:ring-1 focus-within:ring-ring">
+					<div className="p-4 pt-2">
+						<div
+							className="flex flex-col gap-2 rounded-2xl border bg-background p-3 shadow-sm focus-within:ring-1 focus-within:ring-ring"
+							onMouseDown={(e) => {
+								const textarea = inputRef.current;
+								if (!textarea || textarea.disabled) return;
+								const target = e.target as HTMLElement | null;
+								if (!target) return;
+								if (target.closest("textarea,input,button,a,[role='button']")) {
+									return;
+								}
+								textarea.focus();
+							}}
+						>
 							{draftImages.length > 0 && (
 								<div className="flex gap-2 overflow-x-auto pb-1">
 									{draftImages.map((img) => (
@@ -739,12 +689,12 @@ export function AIChatDrawer({
 										: t("ai.chat.configureFirst")
 								}
 								disabled={!hasAiConfigs || isLoading || !!pendingApproval}
-								className="min-h-[40px] max-h-[180px] resize-none overflow-y-auto border-0 p-0 shadow-none focus-visible:ring-0"
+								className="min-h-[96px] max-h-[180px] resize-none overflow-y-auto border-0 p-0 shadow-none focus-visible:ring-0"
 								aria-label={t("ai.chat.inputLabel")}
 							/>
 
-							<div className="flex items-end justify-between gap-2">
-								<div className="flex items-center gap-1">
+							<div className="flex items-center justify-between gap-2 pt-2">
+								<div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto no-scrollbar">
 									<input
 										ref={fileInputRef}
 										type="file"
@@ -763,122 +713,106 @@ export function AIChatDrawer({
 										title="Attach images"
 										aria-label="Attach images"
 									>
-										<ImagePlus className="h-5 w-5" />
+										<Plus className="h-5 w-5" />
 									</Button>
+
+									<Select
+										value={isAgentMode ? "agent" : "chat"}
+										onValueChange={(v) => setIsAgentMode(v === "agent")}
+										disabled={!hasAiConfigs || isLoading || !!pendingApproval}
+									>
+										<SelectTrigger className="h-7 w-auto shrink-0 gap-1 rounded-full border-0 bg-secondary/50 px-2 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
+											<SelectValue>
+												<span className="flex items-center gap-1.5">
+													{isAgentMode ? (
+														<Bot className="h-3.5 w-3.5" />
+													) : (
+														<MessageSquare className="h-3.5 w-3.5" />
+													)}
+													<span>
+														{isAgentMode
+															? t("ai.chat.mode.agent")
+															: t("ai.chat.mode.chat")}
+													</span>
+												</span>
+											</SelectValue>
+										</SelectTrigger>
+										<SelectContent side="top" align="start">
+											<SelectItem value="chat">
+												<div className="flex items-center gap-2">
+													<MessageSquare className="h-4 w-4" />
+													<span>{t("ai.chat.mode.chat")}</span>
+												</div>
+											</SelectItem>
+											<SelectItem value="agent">
+												<div className="flex items-center gap-2">
+													<Bot className="h-4 w-4" />
+													<span>{t("ai.chat.mode.agent")}</span>
+												</div>
+											</SelectItem>
+										</SelectContent>
+									</Select>
+
+									<Select
+										value={selectedAiId}
+										onValueChange={setSelectedAiId}
+										disabled={!hasAiConfigs || isLoading || !!pendingApproval}
+									>
+										<SelectTrigger className="h-7 w-auto min-w-[120px] shrink-0 gap-1 rounded-full border-0 bg-secondary/50 px-2 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
+											<SelectValue placeholder={t("ai.chat.selectModel")} />
+										</SelectTrigger>
+										<SelectContent side="top" align="start">
+											{(aiConfigs ?? [])
+												.filter((c) => c.isEnabled)
+												.map((config) => (
+													<SelectItem key={config.aiId} value={config.aiId}>
+														{config.name} ({config.model})
+													</SelectItem>
+												))}
+										</SelectContent>
+									</Select>
+
+									<Select
+										value={areToolApprovalsDisabled ? "auto" : "manual"}
+										onValueChange={(v) =>
+											void setToolApprovalsDisabled(v === "auto")
+										}
+										disabled={!hasAiConfigs || isLoading || !!pendingApproval}
+									>
+										<SelectTrigger className="h-7 w-auto shrink-0 gap-1 rounded-full border-0 bg-secondary/50 px-2 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
+											<SelectValue>
+												<span className="flex items-center gap-1.5">
+													{areToolApprovalsDisabled ? (
+														<ShieldCheck className="h-3.5 w-3.5" />
+													) : (
+														<ShieldAlert className="h-3.5 w-3.5" />
+													)}
+													<span>
+														{areToolApprovalsDisabled
+															? t("ai.chat.toolApprovals.auto")
+															: t("ai.chat.toolApprovals.manual")}
+													</span>
+												</span>
+											</SelectValue>
+										</SelectTrigger>
+										<SelectContent side="top" align="start">
+											<SelectItem value="manual">
+												<div className="flex items-center gap-2">
+													<ShieldAlert className="h-4 w-4" />
+													<span>{t("ai.chat.toolApprovals.manual")}</span>
+												</div>
+											</SelectItem>
+											<SelectItem value="auto">
+												<div className="flex items-center gap-2">
+													<ShieldCheck className="h-4 w-4" />
+													<span>{t("ai.chat.toolApprovals.auto")}</span>
+												</div>
+											</SelectItem>
+										</SelectContent>
+									</Select>
 								</div>
 
-								<div className="flex items-end gap-2">
-									<div className="flex flex-col gap-1 self-end">
-										<DropdownMenu>
-											<DropdownMenuTrigger asChild>
-												<Button
-													variant="ghost"
-													size="icon"
-													className="h-8 w-8 text-muted-foreground hover:text-foreground"
-													disabled={!hasAiConfigs || isLoading}
-													title={
-														`${t("ai.chat.mode.switchTitle")}: ${
-															isAgentMode
-																? t("ai.chat.mode.agent")
-																: t("ai.chat.mode.chat")
-														}`
-													}
-													aria-label={t("ai.chat.mode.switchTitle")}
-												>
-													{isAgentMode ? (
-														<Bot className="h-5 w-5" />
-													) : (
-														<MessageSquare className="h-5 w-5" />
-													)}
-												</Button>
-											</DropdownMenuTrigger>
-											<DropdownMenuContent
-												align="end"
-												side="top"
-												sideOffset={6}
-											>
-												<DropdownMenuLabel className="text-xs text-muted-foreground">
-													{t("ai.chat.mode.switchTitle")}
-												</DropdownMenuLabel>
-												<DropdownMenuItem
-													onClick={() => setIsAgentMode(false)}
-													disabled={!hasAiConfigs || isLoading}
-												>
-													<MessageSquare className="mr-2 h-4 w-4" />
-													<span>{t("ai.chat.mode.chat")}</span>
-													{!isAgentMode && (
-														<Check className="ml-auto h-4 w-4" />
-													)}
-												</DropdownMenuItem>
-												<DropdownMenuItem
-													onClick={() => setIsAgentMode(true)}
-													disabled={!hasAiConfigs || isLoading}
-												>
-													<Bot className="mr-2 h-4 w-4" />
-													<span>{t("ai.chat.mode.agent")}</span>
-													{isAgentMode && (
-														<Check className="ml-auto h-4 w-4" />
-													)}
-												</DropdownMenuItem>
-											</DropdownMenuContent>
-										</DropdownMenu>
-
-										<DropdownMenu>
-											<DropdownMenuTrigger asChild>
-												<Button
-													variant="ghost"
-													size="icon"
-													className="h-8 w-8 text-muted-foreground hover:text-foreground"
-													disabled={!hasAiConfigs || isLoading}
-													title={
-														areToolApprovalsDisabled
-															? t("ai.chat.toolApprovals.auto")
-															: t("ai.chat.toolApprovals.manual")
-													}
-													aria-label={
-														areToolApprovalsDisabled
-															? t("ai.chat.toolApprovals.auto")
-															: t("ai.chat.toolApprovals.manual")
-													}
-												>
-													{areToolApprovalsDisabled ? (
-														<ShieldCheck className="h-5 w-5" />
-													) : (
-														<ShieldAlert className="h-5 w-5" />
-													)}
-												</Button>
-											</DropdownMenuTrigger>
-											<DropdownMenuContent
-												align="end"
-												side="top"
-												sideOffset={6}
-											>
-												<DropdownMenuItem
-													disabled={!hasAiConfigs || isLoading}
-													onClick={() =>
-														void setToolApprovalsDisabled(false)
-													}
-												>
-													<ShieldAlert className="mr-2 h-4 w-4" />
-													<span>{t("ai.chat.toolApprovals.manual")}</span>
-													{!areToolApprovalsDisabled && (
-														<Check className="ml-auto h-4 w-4" />
-													)}
-												</DropdownMenuItem>
-												<DropdownMenuItem
-													disabled={!hasAiConfigs || isLoading}
-													onClick={() => void setToolApprovalsDisabled(true)}
-												>
-													<ShieldCheck className="mr-2 h-4 w-4" />
-													<span>{t("ai.chat.toolApprovals.auto")}</span>
-													{areToolApprovalsDisabled && (
-														<Check className="ml-auto h-4 w-4" />
-													)}
-												</DropdownMenuItem>
-											</DropdownMenuContent>
-										</DropdownMenu>
-									</div>
-
+								<div className="shrink-0">
 									{isLoading ? (
 										<Button
 											onClick={stopGeneration}
@@ -907,6 +841,45 @@ export function AIChatDrawer({
 									)}
 								</div>
 							</div>
+						</div>
+
+						<div className="mt-2 flex items-center">
+							<Select
+								value={serverContext}
+								onValueChange={(next) => {
+									const normalized =
+										typeof next === "string" && next.trim().length > 0
+											? next.trim()
+											: LOCAL_SERVER_CONTEXT;
+									setServerContext(normalized);
+									try {
+										localStorage.setItem(
+											SERVER_CONTEXT_STORAGE_KEY,
+											normalized,
+										);
+									} catch {}
+								}}
+							>
+								<SelectTrigger
+									className="h-8 w-auto max-w-[220px] gap-2 rounded-full bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0"
+									aria-label={t("server.select")}
+								>
+									<span className="flex items-center gap-2 truncate">
+										<Laptop className="h-4 w-4 shrink-0 opacity-70" />
+										<span className="truncate">{currentServerLabel}</span>
+									</span>
+								</SelectTrigger>
+								<SelectContent side="top" align="start">
+									<SelectItem value={LOCAL_SERVER_CONTEXT}>
+										{t("server.local")}
+									</SelectItem>
+									{serversForPicker.map((s) => (
+										<SelectItem key={s.serverId} value={s.serverId}>
+											{(s as any).name || s.serverId}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
 						</div>
 					</div>
 			</SheetContent>
