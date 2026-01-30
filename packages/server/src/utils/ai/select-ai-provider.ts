@@ -95,6 +95,11 @@ function fixGeminiFunctionCallArgs(value: unknown): void {
 	}
 }
 
+export function normalizeGeminiRequestPayload(payload: unknown): void {
+	fixGeminiFunctionCallArgs(payload);
+	stripGeminiToolSchemaAdditionalProperties(payload);
+}
+
 function stripAdditionalPropertiesFromSchema(value: unknown): void {
 	if (!value || typeof value !== "object") return;
 	if (Array.isArray(value)) {
@@ -106,6 +111,9 @@ function stripAdditionalPropertiesFromSchema(value: unknown): void {
 	if ("additionalProperties" in obj) {
 		delete obj.additionalProperties;
 	}
+	if ("$schema" in obj) {
+		delete obj.$schema;
+	}
 	for (const key of Object.keys(obj)) {
 		stripAdditionalPropertiesFromSchema(obj[key]);
 	}
@@ -114,6 +122,19 @@ function stripAdditionalPropertiesFromSchema(value: unknown): void {
 function stripGeminiToolSchemaAdditionalProperties(payload: unknown): void {
 	if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
 	const obj = payload as Record<string, unknown>;
+
+	if (
+		"generationConfig" in obj &&
+		typeof obj.generationConfig === "object" &&
+		obj.generationConfig &&
+		!Array.isArray(obj.generationConfig)
+	) {
+		const genConfig = obj.generationConfig as Record<string, unknown>;
+		if ("responseSchema" in genConfig) {
+			stripAdditionalPropertiesFromSchema(genConfig.responseSchema);
+		}
+	}
+
 	const tools = obj.tools;
 	if (!Array.isArray(tools)) return;
 
@@ -136,14 +157,47 @@ function createGeminiFetchWithArgsNormalization(
 	baseFetch: typeof fetch,
 ): typeof fetch {
 	return async (input: RequestInfo | URL, init?: RequestInit) => {
-		if (init?.body && typeof init.body === "string") {
+		const body = init?.body;
+		if (!body) return baseFetch(input, init);
+
+		const parseJsonBody = async (value: unknown): Promise<unknown | null> => {
+			if (typeof value === "string") {
+				try {
+					return JSON.parse(value) as unknown;
+				} catch {
+					return null;
+				}
+			}
+
+			if (value instanceof Uint8Array) {
+				try {
+					const text = new TextDecoder().decode(value);
+					return JSON.parse(text) as unknown;
+				} catch {
+					return null;
+				}
+			}
+
+			if (value instanceof ArrayBuffer) {
+				try {
+					const text = new TextDecoder().decode(new Uint8Array(value));
+					return JSON.parse(text) as unknown;
+				} catch {
+					return null;
+				}
+			}
+
+			return null;
+		};
+
+		const parsed = await parseJsonBody(body);
+		if (parsed !== null) {
 			try {
-				const parsed = JSON.parse(init.body) as unknown;
-				fixGeminiFunctionCallArgs(parsed);
-				stripGeminiToolSchemaAdditionalProperties(parsed);
+				normalizeGeminiRequestPayload(parsed);
 				return baseFetch(input, { ...init, body: JSON.stringify(parsed) });
 			} catch {}
 		}
+
 		return baseFetch(input, init);
 	};
 }
