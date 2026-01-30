@@ -95,6 +95,43 @@ function fixGeminiFunctionCallArgs(value: unknown): void {
 	}
 }
 
+function stripAdditionalPropertiesFromSchema(value: unknown): void {
+	if (!value || typeof value !== "object") return;
+	if (Array.isArray(value)) {
+		for (const item of value) stripAdditionalPropertiesFromSchema(item);
+		return;
+	}
+
+	const obj = value as Record<string, unknown>;
+	if ("additionalProperties" in obj) {
+		delete obj.additionalProperties;
+	}
+	for (const key of Object.keys(obj)) {
+		stripAdditionalPropertiesFromSchema(obj[key]);
+	}
+}
+
+function stripGeminiToolSchemaAdditionalProperties(payload: unknown): void {
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+	const obj = payload as Record<string, unknown>;
+	const tools = obj.tools;
+	if (!Array.isArray(tools)) return;
+
+	for (const tool of tools) {
+		if (!tool || typeof tool !== "object" || Array.isArray(tool)) continue;
+		const toolObj = tool as Record<string, unknown>;
+		const decls = toolObj.function_declarations ?? toolObj.functionDeclarations;
+		if (!Array.isArray(decls)) continue;
+		for (const decl of decls) {
+			if (!decl || typeof decl !== "object" || Array.isArray(decl)) continue;
+			const declObj = decl as Record<string, unknown>;
+			if ("parameters" in declObj) {
+				stripAdditionalPropertiesFromSchema(declObj.parameters);
+			}
+		}
+	}
+}
+
 function createGeminiFetchWithArgsNormalization(
 	baseFetch: typeof fetch,
 ): typeof fetch {
@@ -103,6 +140,7 @@ function createGeminiFetchWithArgsNormalization(
 			try {
 				const parsed = JSON.parse(init.body) as unknown;
 				fixGeminiFunctionCallArgs(parsed);
+				stripGeminiToolSchemaAdditionalProperties(parsed);
 				return baseFetch(input, { ...init, body: JSON.stringify(parsed) });
 			} catch {}
 		}

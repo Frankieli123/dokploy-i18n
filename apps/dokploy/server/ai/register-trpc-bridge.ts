@@ -354,6 +354,9 @@ async function callProcedure(params: {
 
 	let current: any = caller;
 	for (const part of parts.slice(0, -1)) {
+		if (part === "__proto__" || part === "prototype" || part === "constructor") {
+			throw new Error("Invalid procedure path");
+		}
 		current = current?.[part];
 	}
 	const fn = current?.[parts.at(-1) as string];
@@ -465,6 +468,9 @@ async function callProcedure(params: {
 					finish({ outcome: "completed" });
 				},
 			});
+			if (finished) {
+				sub?.unsubscribe();
+			}
 		} catch (error) {
 			finish({ outcome: "error", error });
 		}

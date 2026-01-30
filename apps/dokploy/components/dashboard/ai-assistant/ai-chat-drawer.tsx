@@ -533,6 +533,25 @@ export function AIChatDrawer({
 							</Button>
 						</div>
 					</div>
+					{hasAiConfigs && (
+						<Select value={selectedAiId} onValueChange={setSelectedAiId}>
+							<SelectTrigger
+								className="w-full mt-2"
+								aria-label={t("ai.chat.selectModel")}
+							>
+								<SelectValue placeholder={t("ai.chat.selectModel")} />
+							</SelectTrigger>
+							<SelectContent>
+								{aiConfigs
+									.filter((c) => c.isEnabled)
+									.map((config) => (
+										<SelectItem key={config.aiId} value={config.aiId}>
+											{config.name} ({config.model})
+										</SelectItem>
+									))}
+							</SelectContent>
+						</Select>
+					)}
 				</SheetHeader>
 
 				<ScrollArea
@@ -636,7 +655,7 @@ export function AIChatDrawer({
 
 					<div className="p-4 pt-2">
 						<div
-							className="flex flex-col gap-2 rounded-2xl border bg-background p-3 shadow-sm focus-within:ring-1 focus-within:ring-ring"
+							className="flex flex-col gap-2 rounded-2xl border bg-background p-3 shadow-sm"
 							onMouseDown={(e) => {
 								const textarea = inputRef.current;
 								if (!textarea || textarea.disabled) return;
@@ -689,7 +708,7 @@ export function AIChatDrawer({
 										: t("ai.chat.configureFirst")
 								}
 								disabled={!hasAiConfigs || isLoading || !!pendingApproval}
-								className="min-h-[96px] max-h-[180px] resize-none overflow-y-auto border-0 p-0 shadow-none focus-visible:ring-0"
+								className="min-h-[96px] max-h-[180px] resize-none overflow-y-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
 								aria-label={t("ai.chat.inputLabel")}
 							/>
 
@@ -750,25 +769,6 @@ export function AIChatDrawer({
 													<span>{t("ai.chat.mode.agent")}</span>
 												</div>
 											</SelectItem>
-										</SelectContent>
-									</Select>
-
-									<Select
-										value={selectedAiId}
-										onValueChange={setSelectedAiId}
-										disabled={!hasAiConfigs || isLoading || !!pendingApproval}
-									>
-										<SelectTrigger className="h-7 w-auto min-w-[120px] shrink-0 gap-1 rounded-full border-0 bg-secondary/50 px-2 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
-											<SelectValue placeholder={t("ai.chat.selectModel")} />
-										</SelectTrigger>
-										<SelectContent side="top" align="start">
-											{(aiConfigs ?? [])
-												.filter((c) => c.isEnabled)
-												.map((config) => (
-													<SelectItem key={config.aiId} value={config.aiId}>
-														{config.name} ({config.model})
-													</SelectItem>
-												))}
 										</SelectContent>
 									</Select>
 
@@ -861,11 +861,11 @@ export function AIChatDrawer({
 								}}
 							>
 								<SelectTrigger
-									className="h-8 w-auto max-w-[220px] gap-2 rounded-full bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0"
+									className="h-auto w-auto max-w-full gap-2 border-0 bg-transparent p-0 px-1 text-xs text-muted-foreground shadow-none hover:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0 data-[placeholder]:text-muted-foreground"
 									aria-label={t("server.select")}
 								>
-									<span className="flex items-center gap-2 truncate">
-										<Laptop className="h-4 w-4 shrink-0 opacity-70" />
+									<span className="flex items-center gap-2 whitespace-nowrap">
+										<Laptop className="h-3.5 w-3.5 shrink-0 opacity-70" />
 										<span className="truncate">{currentServerLabel}</span>
 									</span>
 								</SelectTrigger>
