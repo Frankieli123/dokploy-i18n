@@ -2,7 +2,6 @@
 
 import {
 	AlertTriangle,
-	ArrowUp,
 	Bot,
 	Check,
 	History,
@@ -12,6 +11,7 @@ import {
 	MessageSquarePlus,
 	Plus,
 	Search,
+	Send,
 	ShieldAlert,
 	ShieldCheck,
 	Square,
@@ -695,25 +695,57 @@ export function AIChatDrawer({
 								</div>
 							)}
 
-							<Textarea
-								ref={inputRef}
-								value={input}
-								onChange={(e) => setInput(e.target.value)}
-								onKeyDown={handleKeyPress}
-								onPaste={handlePaste}
-								rows={1}
-								placeholder={
-									hasAiConfigs
-										? t("ai.chat.inputPlaceholder")
-										: t("ai.chat.configureFirst")
-								}
-								disabled={!hasAiConfigs || isLoading || !!pendingApproval}
-								className="min-h-[96px] max-h-[180px] resize-none overflow-y-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-								aria-label={t("ai.chat.inputLabel")}
-							/>
+							<div className="flex items-end gap-2">
+								<div className="flex-1 rounded-2xl bg-secondary/50 px-4 py-3">
+									<Textarea
+										ref={inputRef}
+										value={input}
+										onChange={(e) => setInput(e.target.value)}
+										onKeyDown={handleKeyPress}
+										onPaste={handlePaste}
+										rows={1}
+										placeholder={
+											hasAiConfigs
+												? t("ai.chat.inputPlaceholder")
+												: t("ai.chat.configureFirst")
+										}
+										disabled={!hasAiConfigs || isLoading || !!pendingApproval}
+										className="min-h-[44px] max-h-[180px] resize-none overflow-y-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+										aria-label={t("ai.chat.inputLabel")}
+									/>
+								</div>
 
-							<div className="flex items-center justify-between gap-2 pt-2">
-								<div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto no-scrollbar">
+								<div className="shrink-0">
+									{isLoading ? (
+										<Button
+											onClick={stopGeneration}
+											variant="destructive"
+											size="icon"
+											className="h-12 w-12 rounded-2xl"
+											aria-label={t("common.stop")}
+										>
+											<Square className="h-4 w-4 fill-current" />
+										</Button>
+									) : (
+										<Button
+											onClick={handleSend}
+											disabled={
+												!hasAiConfigs ||
+												!!pendingApproval ||
+												(input.trim().length === 0 &&
+													draftImages.length === 0)
+											}
+											size="icon"
+											className="h-12 w-12 rounded-2xl"
+											aria-label={t("ai.chat.sendMessage")}
+										>
+											<Send className="h-4 w-4" />
+										</Button>
+									)}
+								</div>
+							</div>
+
+							<div className="flex min-w-0 items-center gap-2 pt-3 pb-1 overflow-x-auto no-scrollbar">
 									<input
 										ref={fileInputRef}
 										type="file"
@@ -726,7 +758,7 @@ export function AIChatDrawer({
 										type="button"
 										variant="ghost"
 										size="icon"
-										className="h-8 w-8 text-muted-foreground hover:text-foreground"
+										className="h-8 w-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
 										disabled={!hasAiConfigs || isLoading || !!pendingApproval}
 										onClick={() => fileInputRef.current?.click()}
 										title="Attach images"
@@ -740,7 +772,7 @@ export function AIChatDrawer({
 										onValueChange={(v) => setIsAgentMode(v === "agent")}
 										disabled={!hasAiConfigs || isLoading || !!pendingApproval}
 									>
-										<SelectTrigger className="h-7 w-auto shrink-0 gap-1 rounded-full border-0 bg-secondary/50 px-2 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
+										<SelectTrigger className="h-8 w-auto shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
 											<SelectValue>
 												<span className="flex items-center gap-1.5">
 													{isAgentMode ? (
@@ -779,7 +811,7 @@ export function AIChatDrawer({
 										}
 										disabled={!hasAiConfigs || isLoading || !!pendingApproval}
 									>
-										<SelectTrigger className="h-7 w-auto shrink-0 gap-1 rounded-full border-0 bg-secondary/50 px-2 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
+										<SelectTrigger className="h-8 w-auto shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
 											<SelectValue>
 												<span className="flex items-center gap-1.5">
 													{areToolApprovalsDisabled ? (
@@ -810,76 +842,44 @@ export function AIChatDrawer({
 											</SelectItem>
 										</SelectContent>
 									</Select>
-								</div>
 
-								<div className="shrink-0">
-									{isLoading ? (
-										<Button
-											onClick={stopGeneration}
-											variant="destructive"
-											size="icon"
-											className="h-8 w-8 rounded-full"
-											aria-label={t("common.stop")}
+									<Select
+										value={serverContext}
+										onValueChange={(next) => {
+											const normalized =
+												typeof next === "string" && next.trim().length > 0
+													? next.trim()
+													: LOCAL_SERVER_CONTEXT;
+											setServerContext(normalized);
+											try {
+												localStorage.setItem(
+													SERVER_CONTEXT_STORAGE_KEY,
+													normalized,
+												);
+											} catch {}
+										}}
+									>
+										<SelectTrigger
+											className="h-8 w-auto max-w-[140px] shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0"
+											aria-label={t("server.select")}
 										>
-											<Square className="h-4 w-4 fill-current" />
-										</Button>
-									) : (
-										<Button
-											onClick={handleSend}
-											disabled={
-												!hasAiConfigs ||
-												!!pendingApproval ||
-												(input.trim().length === 0 &&
-													draftImages.length === 0)
-											}
-											size="icon"
-											className="h-8 w-8 rounded-full"
-											aria-label={t("ai.chat.sendMessage")}
-										>
-											<ArrowUp className="h-4 w-4" />
-										</Button>
-									)}
-								</div>
+											<span className="flex items-center gap-2 whitespace-nowrap">
+												<Laptop className="h-3.5 w-3.5 shrink-0 opacity-70" />
+												<span className="truncate">{currentServerLabel}</span>
+											</span>
+										</SelectTrigger>
+										<SelectContent side="top" align="start">
+											<SelectItem value={LOCAL_SERVER_CONTEXT}>
+												{t("server.local")}
+											</SelectItem>
+											{serversForPicker.map((s) => (
+												<SelectItem key={s.serverId} value={s.serverId}>
+													{(s as any).name || s.serverId}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
 							</div>
-						</div>
-
-						<div className="mt-2 flex items-center">
-							<Select
-								value={serverContext}
-								onValueChange={(next) => {
-									const normalized =
-										typeof next === "string" && next.trim().length > 0
-											? next.trim()
-											: LOCAL_SERVER_CONTEXT;
-									setServerContext(normalized);
-									try {
-										localStorage.setItem(
-											SERVER_CONTEXT_STORAGE_KEY,
-											normalized,
-										);
-									} catch {}
-								}}
-							>
-								<SelectTrigger
-									className="h-auto w-auto max-w-full gap-2 border-0 bg-transparent p-0 px-1 text-xs text-muted-foreground shadow-none hover:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0 data-[placeholder]:text-muted-foreground"
-									aria-label={t("server.select")}
-								>
-									<span className="flex items-center gap-2 whitespace-nowrap">
-										<Laptop className="h-3.5 w-3.5 shrink-0 opacity-70" />
-										<span className="truncate">{currentServerLabel}</span>
-									</span>
-								</SelectTrigger>
-								<SelectContent side="top" align="start">
-									<SelectItem value={LOCAL_SERVER_CONTEXT}>
-										{t("server.local")}
-									</SelectItem>
-									{serversForPicker.map((s) => (
-										<SelectItem key={s.serverId} value={s.serverId}>
-											{(s as any).name || s.serverId}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
 						</div>
 					</div>
 			</SheetContent>
