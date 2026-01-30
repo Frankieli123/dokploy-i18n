@@ -696,7 +696,7 @@ export function AIChatDrawer({
 							)}
 
 							<div className="flex items-end gap-2">
-								<div className="flex-1 rounded-2xl bg-secondary/50 px-4 py-3">
+								<div className="flex-1 rounded-md bg-input px-4 py-2.5">
 									<Textarea
 										ref={inputRef}
 										value={input}
@@ -710,7 +710,7 @@ export function AIChatDrawer({
 												: t("ai.chat.configureFirst")
 										}
 										disabled={!hasAiConfigs || isLoading || !!pendingApproval}
-										className="min-h-[44px] max-h-[180px] resize-none overflow-y-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+										className="min-h-[20px] max-h-[180px] resize-none overflow-y-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
 										aria-label={t("ai.chat.inputLabel")}
 									/>
 								</div>
@@ -721,7 +721,7 @@ export function AIChatDrawer({
 											onClick={stopGeneration}
 											variant="destructive"
 											size="icon"
-											className="h-12 w-12 rounded-2xl"
+											className="rounded-md"
 											aria-label={t("common.stop")}
 										>
 											<Square className="h-4 w-4 fill-current" />
@@ -736,7 +736,7 @@ export function AIChatDrawer({
 													draftImages.length === 0)
 											}
 											size="icon"
-											className="h-12 w-12 rounded-2xl"
+											className="rounded-md bg-muted-foreground text-background hover:bg-muted-foreground/90"
 											aria-label={t("ai.chat.sendMessage")}
 										>
 											<Send className="h-4 w-4" />
