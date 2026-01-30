@@ -653,9 +653,9 @@ export function AIChatDrawer({
 						</div>
 					)}
 
-					<div className="p-4 pt-2">
+					<div className="border-t p-4">
 						<div
-							className="flex flex-col gap-2 rounded-2xl border bg-background p-3 shadow-sm"
+							className="flex flex-col gap-2"
 							onMouseDown={(e) => {
 								const textarea = inputRef.current;
 								if (!textarea || textarea.disabled) return;
@@ -744,142 +744,141 @@ export function AIChatDrawer({
 									)}
 								</div>
 							</div>
+						</div>
 
-							<div className="flex min-w-0 items-center gap-2 pt-3 pb-1 overflow-x-auto no-scrollbar">
-									<input
-										ref={fileInputRef}
-										type="file"
-										accept="image/*"
-										multiple
-										className="hidden"
-										onChange={handleSelectImages}
-									/>
-									<Button
-										type="button"
-										variant="ghost"
-										size="icon"
-										className="h-8 w-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
-										disabled={!hasAiConfigs || isLoading || !!pendingApproval}
-										onClick={() => fileInputRef.current?.click()}
-										title="Attach images"
-										aria-label="Attach images"
-									>
-										<Plus className="h-5 w-5" />
-									</Button>
+						<div className="mt-2 flex min-w-0 items-center gap-2 overflow-x-auto no-scrollbar">
+							<input
+								ref={fileInputRef}
+								type="file"
+								accept="image/*"
+								multiple
+								className="hidden"
+								onChange={handleSelectImages}
+							/>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon"
+								className="h-8 w-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+								disabled={!hasAiConfigs || isLoading || !!pendingApproval}
+								onClick={() => fileInputRef.current?.click()}
+								title="Attach images"
+								aria-label="Attach images"
+							>
+								<Plus className="h-5 w-5" />
+							</Button>
 
-									<Select
-										value={isAgentMode ? "agent" : "chat"}
-										onValueChange={(v) => setIsAgentMode(v === "agent")}
-										disabled={!hasAiConfigs || isLoading || !!pendingApproval}
-									>
-										<SelectTrigger className="h-8 w-auto shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
-											<SelectValue>
-												<span className="flex items-center gap-1.5">
-													{isAgentMode ? (
-														<Bot className="h-3.5 w-3.5" />
-													) : (
-														<MessageSquare className="h-3.5 w-3.5" />
-													)}
-													<span>
-														{isAgentMode
-															? t("ai.chat.mode.agent")
-															: t("ai.chat.mode.chat")}
-													</span>
-												</span>
-											</SelectValue>
-										</SelectTrigger>
-										<SelectContent side="top" align="start">
-											<SelectItem value="chat">
-												<div className="flex items-center gap-2">
-													<MessageSquare className="h-4 w-4" />
-													<span>{t("ai.chat.mode.chat")}</span>
-												</div>
-											</SelectItem>
-											<SelectItem value="agent">
-												<div className="flex items-center gap-2">
-													<Bot className="h-4 w-4" />
-													<span>{t("ai.chat.mode.agent")}</span>
-												</div>
-											</SelectItem>
-										</SelectContent>
-									</Select>
-
-									<Select
-										value={areToolApprovalsDisabled ? "auto" : "manual"}
-										onValueChange={(v) =>
-											void setToolApprovalsDisabled(v === "auto")
-										}
-										disabled={!hasAiConfigs || isLoading || !!pendingApproval}
-									>
-										<SelectTrigger className="h-8 w-auto shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
-											<SelectValue>
-												<span className="flex items-center gap-1.5">
-													{areToolApprovalsDisabled ? (
-														<ShieldCheck className="h-3.5 w-3.5" />
-													) : (
-														<ShieldAlert className="h-3.5 w-3.5" />
-													)}
-													<span>
-														{areToolApprovalsDisabled
-															? t("ai.chat.toolApprovals.auto")
-															: t("ai.chat.toolApprovals.manual")}
-													</span>
-												</span>
-											</SelectValue>
-										</SelectTrigger>
-										<SelectContent side="top" align="start">
-											<SelectItem value="manual">
-												<div className="flex items-center gap-2">
-													<ShieldAlert className="h-4 w-4" />
-													<span>{t("ai.chat.toolApprovals.manual")}</span>
-												</div>
-											</SelectItem>
-											<SelectItem value="auto">
-												<div className="flex items-center gap-2">
-													<ShieldCheck className="h-4 w-4" />
-													<span>{t("ai.chat.toolApprovals.auto")}</span>
-												</div>
-											</SelectItem>
-										</SelectContent>
-									</Select>
-
-									<Select
-										value={serverContext}
-										onValueChange={(next) => {
-											const normalized =
-												typeof next === "string" && next.trim().length > 0
-													? next.trim()
-													: LOCAL_SERVER_CONTEXT;
-											setServerContext(normalized);
-											try {
-												localStorage.setItem(
-													SERVER_CONTEXT_STORAGE_KEY,
-													normalized,
-												);
-											} catch {}
-										}}
-									>
-										<SelectTrigger
-											className="h-8 w-auto max-w-[140px] shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0"
-											aria-label={t("server.select")}
-										>
-											<span className="flex items-center gap-2 whitespace-nowrap">
-												<Laptop className="h-3.5 w-3.5 shrink-0 opacity-70" />
-												<span className="truncate">{currentServerLabel}</span>
+							<Select
+								value={isAgentMode ? "agent" : "chat"}
+								onValueChange={(v) => setIsAgentMode(v === "agent")}
+								disabled={!hasAiConfigs || isLoading || !!pendingApproval}
+							>
+								<SelectTrigger className="h-8 w-auto shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
+									<SelectValue>
+										<span className="flex items-center gap-1.5">
+											{isAgentMode ? (
+												<Bot className="h-3.5 w-3.5" />
+											) : (
+												<MessageSquare className="h-3.5 w-3.5" />
+											)}
+											<span>
+												{isAgentMode
+													? t("ai.chat.mode.agent")
+													: t("ai.chat.mode.chat")}
 											</span>
-										</SelectTrigger>
-										<SelectContent side="top" align="start">
-											<SelectItem value={LOCAL_SERVER_CONTEXT}>
-												{t("server.local")}
-											</SelectItem>
-											{serversForPicker.map((s) => (
-												<SelectItem key={s.serverId} value={s.serverId}>
-													{(s as any).name || s.serverId}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-							</div>
+										</span>
+									</SelectValue>
+								</SelectTrigger>
+								<SelectContent side="top" align="start">
+									<SelectItem value="chat">
+										<div className="flex items-center gap-2">
+											<MessageSquare className="h-4 w-4" />
+											<span>{t("ai.chat.mode.chat")}</span>
+										</div>
+									</SelectItem>
+									<SelectItem value="agent">
+										<div className="flex items-center gap-2">
+											<Bot className="h-4 w-4" />
+											<span>{t("ai.chat.mode.agent")}</span>
+										</div>
+									</SelectItem>
+								</SelectContent>
+							</Select>
+
+							<Select
+								value={areToolApprovalsDisabled ? "auto" : "manual"}
+								onValueChange={(v) =>
+									void setToolApprovalsDisabled(v === "auto")
+								}
+								disabled={!hasAiConfigs || isLoading || !!pendingApproval}
+							>
+								<SelectTrigger className="h-8 w-auto shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
+									<SelectValue>
+										<span className="flex items-center gap-1.5">
+											{areToolApprovalsDisabled ? (
+												<ShieldCheck className="h-3.5 w-3.5" />
+											) : (
+												<ShieldAlert className="h-3.5 w-3.5" />
+											)}
+											<span>
+												{areToolApprovalsDisabled
+													? t("ai.chat.toolApprovals.auto")
+													: t("ai.chat.toolApprovals.manual")}
+											</span>
+										</span>
+									</SelectValue>
+								</SelectTrigger>
+								<SelectContent side="top" align="start">
+									<SelectItem value="manual">
+										<div className="flex items-center gap-2">
+											<ShieldAlert className="h-4 w-4" />
+											<span>{t("ai.chat.toolApprovals.manual")}</span>
+										</div>
+									</SelectItem>
+									<SelectItem value="auto">
+										<div className="flex items-center gap-2">
+											<ShieldCheck className="h-4 w-4" />
+											<span>{t("ai.chat.toolApprovals.auto")}</span>
+										</div>
+									</SelectItem>
+								</SelectContent>
+							</Select>
+
+							<Select
+								value={serverContext}
+								onValueChange={(next) => {
+									const normalized =
+										typeof next === "string" && next.trim().length > 0
+											? next.trim()
+											: LOCAL_SERVER_CONTEXT;
+									setServerContext(normalized);
+									try {
+										localStorage.setItem(SERVER_CONTEXT_STORAGE_KEY, normalized);
+									} catch {}
+								}}
+							>
+								<SelectTrigger
+									className="h-8 w-auto max-w-[140px] shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0"
+									aria-label={t("server.select")}
+								>
+									<SelectValue>
+										<span className="flex items-center gap-2 whitespace-nowrap">
+											<Laptop className="h-3.5 w-3.5 shrink-0 opacity-70" />
+											<span className="truncate">{currentServerLabel}</span>
+										</span>
+									</SelectValue>
+								</SelectTrigger>
+								<SelectContent side="top" align="start">
+									<SelectItem value={LOCAL_SERVER_CONTEXT}>
+										{t("server.local")}
+									</SelectItem>
+									{serversForPicker.map((s) => (
+										<SelectItem key={s.serverId} value={s.serverId}>
+											{(s as any).name || s.serverId}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
 						</div>
 					</div>
 			</SheetContent>

@@ -19,12 +19,21 @@ import { ToolCallBlock } from "./tool-call-block";
 import { ToolGroup } from "./tool-call-group";
 import type { Message } from "./use-chat";
 
+const assistantHeadingClassName =
+	"break-words [overflow-wrap:anywhere] text-sm font-semibold leading-relaxed mb-2 mt-3 first:mt-0";
+
 const assistantMarkdownComponents: Components = {
 	p: ({ children }) => (
 		<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed mb-2 last:mb-0">
 			{children}
 		</p>
 	),
+	h1: ({ children }) => <h1 className={assistantHeadingClassName}>{children}</h1>,
+	h2: ({ children }) => <h2 className={assistantHeadingClassName}>{children}</h2>,
+	h3: ({ children }) => <h3 className={assistantHeadingClassName}>{children}</h3>,
+	h4: ({ children }) => <h4 className={assistantHeadingClassName}>{children}</h4>,
+	h5: ({ children }) => <h5 className={assistantHeadingClassName}>{children}</h5>,
+	h6: ({ children }) => <h6 className={assistantHeadingClassName}>{children}</h6>,
 	ul: ({ children }) => (
 		<ul className="list-disc pl-5 space-y-1 mb-2 last:mb-0">{children}</ul>
 	),
@@ -32,7 +41,7 @@ const assistantMarkdownComponents: Components = {
 		<ol className="list-decimal pl-5 space-y-1 mb-2 last:mb-0">{children}</ol>
 	),
 	li: ({ children }) => (
-		<li className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+		<li className="break-words [overflow-wrap:anywhere] [&>p]:mb-1 [&>p]:mt-0 [&>ul]:mt-1 [&>ol]:mt-1">
 			{children}
 		</li>
 	),
