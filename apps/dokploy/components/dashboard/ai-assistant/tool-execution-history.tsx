@@ -99,7 +99,10 @@ export function ToolExecutionHistory({ messages }: ToolExecutionHistoryProps) {
 					<Wrench className="h-4 w-4" />
 				</Button>
 			</DialogTrigger>
-			<DialogContent className="max-w-2xl max-h-[80vh] flex flex-col min-h-0 p-0 gap-0">
+			<DialogContent
+				noInnerScroll
+				className="max-w-2xl max-h-[80vh] flex flex-col min-h-0 p-0 gap-0"
+			>
 				<DialogHeader className="p-6 pb-2">
 					<DialogTitle className="flex items-center gap-2">
 						<Wrench className="h-5 w-5" />
@@ -119,7 +122,7 @@ export function ToolExecutionHistory({ messages }: ToolExecutionHistoryProps) {
 					</div>
 				</DialogHeader>
 
-				<ScrollArea className="flex-1 min-h-0 p-6 pt-2">
+				<ScrollArea type="always" className="flex-1 min-h-0 p-6 pt-2">
 					<div className="space-y-4">
 						{filteredExecutions.length === 0 ? (
 							<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">

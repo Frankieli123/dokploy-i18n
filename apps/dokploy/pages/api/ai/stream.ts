@@ -117,6 +117,7 @@ export default async function handler(
 	writeSseEvent(res, "start", { conversationId: parsed.data.conversationId });
 
 	let textChunks = 0;
+	let reasoningChunks = 0;
 	let toolCalls = 0;
 
 	try {
@@ -135,6 +136,11 @@ export default async function handler(
 					if (typeof delta !== "string" || delta.length === 0) return;
 					textChunks++;
 					writeSseEvent(res, "delta", { delta });
+				},
+				onReasoningDelta: (delta) => {
+					if (typeof delta !== "string" || delta.length === 0) return;
+					reasoningChunks++;
+					writeSseEvent(res, "reasoning-delta", { delta });
 				},
 				onToolCall: (toolCallId, toolName, args) => {
 					toolCalls++;
@@ -155,7 +161,7 @@ export default async function handler(
 
 		const messageId = result?.message?.messageId;
 		console.log(
-			`[AI Stream] Completed: ${textChunks} text chunks, ${toolCalls} tool calls, message: ${messageId ?? ""}`,
+			`[AI Stream] Completed: ${textChunks} text chunks, ${reasoningChunks} reasoning chunks, ${toolCalls} tool calls, message: ${messageId ?? ""}`,
 		);
 
 		writeSseEvent(res, "done", {

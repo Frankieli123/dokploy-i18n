@@ -62,8 +62,10 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 const DialogContent = React.forwardRef<
 	React.ElementRef<typeof DialogPrimitive.Content>,
-	React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => {
+	React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+		noInnerScroll?: boolean;
+	}
+>(({ className, children, noInnerScroll, ...props }, ref) => {
 	const { t } = useTranslation("common");
 	const contentRef = React.useRef<HTMLDivElement>(null);
 	const { onOpenChange, open } = React.useContext(DialogContext);
@@ -142,7 +144,8 @@ const DialogContent = React.forwardRef<
 				<div
 					ref={contentRef}
 					className={cn(
-						"flex flex-col overflow-auto flex-1 min-h-0 overscroll-contain",
+						"flex flex-col flex-1 min-h-0 overscroll-contain",
+						noInnerScroll ? "overflow-hidden" : "overflow-auto",
 						!hasPaddingOverride && "p-6",
 					)}
 				>

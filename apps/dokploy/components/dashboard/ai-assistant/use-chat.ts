@@ -112,15 +112,13 @@ export interface Message {
 	messageId: string;
 	role: "user" | "assistant" | "system" | "tool";
 	content: string | null;
-	attachments?:
-		| Array<{
-				type: "image";
-				data: string;
-				mediaType: string;
-				name?: string;
-				size?: number;
-		  }>
-		| null;
+	attachments?: Array<{
+		type: "image";
+		data: string;
+		mediaType: string;
+		name?: string;
+		size?: number;
+	}> | null;
 	toolCalls?: ToolCall[] | null;
 	createdAt: string;
 	status?: "sending" | "sent" | "error";
@@ -135,6 +133,24 @@ export type ToolOutcome = {
 	message?: string;
 	error?: string;
 };
+
+export type TraceEventType =
+	| "start"
+	| "tool-call"
+	| "tool-result"
+	| "reasoning"
+	| "done"
+	| "error"
+	| "event";
+
+export interface TraceEvent {
+	id: string;
+	timestamp: number;
+	source: "chat" | "agent";
+	type: TraceEventType;
+	title: string;
+	data?: unknown;
+}
 
 export interface UseChatOptions {
 	conversationId?: string;
@@ -161,6 +177,7 @@ export function useChat(options: UseChatOptions = {}) {
 	);
 	const [pendingMessages, setPendingMessages] = useState<Message[]>([]);
 	const [toolOutcomes, setToolOutcomes] = useState<ToolOutcome[]>([]);
+	const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
 	const [toolCallMeta, setToolCallMeta] = useState<
 		Record<string, Pick<ToolCall, "status" | "executionId" | "result">>
 	>({});
@@ -303,7 +320,8 @@ export function useChat(options: UseChatOptions = {}) {
 	useEffect(() => {
 		if (hasUserSetToolApprovalsDisabledRef.current) return;
 		const metadata = conversationDetails?.metadata;
-		const disabled = isRecord(metadata) && metadata.toolApprovalsDisabled === true;
+		const disabled =
+			isRecord(metadata) && metadata.toolApprovalsDisabled === true;
 		setAreToolApprovalsDisabled(disabled);
 	}, [conversationDetails?.metadata]);
 
@@ -671,9 +689,9 @@ export function useChat(options: UseChatOptions = {}) {
 			} finally {
 				inFlightApprovalExecutionIdsRef.current.delete(executionId);
 			}
-			},
-			[approveExecution, refetchMessages, toolCallMeta, options, messages],
-		);
+		},
+		[approveExecution, refetchMessages, toolCallMeta, options, messages],
+	);
 
 	const approvePending = useCallback(async () => {
 		const executionId = pendingApproval?.executionId?.trim() ?? "";
@@ -827,6 +845,36 @@ export function useChat(options: UseChatOptions = {}) {
 				}
 			}
 
+			const traceSource: TraceEvent["source"] = isAgentMode ? "agent" : "chat";
+			const traceBaseId = `${timestamp}-${Math.random().toString(16).slice(2)}`;
+			let traceSeq = 0;
+			const mkTrace = (
+				type: TraceEventType,
+				title: string,
+				data?: unknown,
+			): TraceEvent => ({
+				id: `${traceBaseId}-${traceSeq++}`,
+				timestamp: Date.now(),
+				source: traceSource,
+				type,
+				title,
+				data,
+			});
+			const startEvent = mkTrace(
+				"start",
+				traceSource === "agent" ? "Agent run started" : "Chat stream started",
+				{ conversationId: currentConversationId },
+			);
+			setTraceEvents([startEvent]);
+			const addTrace = (
+				type: TraceEventType,
+				title: string,
+				data?: unknown,
+			) => {
+				const next = mkTrace(type, title, data);
+				setTraceEvents((prev) => [...prev, next]);
+			};
+
 			let abortedBySafetyTimer = false;
 
 			if (isAgentMode) {
@@ -859,9 +907,16 @@ export function useChat(options: UseChatOptions = {}) {
 						throw new Error("settings.ai.errors.streamingResponseNotAvailable");
 					}
 
+					addTrace("event", "Agent stream connected", {
+						url: "/api/ai/agent/stream",
+						status: response.status,
+					});
+
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === userTempId ? { ...m, status: "sent" as const } : m,
+							m.messageId === userTempId
+								? { ...m, status: "sent" as const }
+								: m,
 						),
 					);
 
@@ -905,14 +960,13 @@ export function useChat(options: UseChatOptions = {}) {
 								m.messageId === assistantTempId
 									? {
 											...m,
-											content:
-												(() => {
-													const existing = m.content ?? "";
-													if (existing.length > 0 && !existing.endsWith("\n")) {
-														return `${existing}\n${trimmed}\n`;
-													}
-													return `${existing}${trimmed}\n`;
-												})(),
+											content: (() => {
+												const existing = m.content ?? "";
+												if (existing.length > 0 && !existing.endsWith("\n")) {
+													return `${existing}\n${trimmed}\n`;
+												}
+												return `${existing}${trimmed}\n`;
+											})(),
 											status: "sending" as const,
 										}
 									: m,
@@ -925,6 +979,7 @@ export function useChat(options: UseChatOptions = {}) {
 
 						if (evt.event === "done") {
 							flushDeltaNow();
+							addTrace("done", "Agent stream done");
 							stopReason = "done";
 							break;
 						}
@@ -934,6 +989,7 @@ export function useChat(options: UseChatOptions = {}) {
 								message?: string;
 								error?: string;
 							};
+							addTrace("error", "Agent stream error", payload);
 							throw new Error(
 								payload.message ||
 									payload.error ||
@@ -954,10 +1010,20 @@ export function useChat(options: UseChatOptions = {}) {
 
 						if (evt.event === "agent.output.delta") {
 							const delta =
-								payload && typeof payload.delta === "string" ? payload.delta : "";
+								payload && typeof payload.delta === "string"
+									? payload.delta
+									: "";
 							if (delta.length === 0) continue;
 							deltaBufferRef.current += delta;
 							scheduleFlushDelta();
+							continue;
+						}
+
+						if (evt.event === "agent.output.reasoning") {
+							const text =
+								payload && typeof payload.text === "string" ? payload.text : "";
+							if (text.length === 0) continue;
+							addTrace("reasoning", "Thinking", { text });
 							continue;
 						}
 
@@ -975,6 +1041,11 @@ export function useChat(options: UseChatOptions = {}) {
 								payload && typeof payload.summary === "string"
 									? payload.summary
 									: "";
+							addTrace(
+								"tool-result",
+								`agent.step.result ${toolName} ${success ? "OK" : "FAILED"}`,
+								payload ?? undefined,
+							);
 							appendAssistantLine(
 								`[${toolName}] ${success ? "OK" : "FAILED"}${summary ? `: ${summary}` : ""}`,
 							);
@@ -992,11 +1063,20 @@ export function useChat(options: UseChatOptions = {}) {
 									? payload.executionId
 									: "";
 							const runId =
-								payload && typeof payload.runId === "string" ? payload.runId : "";
+								payload && typeof payload.runId === "string"
+									? payload.runId
+									: "";
 							const parametersPreview =
 								payload && typeof payload.parametersPreview === "string"
 									? payload.parametersPreview
 									: undefined;
+							addTrace("event", `agent.step.wait_approval ${toolName}`, {
+								toolName,
+								executionId,
+								runId,
+								parametersPreview,
+								payload,
+							});
 							appendAssistantLine(
 								toolName
 									? `Waiting for approval: ${toolName}`
@@ -1012,6 +1092,10 @@ export function useChat(options: UseChatOptions = {}) {
 							}
 							continue;
 						}
+
+						if (evt.event.startsWith("agent.")) {
+							addTrace("event", evt.event, payload ?? { raw: evt.data });
+						}
 					}
 
 					flushDeltaNow();
@@ -1025,6 +1109,7 @@ export function useChat(options: UseChatOptions = {}) {
 						error instanceof Error
 							? error.message
 							: "settings.ai.errors.unknownError";
+					addTrace("error", "Agent send exception", { error: errorMsg });
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === userTempId || m.messageId === assistantTempId
@@ -1038,6 +1123,7 @@ export function useChat(options: UseChatOptions = {}) {
 				}
 
 				if (stopReason !== "done") {
+					addTrace("event", "Agent stopped before done", { stopReason });
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === assistantTempId
@@ -1097,6 +1183,11 @@ export function useChat(options: UseChatOptions = {}) {
 					throw new Error("settings.ai.errors.streamingResponseNotAvailable");
 				}
 
+				addTrace("event", "Chat stream connected", {
+					url: "/api/ai/stream",
+					status: response.status,
+				});
+
 				setPendingMessages((prev) =>
 					prev.map((m) =>
 						m.messageId === userTempId ? { ...m, status: "sent" as const } : m,
@@ -1109,6 +1200,9 @@ export function useChat(options: UseChatOptions = {}) {
 				const streamStartTime = Date.now();
 				let lastEventTime = streamStartTime;
 				const deltaBufferRef = { current: "" as string };
+				const reasoningBufferRef = { current: "" as string };
+				let reasoningText = "";
+				let reasoningTraceId: string | null = null;
 				let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
 				const FLUSH_VISIBLE_MS = 60;
 				const FLUSH_HIDDEN_MS = 600;
@@ -1118,20 +1212,45 @@ export function useChat(options: UseChatOptions = {}) {
 						clearTimeout(flushDeltaTimer);
 						flushDeltaTimer = null;
 					}
-					const pending = deltaBufferRef.current;
-					if (!pending) return;
-					deltaBufferRef.current = "";
-					setPendingMessages((prev) =>
-						prev.map((m) =>
-							m.messageId === assistantTempId
-								? {
-										...m,
-										content: (m.content ?? "") + pending,
-										status: "sending" as const,
-									}
-								: m,
-						),
-					);
+					const pendingText = deltaBufferRef.current;
+					if (pendingText) {
+						deltaBufferRef.current = "";
+						setPendingMessages((prev) =>
+							prev.map((m) =>
+								m.messageId === assistantTempId
+									? {
+											...m,
+											content: (m.content ?? "") + pendingText,
+											status: "sending" as const,
+										}
+									: m,
+							),
+						);
+					}
+
+					const pendingReasoning = reasoningBufferRef.current;
+					if (pendingReasoning) {
+						reasoningBufferRef.current = "";
+						reasoningText += pendingReasoning;
+
+						if (!reasoningTraceId) {
+							const evt = mkTrace("reasoning", "Thinking", {
+								text: reasoningText,
+							});
+							reasoningTraceId = evt.id;
+							setTraceEvents((prev) => [...prev, evt]);
+						} else {
+							setTraceEvents((prev) => {
+								const idx = prev.findIndex((e) => e.id === reasoningTraceId);
+								if (idx < 0) return prev;
+								const next = prev.slice();
+								const existing = next[idx];
+								if (!existing) return prev;
+								next[idx] = { ...existing, data: { text: reasoningText } };
+								return next;
+							});
+						}
+					}
 				};
 
 				const scheduleFlushDelta = () => {
@@ -1161,6 +1280,10 @@ export function useChat(options: UseChatOptions = {}) {
 						return;
 					}
 					abortedBySafetyTimer = true;
+					addTrace("error", "Safety timer aborted stream", {
+						idleMs,
+						activeToolCalls: activeToolCallIds.size,
+					});
 					clearInterval(safetyInterval);
 					controller.abort();
 				}, 1000);
@@ -1179,6 +1302,15 @@ export function useChat(options: UseChatOptions = {}) {
 							scheduleFlushDelta();
 						}
 
+						if (evt.event === "reasoning-delta") {
+							const payload = JSON.parse(evt.data) as { delta?: unknown };
+							const delta =
+								typeof payload.delta === "string" ? payload.delta : "";
+							if (delta.length === 0) continue;
+							reasoningBufferRef.current += delta;
+							scheduleFlushDelta();
+						}
+
 						if (evt.event === "tool-call") {
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
@@ -1186,6 +1318,7 @@ export function useChat(options: UseChatOptions = {}) {
 								toolName: string;
 								arguments?: unknown;
 							};
+							addTrace("tool-call", payload.toolName || "tool-call", payload);
 							activeToolCallIds.add(payload.toolCallId);
 							const argsString =
 								typeof payload.arguments === "string"
@@ -1232,6 +1365,11 @@ export function useChat(options: UseChatOptions = {}) {
 								toolName: string;
 								result?: unknown;
 							};
+							addTrace(
+								"tool-result",
+								payload.toolName || "tool-result",
+								payload,
+							);
 							activeToolCallIds.delete(payload.toolCallId);
 							try {
 								const args = toolCallArgsById.get(payload.toolCallId);
@@ -1331,6 +1469,7 @@ export function useChat(options: UseChatOptions = {}) {
 
 						if (evt.event === "done") {
 							flushDeltaNow();
+							addTrace("done", "Chat stream done");
 							receivedDone = true;
 							activeToolCallIds.clear();
 							finalizeExecutingToolCalls(
@@ -1352,6 +1491,7 @@ export function useChat(options: UseChatOptions = {}) {
 								message?: string;
 								error?: string;
 							};
+							addTrace("error", "Chat stream error", payload);
 							throw new Error(
 								payload.message ||
 									payload.error ||
@@ -1366,6 +1506,9 @@ export function useChat(options: UseChatOptions = {}) {
 
 				if (controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
+					addTrace("error", "Chat stream aborted", {
+						abortedBySafetyTimer,
+					});
 					finalizeExecutingToolCalls(
 						abortedBySafetyTimer
 							? "settings.ai.errors.streamingEndedWithoutDone"
@@ -1382,6 +1525,7 @@ export function useChat(options: UseChatOptions = {}) {
 
 				if (!controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
+					addTrace("error", "Chat stream ended without done");
 					finalizeExecutingToolCalls(
 						"settings.ai.errors.streamingEndedWithoutDone",
 					);
@@ -1416,6 +1560,7 @@ export function useChat(options: UseChatOptions = {}) {
 						error instanceof Error
 							? error.message
 							: "settings.ai.errors.unknownError";
+					addTrace("error", "Chat send exception", { error: errorMsg });
 					finalizeExecutingToolCalls(errorMsg);
 					setPendingMessages((prev) =>
 						prev.map((m) =>
@@ -1462,13 +1607,14 @@ export function useChat(options: UseChatOptions = {}) {
 		setAbortController(null);
 		setIsLoading(false);
 		setConversationId(undefined);
-			setPendingMessages([]);
-			setToolCallMeta({});
-			setToolOutcomes([]);
-			hasUserSetToolApprovalsDisabledRef.current = false;
-			setAreToolApprovalsDisabled(false);
-			setPendingApproval(null);
-		}, [abortController]);
+		setPendingMessages([]);
+		setTraceEvents([]);
+		setToolCallMeta({});
+		setToolOutcomes([]);
+		hasUserSetToolApprovalsDisabledRef.current = false;
+		setAreToolApprovalsDisabled(false);
+		setPendingApproval(null);
+	}, [abortController]);
 
 	const retryMessage = useCallback(
 		async (messageId: string, aiId: string, isAgentMode = false) => {
@@ -1494,15 +1640,16 @@ export function useChat(options: UseChatOptions = {}) {
 
 			stopGeneration();
 			setPendingMessages([]);
-				setToolCallMeta({});
-				setToolOutcomes([]);
-				hasUserSetToolApprovalsDisabledRef.current = false;
-				setAreToolApprovalsDisabled(false);
-				setPendingApproval(null);
-				setConversationId(normalized);
-			},
-			[stopGeneration],
-		);
+			setTraceEvents([]);
+			setToolCallMeta({});
+			setToolOutcomes([]);
+			hasUserSetToolApprovalsDisabledRef.current = false;
+			setAreToolApprovalsDisabled(false);
+			setPendingApproval(null);
+			setConversationId(normalized);
+		},
+		[stopGeneration],
+	);
 
 	return {
 		ensureConversation,
@@ -1523,5 +1670,6 @@ export function useChat(options: UseChatOptions = {}) {
 		retryMessage,
 		refetchMessages,
 		stopGeneration,
+		traceEvents,
 	};
 }

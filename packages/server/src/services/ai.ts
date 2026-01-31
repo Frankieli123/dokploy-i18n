@@ -20,7 +20,6 @@ import {
 } from "ai";
 import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { nanoid } from "nanoid";
 import { z } from "zod";
 import { IS_CLOUD } from "../constants";
 import { findOrganizationById } from "./admin";
@@ -2047,7 +2046,7 @@ function safeJsonForPrompt(value: unknown, maxLen: number) {
 			let written = 0;
 			let hasMore = false;
 			for (const key in obj) {
-				if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+				if (!Object.hasOwn(obj, key)) continue;
 				if (written >= limits.maxObjectKeys) {
 					hasMore = true;
 					break;
@@ -2996,6 +2995,7 @@ export const chat = async ({
 export type ChatStreamOptions = {
 	abortSignal?: AbortSignal;
 	onTextDelta?: (delta: string) => void;
+	onReasoningDelta?: (delta: string) => void;
 	onToolCall?: (toolCallId: string, toolName: string, args: unknown) => void;
 	onToolResult?: (
 		toolCallId: string,
@@ -3244,6 +3244,15 @@ export const chatStream = async (
 					fullText += delta;
 					try {
 						options.onTextDelta?.(delta);
+					} catch {
+						// Ignore callback errors (e.g., client disconnected)
+					}
+				} else if (chunk.type === "reasoning-delta") {
+					const delta = typeof chunk.text === "string" ? chunk.text : "";
+					if (delta.length === 0) continue;
+					hasAnyOutput = true;
+					try {
+						options.onReasoningDelta?.(delta);
 					} catch {
 						// Ignore callback errors (e.g., client disconnected)
 					}
@@ -4252,6 +4261,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 	const goal = typeof run.goal === "string" ? run.goal : "";
 
 	let lastOutputDelta = "";
+	let lastReasoningDelta = "";
 
 	// Execute any approved executions first (agent-mode approvals).
 	{
@@ -4528,6 +4538,22 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		const turnResults: GeneratedTurn[] = [];
 		let result = await runGenerateWithFallback(systemPrompt);
 		turnResults.push(result);
+
+		const reasoningSnippet = safeTruncateString(
+			(typeof result.reasoningText === "string" ? result.reasoningText : "").trim(),
+			8000,
+		);
+		if (reasoningSnippet.length > 0 && reasoningSnippet !== lastReasoningDelta) {
+			lastReasoningDelta = reasoningSnippet;
+			await saveAgentEventMessage({
+				conversationId: run.conversationId,
+				payload: {
+					type: "agent.output.reasoning",
+					runId,
+					text: reasoningSnippet,
+				},
+			});
+		}
 
 		if (isLikelyActionRequest(goal)) {
 			const toolResults = (result as unknown as { toolResults?: unknown }).toolResults;
