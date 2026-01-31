@@ -44,7 +44,11 @@ import { api } from "@/utils/api";
 import type { CacheType } from "../domains/handle-domain";
 import { ScheduleFormField } from "../schedules/handle-schedules";
 
-const ALL_MOUNTS_VOLUME_NAME = "dokploy_all_mounts";
+const ALL_MOUNTS_VOLUME_NAME = "ALL";
+const ALL_MOUNTS_VOLUME_NAME_INTERNAL = "dokploy_all_mounts";
+
+const toUiVolumeName = (value?: string | null) =>
+	value === ALL_MOUNTS_VOLUME_NAME_INTERNAL ? ALL_MOUNTS_VOLUME_NAME : value || "";
 
 const createFormSchema = (t: (key: string) => string) =>
 	z
@@ -188,7 +192,7 @@ export const HandleVolumeBackups = ({
 			form.reset({
 				name: volumeBackup.name,
 				cronExpression: volumeBackup.cronExpression,
-				volumeName: volumeBackup.volumeName || "",
+				volumeName: toUiVolumeName(volumeBackup.volumeName),
 				prefix: volumeBackup.prefix,
 				keepLatestCount: volumeBackup.keepLatestCount || undefined,
 				turnOff: volumeBackup.turnOff,
@@ -511,7 +515,7 @@ export const HandleVolumeBackups = ({
 												<SelectContent>
 													<SelectItem value={ALL_MOUNTS_VOLUME_NAME}>
 														<span className="whitespace-normal break-all text-left">
-															{t("filter.all")}
+															ALL
 														</span>
 													</SelectItem>
 													{mountsByService?.map((mount) => {
@@ -572,7 +576,7 @@ export const HandleVolumeBackups = ({
 												<SelectContent>
 													<SelectItem value={ALL_MOUNTS_VOLUME_NAME}>
 														<span className="whitespace-normal break-all text-left">
-															{t("filter.all")}
+															ALL
 														</span>
 													</SelectItem>
 													{mounts?.map((mount) => {

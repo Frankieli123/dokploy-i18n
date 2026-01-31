@@ -743,6 +743,8 @@
     "volumeBackups.run.success": "پشتیبان‌گیری ولوم با موفقیت اجرا شد",
     "volumeBackups.run.error": "خطا در اجرای پشتیبان‌گیری ولوم",
     "volumeBackups.run.tooltip": "اجرای دستی پشتیبان‌گیری ولوم",
+    "volumeBackups.enabled": "فعال",
+    "volumeBackups.disabled": "غیرفعال",
     "volumeBackups.delete.title": "حذف پشتیبان ولوم",
     "volumeBackups.delete.description": "آیا مطمئن هستید که می‌خواهید این پشتیبان ولوم را حذف کنید؟",
     "volumeBackups.delete.success": "پشتیبان ولوم با موفقیت حذف شد",

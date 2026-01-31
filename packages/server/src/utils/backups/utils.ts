@@ -104,7 +104,8 @@ export const getMongoBackupCommand = (
 	databaseUser: string,
 	databasePassword: string,
 ) => {
-	return `docker exec -i $CONTAINER_ID bash -c "set -o pipefail; mongodump -d '${database}' -u '${databaseUser}' -p '${databasePassword}' --archive --authenticationDatabase admin --gzip"`;
+	const databaseFlag = database === "*" ? "" : ` -d '${database}'`;
+	return `docker exec -i $CONTAINER_ID bash -c "set -o pipefail; mongodump${databaseFlag} -u '${databaseUser}' -p '${databasePassword}' --archive --authenticationDatabase admin --gzip"`;
 };
 
 export const getServiceContainerCommand = (appName: string) => {

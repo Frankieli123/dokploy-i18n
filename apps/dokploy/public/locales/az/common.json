@@ -743,6 +743,8 @@
     "volumeBackups.run.success": "Volume ehtiyat nüsxəsi uğurla icra olundu",
     "volumeBackups.run.error": "Volume ehtiyat nüsxəsini icra edərkən xəta baş verdi",
     "volumeBackups.run.tooltip": "Volume üçün əl ilə ehtiyat nüsxə işə salın",
+    "volumeBackups.enabled": "Aktiv",
+    "volumeBackups.disabled": "Qeyri-aktiv",
     "volumeBackups.delete.title": "Volume ehtiyat nüsxəsini sil",
     "volumeBackups.delete.description": "Bu volume ehtiyat nüsxəsini silmək istədiyinizə əminsiniz?",
     "volumeBackups.delete.success": "Volume ehtiyat nüsxəsi uğurla silindi",

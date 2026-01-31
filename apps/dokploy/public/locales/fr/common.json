@@ -743,6 +743,8 @@
     "volumeBackups.run.success": "Sauvegarde de volume exécutée avec succès",
     "volumeBackups.run.error": "Erreur lors de l'exécution de la sauvegarde de volume",
     "volumeBackups.run.tooltip": "Exécuter manuellement la sauvegarde de volume",
+    "volumeBackups.enabled": "Actif",
+    "volumeBackups.disabled": "Inactif",
     "volumeBackups.delete.title": "Supprimer la sauvegarde de volume",
     "volumeBackups.delete.description": "Êtes-vous sûr de vouloir supprimer cette sauvegarde de volume ?",
     "volumeBackups.delete.success": "Sauvegarde de volume supprimée avec succès",

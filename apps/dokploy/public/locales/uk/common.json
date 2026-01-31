@@ -743,6 +743,8 @@
     "volumeBackups.run.success": "Резервне копіювання тому успішно виконано",
     "volumeBackups.run.error": "Помилка виконання резервного копіювання тому",
     "volumeBackups.run.tooltip": "Запустити ручне резервне копіювання тому",
+    "volumeBackups.enabled": "Активна",
+    "volumeBackups.disabled": "Неактивна",
     "volumeBackups.delete.title": "Видалити резервну копію тому",
     "volumeBackups.delete.description": "Ви впевнені, що хочете видалити цю резервну копію тому?",
     "volumeBackups.delete.success": "Резервну копію тому успішно видалено",

@@ -743,6 +743,8 @@
     "volumeBackups.run.success": "볼륨 백업이 성공적으로 실행되었습니다",
     "volumeBackups.run.error": "볼륨 백업을 실행하는 동안 오류가 발생했습니다",
     "volumeBackups.run.tooltip": "수동 볼륨 백업 실행",
+    "volumeBackups.enabled": "활성",
+    "volumeBackups.disabled": "비활성",
     "volumeBackups.delete.title": "볼륨 백업 삭제",
     "volumeBackups.delete.description": "이 볼륨 백업을 삭제하시겠습니까?",
     "volumeBackups.delete.success": "볼륨 백업이 성공적으로 삭제되었습니다",

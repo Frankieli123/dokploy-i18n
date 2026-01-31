@@ -30,7 +30,8 @@ export const getMongoRestoreCommand = (
 	databaseUser: string,
 	databasePassword: string,
 ) => {
-	return `docker exec -i $CONTAINER_ID sh -c "mongorestore --username '${databaseUser}' --password '${databasePassword}' --authenticationDatabase admin --db ${database} --archive"`;
+	const databaseFlag = database === "*" ? "" : ` --db '${database}'`;
+	return `docker exec -i $CONTAINER_ID sh -c "mongorestore --username '${databaseUser}' --password '${databasePassword}' --authenticationDatabase admin${databaseFlag} --archive"`;
 };
 
 export const getComposeSearchCommand = (

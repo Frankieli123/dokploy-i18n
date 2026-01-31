@@ -6,7 +6,12 @@ import {
 	getS3Credentials,
 	paths,
 } from "../..";
-import { ALL_MOUNTS_VOLUME_NAME, getBackupBaseName, isBindPath } from "./naming";
+import {
+	ALL_MOUNTS_VOLUME_NAME,
+	getBackupBaseName,
+	isBindPath,
+	normalizeAllMountsVolumeName,
+} from "./naming";
 
 const shEscape = (value: string | undefined): string => {
 	if (!value) return "''";
@@ -21,10 +26,11 @@ export const restoreVolume = async (
 	serverId: string,
 	serviceType: "application" | "compose",
 ) => {
+	const normalizedVolumeName = normalizeAllMountsVolumeName(volumeName);
 	const destination = await findDestinationById(destinationId);
 	const { VOLUME_BACKUPS_PATH } = paths(!!serverId);
-	const isBind = isBindPath(volumeName);
-	const backupBaseName = getBackupBaseName(volumeName);
+	const isBind = isBindPath(normalizedVolumeName);
+	const backupBaseName = getBackupBaseName(normalizedVolumeName);
 	const volumeBackupPath = path.join(VOLUME_BACKUPS_PATH, backupBaseName);
 	const rcloneFlags = getS3Credentials(destination);
 	const bucketPath = `:s3:${destination.bucket}`;
@@ -33,7 +39,7 @@ export const restoreVolume = async (
 	// Command to download backup file from S3
 	const downloadCommand = `rclone copyto ${rcloneFlags.join(" ")} "${backupPath}" "${volumeBackupPath}/${backupFileName}"`;
 
-	if (volumeName.trim() === ALL_MOUNTS_VOLUME_NAME) {
+	if (normalizedVolumeName === ALL_MOUNTS_VOLUME_NAME) {
 		const restoreAllMountsCommand = `
 		set -e
 		echo "=== ALL MOUNTS RESTORE ==="
@@ -242,7 +248,7 @@ export const restoreVolume = async (
 	mkdir -p ${shEscape(volumeBackupPath)}
 	${downloadCommand}
 	echo "Download completed 鉁?
-	TARGET_PATH=${shEscape(volumeName)}
+	TARGET_PATH=${shEscape(normalizedVolumeName)}
 	if [ -d "$TARGET_PATH" ] || [ "\${TARGET_PATH%/}" != "$TARGET_PATH" ]; then
 		echo "Restoring to directory: $TARGET_PATH"
 		mkdir -p "$TARGET_PATH"

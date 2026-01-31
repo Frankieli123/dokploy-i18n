@@ -743,6 +743,8 @@
     "volumeBackups.run.success": "Uruchomiono kopię zapasową woluminu",
     "volumeBackups.run.error": "Błąd podczas uruchamiania kopii zapasowej woluminu",
     "volumeBackups.run.tooltip": "Uruchom ręczną kopię zapasową woluminu",
+    "volumeBackups.enabled": "Aktywna",
+    "volumeBackups.disabled": "Nieaktywna",
     "volumeBackups.delete.title": "Usuń kopię zapasową woluminu",
     "volumeBackups.delete.description": "Czy na pewno chcesz usunąć tę kopię zapasową woluminu?",
     "volumeBackups.delete.success": "Kopia zapasowa woluminu została usunięta",

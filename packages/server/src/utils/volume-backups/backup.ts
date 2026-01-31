@@ -36,11 +36,11 @@ export const backupVolume = async (
 			MOUNTS_FILE="$BACKUP_DIR/.dokploy_all_mounts_mounts.txt"
 			: > "$MOUNTS_FILE"
 			MOUNT_COUNT=0
-			set -- docker run --rm -v "$BACKUP_DIR:/backup" --mount "type=bind,source=$MOUNTS_FILE,target=/sources/.dokploy_all_mounts_mounts.txt,readonly" ubuntu bash -c "cd /sources && tar cvf /backup/${backupFileName} ."
+			set -- docker run --rm -v "$BACKUP_DIR:/backup" --mount "type=bind,source=$MOUNTS_FILE,target=/sources/.dokploy_all_mounts_mounts.txt,readonly" ubuntu bash -c "cd /sources; tar cvf \"/backup/${backupFileName}\" .; TAR_STATUS=$?; if [ $TAR_STATUS -gt 1 ]; then exit $TAR_STATUS; fi; exit 0"
 			while IFS='|' read -r TYPE SOURCE NAME DEST RW; do
 				[ -n "$DEST" ] || continue
 				case "$DEST" in
-					/etc/hosts|/etc/hostname|/etc/resolv.conf)
+					/etc/hosts|/etc/hostname|/etc/resolv.conf|/var/run/docker.sock|/run/docker.sock)
 					continue
 					;;
 			esac
@@ -63,6 +63,19 @@ export const backupVolume = async (
 							continue
 							;;
 					esac
+					case "$SOURCE" in
+						/var/lib/docker/swarm/*|/var/lib/docker/volumes/*|/proc/*|/sys/*|/dev/*)
+							continue
+							;;
+					esac
+					if [ ! -e "$SOURCE" ]; then
+						echo "Skipping missing bind mount source: $SOURCE"
+						continue
+					fi
+					if [ ! -f "$SOURCE" ] && [ ! -d "$SOURCE" ]; then
+						echo "Skipping unsupported bind mount source type: $SOURCE"
+						continue
+					fi
 					set -- "$@" --mount "type=bind,source=$SOURCE,target=$TARGET,readonly"
 					printf '%s|%s|%s|%s|%s\n' "$TYPE" "$SOURCE" "" "$DEST" "$RW" >> "$MOUNTS_FILE"
 					MOUNT_COUNT=$((MOUNT_COUNT+1))

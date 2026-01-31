@@ -743,6 +743,8 @@
     "volumeBackups.run.success": "Volume-Backup erfolgreich ausgeführt",
     "volumeBackups.run.error": "Fehler beim Ausführen des Volume-Backups",
     "volumeBackups.run.tooltip": "Manuelles Volume-Backup ausführen",
+    "volumeBackups.enabled": "Aktiv",
+    "volumeBackups.disabled": "Inaktiv",
     "volumeBackups.delete.title": "Volume-Backup löschen",
     "volumeBackups.delete.description": "Bist du sicher, dass du dieses Volume-Backup löschen möchtest?",
     "volumeBackups.delete.success": "Volume-Backup erfolgreich gelöscht",

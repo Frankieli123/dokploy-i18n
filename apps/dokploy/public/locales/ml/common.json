@@ -743,6 +743,8 @@
     "volumeBackups.run.success": "വോളിയം ബാക്കപ്പ് വിജയകരമായി പ്രവർത്തിച്ചു",
     "volumeBackups.run.error": "വോളിയം ബാക്കപ്പ് പ്രവർത്തിക്കുമ്പോൾ പിശക്",
     "volumeBackups.run.tooltip": "മാനുവൽ വോളിയം ബാക്കപ്പ് പ്രവർത്തിപ്പിക്കുക",
+    "volumeBackups.enabled": "സജീവം",
+    "volumeBackups.disabled": "നിഷ്ക്രിയം",
     "volumeBackups.delete.title": "വോളിയം ബാക്കപ്പ് ഡിലീറ്റ് ചെയ്യുക",
     "volumeBackups.delete.description": "ഈ വോളിയം ബാക്കപ്പ് ഡിലീറ്റ് ചെയ്യണമെന്ന് നിങ്ങൾക്ക് ഉറപ്പാണോ?",
     "volumeBackups.delete.success": "വോളിയം ബാക്കപ്പ് വിജയകരമായി ഡിലീറ്റ് ചെയ്തു",

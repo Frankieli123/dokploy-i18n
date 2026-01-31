@@ -743,6 +743,8 @@
     "volumeBackups.run.success": "Том резервтік көшірмесі сәтті іске қосылды",
     "volumeBackups.run.error": "Том резервтік көшірмесін іске қосу қатесі",
     "volumeBackups.run.tooltip": "Қолмен том резервтік көшірмесін іске қосу",
+    "volumeBackups.enabled": "Белсенді",
+    "volumeBackups.disabled": "Белсенді емес",
     "volumeBackups.delete.title": "Том резервтік көшірмесін жою",
     "volumeBackups.delete.description": "Бұл том резервтік көшірмесін жоюға сенімдісіз бе?",
     "volumeBackups.delete.success": "Том резервтік көшірмесі сәтті жойылды",

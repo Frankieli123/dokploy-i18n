@@ -743,6 +743,8 @@
     "volumeBackups.run.success": "ボリュームバックアップを実行しました",
     "volumeBackups.run.error": "ボリュームバックアップの実行中にエラーが発生しました",
     "volumeBackups.run.tooltip": "手動でボリュームバックアップを実行",
+    "volumeBackups.enabled": "アクティブ",
+    "volumeBackups.disabled": "非アクティブ",
     "volumeBackups.delete.title": "ボリュームバックアップを削除",
     "volumeBackups.delete.description": "このボリュームバックアップを削除してもよろしいですか？",
     "volumeBackups.delete.success": "ボリュームバックアップを削除しました",

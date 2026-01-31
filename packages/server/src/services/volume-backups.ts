@@ -7,29 +7,10 @@ import {
 	type updateVolumeBackupSchema,
 	volumeBackups,
 } from "../db/schema";
-import { ALL_MOUNTS_VOLUME_NAME } from "../utils/volume-backups/naming";
-
-const normalizeAllMountsVolumeName = (value: string): string => {
-	const trimmed = value.trim();
-	const lower = trimmed.toLowerCase();
-	if (lower === ALL_MOUNTS_VOLUME_NAME) return ALL_MOUNTS_VOLUME_NAME;
-	if (
-		lower === "all" ||
-		lower === "all_mounts" ||
-		lower === "all-mounts" ||
-		lower === "allmounts" ||
-		lower === "all mounts" ||
-		trimmed === "*" ||
-		trimmed === "全部" ||
-		trimmed === "所有" ||
-		trimmed === "全量" ||
-		trimmed === "全部挂载" ||
-		trimmed === "所有挂载"
-	) {
-		return ALL_MOUNTS_VOLUME_NAME;
-	}
-	return trimmed;
-};
+import {
+	ALL_MOUNTS_VOLUME_NAME,
+	normalizeAllMountsVolumeName,
+} from "../utils/volume-backups/naming";
 
 const requireNonEmpty = (value: unknown): value is string =>
 	typeof value === "string" && value.trim().length > 0;

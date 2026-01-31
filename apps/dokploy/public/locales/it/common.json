@@ -743,6 +743,8 @@
     "volumeBackups.run.success": "Volume backup run successfully",
     "volumeBackups.run.error": "Error running volume backup",
     "volumeBackups.run.tooltip": "Run Manual Volume Backup",
+    "volumeBackups.enabled": "Attivo",
+    "volumeBackups.disabled": "Inattivo",
     "volumeBackups.delete.title": "Delete Volume Backup",
     "volumeBackups.delete.description": "Are you sure you want to delete this volume backup?",
     "volumeBackups.delete.success": "Volume backup deleted successfully",

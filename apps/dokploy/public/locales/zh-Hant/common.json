@@ -756,6 +756,8 @@
     "volumeBackups.run.success": "卷備份執行成功",
     "volumeBackups.run.error": "執行卷備份時發生錯誤",
     "volumeBackups.run.tooltip": "執行手動卷備份",
+    "volumeBackups.enabled": "啟用",
+    "volumeBackups.disabled": "停用",
     "volumeBackups.delete.title": "刪除卷備份",
     "volumeBackups.delete.description": "確定要刪除此卷備份嗎？",
     "volumeBackups.delete.success": "卷備份刪除成功",

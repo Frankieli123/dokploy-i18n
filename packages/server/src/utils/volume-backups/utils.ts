@@ -8,6 +8,7 @@ import { findVolumeBackupById } from "@dokploy/server/services/volume-backups";
 import {
 	execAsync,
 	execAsyncRemote,
+	ExecError,
 } from "@dokploy/server/utils/process/execAsync";
 import { scheduledJobs, scheduleJob } from "node-schedule";
 import { getS3Credentials, normalizeS3Path } from "../backups/utils";
@@ -54,6 +55,8 @@ const cleanupOldVolumeBackups = async (
 	}
 };
 
+const shEscape = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
+
 export const runVolumeBackup = async (volumeBackupId: string) => {
 	const volumeBackup = await findVolumeBackupById(volumeBackupId);
 	const serverId =
@@ -80,17 +83,47 @@ export const runVolumeBackup = async (volumeBackupId: string) => {
 
 		await updateDeploymentStatus(deployment.deploymentId, "done");
 	} catch (error) {
+		try {
+			const details =
+				error instanceof ExecError
+					? error.getDetailedMessage()
+					: error instanceof Error
+						? error.message
+						: String(error);
+
+			const command = `
+				cat <<'EOF' >> ${shEscape(deployment.logPath)}
+
+❌ Volume backup failed
+${details}
+
+EOF
+			`;
+
+			if (serverId) {
+				await execAsyncRemote(serverId, command);
+			} else {
+				await execAsync(command);
+			}
+		} catch (appendError) {
+			console.error("Failed to append volume backup error logs", appendError);
+		}
+
 		const { VOLUME_BACKUPS_PATH } = paths(!!serverId);
 		const volumeBackupPath = path.join(
 			VOLUME_BACKUPS_PATH,
 			volumeBackup.appName,
 		);
 		// delete all the .tar files
-		const command = `rm -rf ${volumeBackupPath}/*.tar`;
-		if (serverId) {
-			await execAsyncRemote(serverId, command);
-		} else {
-			await execAsync(command);
+		try {
+			const command = `rm -rf ${volumeBackupPath}/*.tar`;
+			if (serverId) {
+				await execAsyncRemote(serverId, command);
+			} else {
+				await execAsync(command);
+			}
+		} catch (cleanupError) {
+			console.error("Failed to cleanup volume backup tar files", cleanupError);
 		}
 		await updateDeploymentStatus(deployment.deploymentId, "error");
 

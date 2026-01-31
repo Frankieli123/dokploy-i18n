@@ -743,6 +743,8 @@
     "volumeBackups.run.success": "Volum-sikkerhetskopi kjørt",
     "volumeBackups.run.error": "Feil ved kjøring av volum-sikkerhetskopi",
     "volumeBackups.run.tooltip": "Kjør manuell volum-sikkerhetskopi",
+    "volumeBackups.enabled": "Aktiv",
+    "volumeBackups.disabled": "Inaktiv",
     "volumeBackups.delete.title": "Slett volum-sikkerhetskopi",
     "volumeBackups.delete.description": "Er du sikker på at du vil slette denne volum-sikkerhetskopien?",
     "volumeBackups.delete.success": "Volum-sikkerhetskopi slettet",

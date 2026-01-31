@@ -743,6 +743,8 @@
     "volumeBackups.run.success": "Cadangan volume berhasil dijalankan",
     "volumeBackups.run.error": "Kesalahan menjalankan cadangan volume",
     "volumeBackups.run.tooltip": "Jalankan Cadangan Volume Manual",
+    "volumeBackups.enabled": "Aktif",
+    "volumeBackups.disabled": "Tidak aktif",
     "volumeBackups.delete.title": "Hapus Cadangan Volume",
     "volumeBackups.delete.description": "Apakah Anda yakin ingin menghapus cadangan volume ini?",
     "volumeBackups.delete.success": "Cadangan volume berhasil dihapus",

@@ -4032,7 +4032,7 @@ export const chatStream = async (
 - Safety: run low-risk read tools immediately; for medium/high-risk actions, explain before executing; if approval is required, create the pending_approval tool_call first.
 - Accuracy: never invent tool names; never guess IDs. Use list/find/get tools; ask the user to confirm only when ambiguous.
 - Idempotency: before creating backups/schedules (or other recurring resources), list existing items first and avoid duplicates; prefer updating an existing item when it matches the intent.
-- Volume backups: to back up ALL mounts, set volumeName="dokploy_all_mounts" (you may also accept "ALL"/"all"). For compose + ALL mounts, serviceName is required; for application + ALL mounts, applicationId is required.
+- Volume backups: to back up ALL mounts, set volumeName="ALL" (internally it maps to "dokploy_all_mounts"; accept both). For compose + ALL mounts, serviceName is required; for application + ALL mounts, applicationId is required.
 - Defaults: if the user says "直接执行/用默认/别问/少问", proceed with safe defaults and ask at most 1 blocking question to avoid harm.
 - Results: clearly report tool outcomes; if the toolset is insufficient, say what's missing and the next best step.
 - Repo/code changes: if you must change a Git repo, ask whether to create a PR; read files first and show a unified diff before writing (approval required).
