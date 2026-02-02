@@ -24,7 +24,6 @@ import {
 	DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { TraceEvent } from "./use-chat";
 
@@ -82,11 +81,7 @@ export function TracePanel({ events }: { events: TraceEvent[] }) {
 					</div>
 				</DialogHeader>
 
-				<ScrollArea
-					type="always"
-					className="flex-1 min-h-0"
-					viewPortClassName="p-6 pt-2"
-				>
+				<div className="flex-1 min-h-0 overflow-y-auto p-6 pt-2">
 					{filtered.length === 0 ? (
 						<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
 							<Activity className="h-10 w-10 opacity-20 mb-2" />
@@ -99,7 +94,7 @@ export function TracePanel({ events }: { events: TraceEvent[] }) {
 							))}
 						</div>
 					)}
-				</ScrollArea>
+				</div>
 			</DialogContent>
 		</Dialog>
 	);
