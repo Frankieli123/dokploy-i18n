@@ -963,7 +963,11 @@ function ConversationHistoryDialog(props: {
 					</div>
 				</DialogHeader>
 
-				<ScrollArea type="always" className="flex-1 min-h-0 p-6 pt-2">
+				<ScrollArea
+					type="always"
+					className="flex-1 min-h-0"
+					viewPortClassName="p-6 pt-2"
+				>
 					<div className="space-y-2">
 						{isLoading ? (
 							<div className="flex items-center justify-center py-10 text-muted-foreground">

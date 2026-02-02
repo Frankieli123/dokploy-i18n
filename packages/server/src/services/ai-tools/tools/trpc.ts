@@ -214,15 +214,73 @@ const trpcProcedureCall: Tool<
 		const bridge = getTrpcBridge();
 		if (!bridge) return bridgeNotConfigured();
 
+		const procedureName = params.procedureName.trim();
+		if (procedureName.length === 0) {
+			return {
+				success: false,
+				message: "Procedure name is required",
+				error: "TRPC_PROCEDURE_NAME_REQUIRED",
+			};
+		}
+
 		try {
-			const input =
+			let input =
 				typeof params.input !== "undefined"
 					? params.input
 					: typeof params.params !== "undefined"
 						? params.params
 						: undefined;
+
+			if (typeof input === "string") {
+				const trimmed = input.trim();
+				if (
+					(trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+					(trimmed.startsWith("[") && trimmed.endsWith("]"))
+				) {
+					try {
+						input = JSON.parse(trimmed);
+					} catch {
+						// Ignore parse failures and forward raw string input.
+					}
+				}
+			}
+
+			if (typeof input === "undefined") {
+				try {
+					const desc = await bridge.describeProcedure(procedureName);
+					if (desc.inputExample !== null) {
+						const requiredFields = (desc.fields ?? [])
+							.filter((f) => f.required)
+							.map((f) => f.name);
+
+						if (desc.type === "query" && requiredFields.length === 0) {
+							input = {};
+						} else {
+							return {
+								success: false,
+								message: `tRPC procedure "${procedureName}" requires an input object`,
+								error: "TRPC_INPUT_REQUIRED",
+								data: {
+									procedure: desc,
+									requiredFields,
+									exampleToolCall: {
+										toolName: "trpc_procedure_call",
+										params: {
+											procedureName,
+											input: desc.inputExample,
+										},
+									},
+								},
+							};
+						}
+					}
+				} catch {
+					// Fallback to calling the procedure; it will return the underlying error message.
+				}
+			}
+
 			const result = await bridge.callProcedure({
-				procedureName: params.procedureName,
+				procedureName,
 				input,
 				ctx: {
 					organizationId: ctx.organizationId,
@@ -246,14 +304,14 @@ const trpcProcedureCall: Tool<
 					: "";
 				return {
 					success: true,
-					message: `tRPC subscription "${params.procedureName}" completed. Collected ${count} event(s)${truncatedInfo}.`,
+					message: `tRPC subscription "${procedureName}" completed. Collected ${count} event(s)${truncatedInfo}.`,
 					data: result,
 				};
 			}
 
 			return {
 				success: true,
-				message: `tRPC procedure "${params.procedureName}" executed`,
+				message: `tRPC procedure "${procedureName}" executed`,
 				data: result,
 			};
 		} catch (error) {
@@ -270,7 +328,7 @@ const trpcProcedureCall: Tool<
 					: [];
 				return {
 					success: false,
-					message: `tRPC procedure "${params.procedureName}" failed`,
+					message: `tRPC procedure "${procedureName}" failed`,
 					error: error instanceof Error ? error.message : String(error),
 					data: {
 						type: "subscription",
@@ -281,7 +339,7 @@ const trpcProcedureCall: Tool<
 
 			return {
 				success: false,
-				message: `tRPC procedure "${params.procedureName}" failed`,
+				message: `tRPC procedure "${procedureName}" failed`,
 				error: error instanceof Error ? error.message : String(error),
 			};
 		}

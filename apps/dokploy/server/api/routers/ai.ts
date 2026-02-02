@@ -351,6 +351,7 @@ export const aiRouter = createTRPCRouter({
 					organizationId: ctx.session.activeOrganizationId,
 					userId: ctx.user.id,
 					...normalizedInput,
+					uiLocale: ctx.req?.cookies?.DOKPLOY_LOCALE,
 				});
 			}),
 
@@ -459,6 +460,7 @@ export const aiRouter = createTRPCRouter({
 					attachments: input.attachments,
 					organizationId: ctx.session.activeOrganizationId,
 					userId: ctx.user.id,
+					uiLocale: ctx.req?.cookies?.DOKPLOY_LOCALE,
 				});
 			}),
 
@@ -491,6 +493,7 @@ export const aiRouter = createTRPCRouter({
 					attachments: input.attachments,
 					organizationId: ctx.session.activeOrganizationId,
 					userId: ctx.user.id,
+					uiLocale: ctx.req?.cookies?.DOKPLOY_LOCALE,
 				});
 			}),
 

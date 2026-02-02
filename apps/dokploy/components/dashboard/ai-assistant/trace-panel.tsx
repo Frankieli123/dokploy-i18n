@@ -13,6 +13,7 @@ import {
 	Search,
 	Wrench,
 } from "lucide-react";
+import { useTranslation } from "next-i18next";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -30,6 +31,7 @@ import type { TraceEvent } from "./use-chat";
 export function TracePanel({ events }: { events: TraceEvent[] }) {
 	const [open, setOpen] = useState(false);
 	const [search, setSearch] = useState("");
+	const { t } = useTranslation("common");
 
 	const filtered = useMemo(() => {
 		const s = search.trim().toLowerCase();
@@ -53,8 +55,8 @@ export function TracePanel({ events }: { events: TraceEvent[] }) {
 					variant="ghost"
 					size="icon"
 					className="h-8 w-8 p-0"
-					title="Trace"
-					aria-label="Trace"
+					title={t("ai.trace.button")}
+					aria-label={t("ai.trace.button")}
 				>
 					<Activity className="h-4 w-4" />
 				</Button>
@@ -66,15 +68,13 @@ export function TracePanel({ events }: { events: TraceEvent[] }) {
 				<DialogHeader className="p-6 pb-2">
 					<DialogTitle className="flex items-center gap-2">
 						<Activity className="h-5 w-5" />
-						Execution Trace
+						{t("ai.trace.title")}
 					</DialogTitle>
-					<DialogDescription>
-						Chronological log of stream events and tool calls.
-					</DialogDescription>
+					<DialogDescription>{t("ai.trace.description")}</DialogDescription>
 					<div className="relative mt-4">
 						<Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
 						<Input
-							placeholder="Search events..."
+							placeholder={t("ai.trace.searchPlaceholder")}
 							className="pl-8"
 							value={search}
 							onChange={(e) => setSearch(e.target.value)}
@@ -82,11 +82,15 @@ export function TracePanel({ events }: { events: TraceEvent[] }) {
 					</div>
 				</DialogHeader>
 
-				<ScrollArea type="always" className="flex-1 min-h-0 p-6 pt-2">
+				<ScrollArea
+					type="always"
+					className="flex-1 min-h-0"
+					viewPortClassName="p-6 pt-2"
+				>
 					{filtered.length === 0 ? (
 						<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
 							<Activity className="h-10 w-10 opacity-20 mb-2" />
-							<p>No events recorded</p>
+							<p>{t("ai.trace.empty")}</p>
 						</div>
 					) : (
 						<div className="space-y-2">
@@ -197,7 +201,7 @@ function TraceEventRow({ event }: { event: TraceEvent }) {
 					{hasDetails && !expanded && (
 						<div className="mt-1 text-xs text-muted-foreground truncate font-mono opacity-80">
 							{details.replace(/\s+/g, " ").slice(0, 160)}
-							{details.length > 160 ? "…" : ""}
+							{details.length > 160 ? "..." : ""}
 						</div>
 					)}
 				</div>

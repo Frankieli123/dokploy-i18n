@@ -1068,11 +1068,13 @@ export const createConversation = async (params: {
 	title?: string;
 	projectId?: string;
 	serverId?: string;
+	uiLocale?: string;
 }) => {
 	const normalizedAiId =
 		typeof params.aiId === "string" && params.aiId.trim().length > 0
 			? params.aiId
 			: undefined;
+	const uiLocale = normalizeUiLocale(params.uiLocale);
 
 	if (normalizedAiId) {
 		const existingAi = await db.query.ai.findFirst({
@@ -1100,6 +1102,7 @@ export const createConversation = async (params: {
 			serverId: params.serverId,
 			metadata: {
 				toolApprovalsDisabled: true,
+				...(uiLocale ? { uiLocale } : {}),
 			},
 		})
 		.returning();
@@ -1242,6 +1245,7 @@ const scheduleConversationSummaryUpdate = (params: {
 					"string"
 					? String((conversation.metadata as { summary?: unknown }).summary)
 					: "";
+			const uiLocale = getUiLocaleFromMetadata(conversation.metadata);
 
 			const history = await getMessages({
 				conversationId: params.conversationId,
@@ -1268,7 +1272,7 @@ const scheduleConversationSummaryUpdate = (params: {
 				prompt: `Update the conversation memory summary.
 
 Rules:
-- Output max 10 lines, same language as the conversation.
+- Output max 10 lines. ${buildReplyLanguageInstruction(uiLocale)}
 - Keep stable facts, user preferences, chosen project/server context, and decisions.
 - No secrets.
 
@@ -1476,6 +1480,7 @@ interface ChatParams {
 	aiId: string;
 	organizationId: string;
 	userId: string;
+	uiLocale?: string;
 }
 
 type ChatUsage = {
@@ -2258,8 +2263,52 @@ function setToolApprovalsDisabledInMetadata(
 	return next;
 }
 
-function buildEmptyModelOutputFallback(userMessage: string): string {
-	const looksChinese = /[\u4e00-\u9fff]/.test(userMessage);
+function normalizeUiLocale(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : null;
+}
+
+function getUiLocaleFromMetadata(metadata: unknown): string | null {
+	if (!isRecord(metadata)) return null;
+	return normalizeUiLocale(metadata.uiLocale);
+}
+
+function setUiLocaleInMetadata(
+	metadata: unknown,
+	uiLocale: string | null,
+): Record<string, unknown> {
+	const next = isRecord(metadata) ? { ...metadata } : {};
+	if (uiLocale) next.uiLocale = uiLocale;
+	else delete (next as { uiLocale?: unknown }).uiLocale;
+	return next;
+}
+
+function buildReplyLanguageInstruction(uiLocale: string | null): string {
+	return uiLocale
+		? `Use the user's UI language (UI locale: ${uiLocale}).`
+		: "Use the same language as the user.";
+}
+
+function shouldPreferChineseReply(params: {
+	uiLocale: string | null;
+	userMessage: string;
+}): boolean {
+	if (params.uiLocale) {
+		const locale = params.uiLocale.toLowerCase();
+		if (locale === "zh" || locale.startsWith("zh-")) return true;
+	}
+	return /[\u4e00-\u9fff]/.test(params.userMessage);
+}
+
+function buildEmptyModelOutputFallback(
+	userMessage: string,
+	uiLocale?: string | null,
+): string {
+	const looksChinese = shouldPreferChineseReply({
+		uiLocale: normalizeUiLocale(uiLocale),
+		userMessage,
+	});
 	if (looksChinese) {
 		return (
 			"我这次没有拿到模型的任何输出（可能是模型接口/网络波动）。\n" +
@@ -2285,12 +2334,18 @@ async function appendToolOutcomeAssistantMessage(_params: {
 async function generateToolOutcomeSummary(params: {
 	model: unknown;
 	userMessage: string;
+	uiLocale?: string | null;
 	toolCalls: Array<{ id: string; name: string; arguments: unknown }>;
 	toolResults: Array<{ toolCallId: string; toolName: string; result: unknown }>;
 	streamError?: string | null;
 }): Promise<string> {
+	const uiLocale = normalizeUiLocale(params.uiLocale);
+
 	const buildFallback = () => {
-		const looksChinese = /[\u4e00-\u9fff]/.test(params.userMessage);
+		const looksChinese = shouldPreferChineseReply({
+			uiLocale,
+			userMessage: params.userMessage,
+		});
 		const toolNames = params.toolCalls
 			.map((tc) => tc.name)
 			.filter((name) => typeof name === "string" && name.trim().length > 0)
@@ -2328,7 +2383,7 @@ async function generateToolOutcomeSummary(params: {
 	const prompt = `Write the final user-facing reply for this turn using the user request and tool calls/results.
 
 Rules:
-- Same language as the user. Plain text only. 3-8 lines. No secrets.
+- ${buildReplyLanguageInstruction(uiLocale)} Plain text only. 3-8 lines. No secrets.
 - If any result is pending approval (status="pending_approval"), ask the user to approve/reject.
 - If any tool failed (success=false or has error), explain what failed and the next step.
 - Otherwise, confirm completion and summarize.
@@ -2474,6 +2529,7 @@ export const chat = async ({
 	aiId,
 	organizationId,
 	userId,
+	uiLocale,
 }: ChatParams): Promise<ChatResult> => {
 	const aiSettings = await getAiSettingById(aiId);
 	if (!aiSettings || !aiSettings.isEnabled) {
@@ -2497,6 +2553,22 @@ export const chat = async ({
 			message: "You don't have access to this conversation",
 		});
 	}
+
+	const requestedUiLocale = normalizeUiLocale(uiLocale);
+	const existingUiLocale = getUiLocaleFromMetadata(conversation.metadata);
+	const effectiveUiLocale = requestedUiLocale ?? existingUiLocale;
+	let conversationMetadata = conversation.metadata;
+	if (requestedUiLocale && requestedUiLocale !== existingUiLocale) {
+		conversationMetadata = setUiLocaleInMetadata(
+			conversation.metadata,
+			requestedUiLocale,
+		);
+		await updateConversation(conversationId, { metadata: conversationMetadata });
+	}
+	const conversationForPrompt =
+		conversationMetadata === conversation.metadata
+			? conversation
+			: { ...conversation, metadata: conversationMetadata };
 
 	initializeTools();
 
@@ -2543,7 +2615,7 @@ export const chat = async ({
 
 	const baseSystemPrompt = [
 		buildSystemPrompt(
-			conversation,
+			conversationForPrompt,
 			buildMetaToolPromptInfo().concat(
 				buildToolCatalogPromptInfo({
 					userMessage: message,
@@ -2577,7 +2649,7 @@ export const chat = async ({
 	};
 
 	const toolApprovalsDisabled = getToolApprovalsDisabledFromMetadata(
-		conversation.metadata,
+		conversationMetadata,
 	);
 	const tools = buildChatTools({
 		conversationId,
@@ -2830,6 +2902,7 @@ export const chat = async ({
 		const summary = await generateToolOutcomeSummary({
 			model,
 			userMessage: message,
+			uiLocale: effectiveUiLocale,
 			toolCalls: allToolCalls.map((tc) => ({
 				id: tc.toolCallId,
 				name: tc.toolName,
@@ -2864,7 +2937,7 @@ export const chat = async ({
 		finalText.trim().length === 0 &&
 		(!Array.isArray(allToolCalls) || allToolCalls.length === 0)
 	) {
-		finalText = buildEmptyModelOutputFallback(message);
+		finalText = buildEmptyModelOutputFallback(message, effectiveUiLocale);
 	}
 
 	// Save assistant response
@@ -3006,7 +3079,15 @@ export type ChatStreamOptions = {
 };
 
 export const chatStream = async (
-	{ conversationId, message, attachments, aiId, organizationId, userId }: ChatParams,
+	{
+		conversationId,
+		message,
+		attachments,
+		aiId,
+		organizationId,
+		userId,
+		uiLocale,
+	}: ChatParams,
 	options: ChatStreamOptions = {},
 ) => {
 	const aiSettings = await getAiSettingById(aiId);
@@ -3031,6 +3112,22 @@ export const chatStream = async (
 			message: "You don't have access to this conversation",
 		});
 	}
+
+	const requestedUiLocale = normalizeUiLocale(uiLocale);
+	const existingUiLocale = getUiLocaleFromMetadata(conversation.metadata);
+	const effectiveUiLocale = requestedUiLocale ?? existingUiLocale;
+	let conversationMetadata = conversation.metadata;
+	if (requestedUiLocale && requestedUiLocale !== existingUiLocale) {
+		conversationMetadata = setUiLocaleInMetadata(
+			conversation.metadata,
+			requestedUiLocale,
+		);
+		await updateConversation(conversationId, { metadata: conversationMetadata });
+	}
+	const conversationForPrompt =
+		conversationMetadata === conversation.metadata
+			? conversation
+			: { ...conversation, metadata: conversationMetadata };
 
 	initializeTools();
 
@@ -3072,7 +3169,7 @@ export const chatStream = async (
 
 		const baseSystemPrompt = [
 			buildSystemPrompt(
-				conversation,
+				conversationForPrompt,
 				buildMetaToolPromptInfo().concat(
 					buildToolCatalogPromptInfo({
 						userMessage: message,
@@ -3105,7 +3202,7 @@ export const chatStream = async (
 	};
 
 	const toolApprovalsDisabled = getToolApprovalsDisabledFromMetadata(
-		conversation.metadata,
+		conversationMetadata,
 	);
 	const tools = buildChatTools({
 		conversationId,
@@ -3374,7 +3471,7 @@ export const chatStream = async (
 			fullText.length === 0 &&
 			!options.abortSignal?.aborted
 		) {
-			fullText = buildEmptyModelOutputFallback(message);
+			fullText = buildEmptyModelOutputFallback(message, effectiveUiLocale);
 			hasAnyOutput = true;
 			try {
 				options.onTextDelta?.(fullText);
@@ -3555,6 +3652,7 @@ export const chatStream = async (
 		const summary = await generateToolOutcomeSummary({
 			model,
 			userMessage: message,
+			uiLocale: effectiveUiLocale,
 			toolCalls: allToolCalls.map((tc) => ({
 				id: tc.id,
 				name: tc.function.name,
@@ -4015,6 +4113,7 @@ export const chatStream = async (
 		typeof (conversation.metadata as { summary?: unknown }).summary === "string"
 			? String((conversation.metadata as { summary?: unknown }).summary)
 			: "";
+	const uiLocale = getUiLocaleFromMetadata(conversation.metadata);
 
 	const toolList = availableTools
 		.map((t) => {
@@ -4031,6 +4130,7 @@ export const chatStream = async (
 		.join("\n");
 
 	const guidelines = `Guidelines:
+- Language: ${buildReplyLanguageInstruction(uiLocale)}
 - Be concise; ask at most 1-3 focused questions only if blocking.
 - Tools: if you know the exact tool + params, call tool_call directly; otherwise use tool_suggest/tool_search/tool_describe, then tool_call.
 - tRPC: procedures are NOT tools. To find procedures, use tool_call -> trpc_procedure_suggest (preferred) or trpc_procedure_search (params must include {query}). To call a procedure, use tool_call -> trpc_procedure_call OR call tool_call with toolName="<router>.<procedure>" and params=<procedure input> (it will be routed to trpc_procedure_call). Queries run without approval; mutations may require approval.
@@ -4205,6 +4305,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			message: "You don't have access to this run",
 		});
 	}
+	const uiLocale = getUiLocaleFromMetadata(conversation.metadata);
 
 	const conversationAiId =
 		typeof conversation.aiId === "string" ? conversation.aiId.trim() : "";
@@ -4788,6 +4889,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		const summary = await generateToolOutcomeSummary({
 			model,
 			userMessage: goal,
+			uiLocale,
 			toolCalls: allToolCalls.map((tc) => ({
 				id: tc.toolCallId,
 				name: tc.toolName,
@@ -4818,7 +4920,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 	}
 
 	if (finalText.trim().length === 0) {
-		finalText = buildEmptyModelOutputFallback(goal);
+		finalText = buildEmptyModelOutputFallback(goal, uiLocale);
 	}
 
 	{
@@ -4941,6 +5043,7 @@ export const startAgentRun = async (params: {
 	aiId: string;
 	organizationId: string;
 	userId: string;
+	uiLocale?: string;
 }) => {
 	const aiSetting = await getAiSettingById(params.aiId);
 	if (aiSetting.organizationId !== params.organizationId) {
@@ -4956,6 +5059,16 @@ export const startAgentRun = async (params: {
 			code: "UNAUTHORIZED",
 			message: "You don't have access to this conversation",
 		});
+	}
+
+	{
+		const requestedUiLocale = normalizeUiLocale(params.uiLocale);
+		const existingUiLocale = getUiLocaleFromMetadata(conversation.metadata);
+		if (requestedUiLocale && requestedUiLocale !== existingUiLocale) {
+			await updateConversation(params.conversationId, {
+				metadata: setUiLocaleInMetadata(conversation.metadata, requestedUiLocale),
+			});
+		}
 	}
 
 	initializeTools();
@@ -5249,6 +5362,7 @@ async function autoContinueAfterApprovedToolExecution(params: {
 	const aiSettings = await getAiSettingById(aiId);
 	if (!aiSettings || !aiSettings.isEnabled) return;
 	if (aiSettings.organizationId !== params.organizationId) return;
+	const uiLocale = getUiLocaleFromMetadata(conversation.metadata);
 
 	initializeTools();
 
@@ -5396,6 +5510,7 @@ async function autoContinueAfterApprovedToolExecution(params: {
 			(await generateToolOutcomeSummary({
 				model,
 				userMessage: internalPrompt,
+				uiLocale,
 				toolCalls: result.toolCalls.map((tc) => ({
 					id: tc.toolCallId,
 					name: tc.toolName,

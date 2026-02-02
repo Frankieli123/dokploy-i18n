@@ -122,7 +122,11 @@ export function ToolExecutionHistory({ messages }: ToolExecutionHistoryProps) {
 					</div>
 				</DialogHeader>
 
-				<ScrollArea type="always" className="flex-1 min-h-0 p-6 pt-2">
+				<ScrollArea
+					type="always"
+					className="flex-1 min-h-0"
+					viewPortClassName="p-6 pt-2"
+				>
 					<div className="space-y-4">
 						{filteredExecutions.length === 0 ? (
 							<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">

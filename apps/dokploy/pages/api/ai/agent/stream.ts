@@ -117,6 +117,7 @@ export default async function handler(
 			attachments: parsed.data.attachments,
 			organizationId: session.activeOrganizationId,
 			userId: user.id,
+			uiLocale: req.cookies.DOKPLOY_LOCALE,
 		});
 		runId = typeof run?.runId === "string" ? run.runId : "";
 

@@ -129,6 +129,7 @@ export default async function handler(
 				attachments: parsed.data.attachments,
 				organizationId: session.activeOrganizationId,
 				userId: user.id,
+				uiLocale: req.cookies.DOKPLOY_LOCALE,
 			},
 			{
 				abortSignal: abortController.signal,
