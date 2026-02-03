@@ -3029,21 +3029,23 @@ export const chat = async ({
 		model,
 	});
 
-	// Auto-generate title if first response (non-blocking)
+	// Auto-generate title for new conversation (non-blocking)
 	if (history.length <= 2 && conversation.title === "New Conversation") {
-		try {
-			const titleText = await generatePromptText({
-				model,
-				prompt: `Generate a short conversation title (<=50 chars, no quotes) from this user message: "${message}". Return ONLY the title.`,
-				maxOutputTokens: 60,
-			});
-			const title = titleText.trim().slice(0, 50);
-			if (title) {
-				await updateConversation(conversationId, { title });
+		void (async () => {
+			try {
+				const titleText = await generatePromptText({
+					model,
+					prompt: `Generate a short conversation title (<=50 chars, no quotes) from this user message: "${message}". Return ONLY the title.`,
+					maxOutputTokens: 60,
+				});
+				const title = titleText.trim().slice(0, 50);
+				if (title) {
+					await updateConversation(conversationId, { title });
+				}
+			} catch (e) {
+				console.error("Failed to generate title:", e);
 			}
-		} catch (e) {
-			console.error("Failed to generate title:", e);
-		}
+		})();
 	}
 
 	const usage: ChatUsage | undefined =
@@ -3153,6 +3155,7 @@ export const chatStream = async (
 
 		const provider = selectAIProvider(aiSettings);
 		const model = provider(aiSettings.model);
+
 		let playbookPrompt = "";
 		try {
 			const embeddingProvider = await resolveEmbeddingProviderConfig({
@@ -3750,6 +3753,7 @@ export const chatStream = async (
 		model,
 	});
 
+	// Auto-generate title for new conversation (non-blocking)
 	if (history.length <= 2 && conversation.title === "New Conversation") {
 		void (async () => {
 			try {

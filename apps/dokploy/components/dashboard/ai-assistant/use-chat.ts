@@ -153,6 +153,7 @@ export type TraceEventType =
 	| "tool-call"
 	| "tool-result"
 	| "reasoning"
+	| "output"
 	| "done"
 	| "error"
 	| "event";
@@ -935,6 +936,8 @@ export function useChat(options: UseChatOptions = {}) {
 					);
 
 					const deltaBufferRef = { current: "" as string };
+					let outputText = "";
+					let outputTraceId: string | null = null;
 					let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
 					const FLUSH_MS = 80;
 
@@ -955,8 +958,24 @@ export function useChat(options: UseChatOptions = {}) {
 											status: "sending" as const,
 										}
 									: m,
-							),
-						);
+								),
+							);
+						outputText += pending;
+						if (!outputTraceId) {
+							const evt = mkTrace("output", "Output", { text: outputText });
+							outputTraceId = evt.id;
+							setTraceEvents((prev) => [...prev, evt]);
+						} else {
+							setTraceEvents((prev) => {
+								const idx = prev.findIndex((e) => e.id === outputTraceId);
+								if (idx < 0) return prev;
+								const next = prev.slice();
+								const existing = next[idx];
+								if (!existing) return prev;
+								next[idx] = { ...existing, data: { text: outputText } };
+								return next;
+							});
+						}
 					};
 
 					const scheduleFlushDelta = () => {
@@ -969,6 +988,25 @@ export function useChat(options: UseChatOptions = {}) {
 					const appendAssistantLine = (line: string) => {
 						const trimmed = typeof line === "string" ? line.trim() : "";
 						if (!trimmed) return;
+						if (outputText.length > 0 && !outputText.endsWith("\n")) {
+							outputText += "\n";
+						}
+						outputText += `${trimmed}\n`;
+						if (!outputTraceId) {
+							const evt = mkTrace("output", "Output", { text: outputText });
+							outputTraceId = evt.id;
+							setTraceEvents((prev) => [...prev, evt]);
+						} else {
+							setTraceEvents((prev) => {
+								const idx = prev.findIndex((e) => e.id === outputTraceId);
+								if (idx < 0) return prev;
+								const next = prev.slice();
+								const existing = next[idx];
+								if (!existing) return prev;
+								next[idx] = { ...existing, data: { text: outputText } };
+								return next;
+							});
+						}
 						setPendingMessages((prev) =>
 							prev.map((m) =>
 								m.messageId === assistantTempId
@@ -1222,16 +1260,18 @@ export function useChat(options: UseChatOptions = {}) {
 				);
 
 				let receivedDone = false;
-				const activeToolCallIds = new Set<string>();
-				const toolCallArgsById = new Map<string, string>();
-				const streamStartTime = Date.now();
-				let lastEventTime = streamStartTime;
-				const deltaBufferRef = { current: "" as string };
-				const reasoningBufferRef = { current: "" as string };
-				let reasoningText = "";
-				let reasoningTraceId: string | null = null;
-				let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
-				const FLUSH_VISIBLE_MS = 60;
+					const activeToolCallIds = new Set<string>();
+					const toolCallArgsById = new Map<string, string>();
+					const streamStartTime = Date.now();
+					let lastEventTime = streamStartTime;
+					const deltaBufferRef = { current: "" as string };
+					const reasoningBufferRef = { current: "" as string };
+					let outputText = "";
+					let outputTraceId: string | null = null;
+					let reasoningText = "";
+					let reasoningTraceId: string | null = null;
+					let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
+					const FLUSH_VISIBLE_MS = 60;
 				const FLUSH_HIDDEN_MS = 600;
 
 				const flushDeltaNow = () => {
@@ -1240,10 +1280,10 @@ export function useChat(options: UseChatOptions = {}) {
 						flushDeltaTimer = null;
 					}
 					const pendingText = deltaBufferRef.current;
-					if (pendingText) {
-						deltaBufferRef.current = "";
-						setPendingMessages((prev) =>
-							prev.map((m) =>
+						if (pendingText) {
+							deltaBufferRef.current = "";
+							setPendingMessages((prev) =>
+								prev.map((m) =>
 								m.messageId === assistantTempId
 									? {
 											...m,
@@ -1251,9 +1291,25 @@ export function useChat(options: UseChatOptions = {}) {
 											status: "sending" as const,
 										}
 									: m,
-							),
-						);
-					}
+								),
+							);
+							outputText += pendingText;
+							if (!outputTraceId) {
+								const evt = mkTrace("output", "Output", { text: outputText });
+								outputTraceId = evt.id;
+								setTraceEvents((prev) => [...prev, evt]);
+							} else {
+								setTraceEvents((prev) => {
+									const idx = prev.findIndex((e) => e.id === outputTraceId);
+									if (idx < 0) return prev;
+									const next = prev.slice();
+									const existing = next[idx];
+									if (!existing) return prev;
+									next[idx] = { ...existing, data: { text: outputText } };
+									return next;
+								});
+							}
+						}
 
 					const pendingReasoning = reasoningBufferRef.current;
 					if (pendingReasoning) {

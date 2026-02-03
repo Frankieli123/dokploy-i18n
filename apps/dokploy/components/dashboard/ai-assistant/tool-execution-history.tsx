@@ -13,6 +13,7 @@ import {
 	DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToolCallBlock } from "./tool-call-block";
 import type { Message } from "./use-chat";
 
@@ -121,7 +122,7 @@ export function ToolExecutionHistory({ messages }: ToolExecutionHistoryProps) {
 					</div>
 				</DialogHeader>
 
-				<div className="flex-1 min-h-0 overflow-y-auto p-6 pt-2">
+				<ScrollArea className="flex-1 min-h-0" viewPortClassName="p-6 pt-2">
 					<div className="space-y-4">
 						{filteredExecutions.length === 0 ? (
 							<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
@@ -162,7 +163,7 @@ export function ToolExecutionHistory({ messages }: ToolExecutionHistoryProps) {
 							))
 						)}
 					</div>
-				</div>
+				</ScrollArea>
 			</DialogContent>
 		</Dialog>
 	);

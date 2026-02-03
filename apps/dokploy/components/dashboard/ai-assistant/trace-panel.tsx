@@ -9,6 +9,7 @@ import {
 	ChevronDown,
 	ChevronUp,
 	Flag,
+	MessageSquare,
 	Play,
 	Search,
 	Wrench,
@@ -24,6 +25,7 @@ import {
 	DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { TraceEvent } from "./use-chat";
 
@@ -81,7 +83,7 @@ export function TracePanel({ events }: { events: TraceEvent[] }) {
 					</div>
 				</DialogHeader>
 
-				<div className="flex-1 min-h-0 overflow-y-auto p-6 pt-2">
+				<ScrollArea className="flex-1 min-h-0" viewPortClassName="p-6 pt-2">
 					{filtered.length === 0 ? (
 						<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
 							<Activity className="h-10 w-10 opacity-20 mb-2" />
@@ -94,7 +96,7 @@ export function TracePanel({ events }: { events: TraceEvent[] }) {
 							))}
 						</div>
 					)}
-				</div>
+				</ScrollArea>
 			</DialogContent>
 		</Dialog>
 	);
@@ -122,6 +124,8 @@ function TraceEventRow({ event }: { event: TraceEvent }) {
 				return Play;
 			case "reasoning":
 				return BrainCircuit;
+			case "output":
+				return MessageSquare;
 			case "tool-call":
 				return Wrench;
 			case "tool-result":
@@ -145,6 +149,8 @@ function TraceEventRow({ event }: { event: TraceEvent }) {
 				return "text-emerald-600";
 			case "reasoning":
 				return "text-amber-500";
+			case "output":
+				return "text-sky-500";
 			case "done":
 				return "text-primary";
 			default:
@@ -157,7 +163,7 @@ function TraceEventRow({ event }: { event: TraceEvent }) {
 	const details = (() => {
 		if (!hasDetails) return "";
 		if (
-			event.type === "reasoning" &&
+			(event.type === "reasoning" || event.type === "output") &&
 			event.data &&
 			typeof event.data === "object" &&
 			"text" in event.data
