@@ -91,14 +91,7 @@ export const runVolumeBackup = async (volumeBackupId: string) => {
 						? error.message
 						: String(error);
 
-			const command = `
-				cat <<'EOF' >> ${shEscape(deployment.logPath)}
-
-❌ Volume backup failed
-${details}
-
-EOF
-			`;
+			const command = `printf '%s' ${shEscape(`\n\n❌ Volume backup failed\n${details}\n`)} >> ${shEscape(deployment.logPath)}`;
 
 			if (serverId) {
 				await execAsyncRemote(serverId, command);

@@ -25,7 +25,7 @@ import {
 	type UpdateConfigSwarm,
 	UpdateConfigSwarmSchema,
 } from "./shared";
-import { generateAppName } from "./utils";
+import { APP_NAME_MESSAGE, APP_NAME_REGEX, generateAppName } from "./utils";
 
 export const redis = pgTable("redis", {
 	redisId: text("redisId")
@@ -88,7 +88,12 @@ export const redisRelations = relations(redis, ({ one, many }) => ({
 
 const createSchema = createInsertSchema(redis, {
 	redisId: z.string(),
-	appName: z.string().min(1),
+	appName: z
+		.string()
+		.min(1)
+		.max(63)
+		.regex(APP_NAME_REGEX, APP_NAME_MESSAGE)
+		.optional(),
 	createdAt: z.string(),
 	name: z.string().min(1),
 	databasePassword: z.string(),

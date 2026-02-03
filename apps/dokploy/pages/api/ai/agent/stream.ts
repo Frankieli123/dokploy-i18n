@@ -12,8 +12,13 @@ import type { NextApiRequest, NextApiResponse } from "next";
 const bodySchema = apiStartAgent;
 
 function writeSseEvent(res: NextApiResponse, event: string, data: unknown) {
-	res.write(`event: ${event}\n`);
-	res.write(`data: ${JSON.stringify(data)}\n\n`);
+	if (res.writableEnded || res.finished) return;
+	try {
+		res.write(`event: ${event}\n`);
+		res.write(`data: ${JSON.stringify(data)}\n\n`);
+	} catch {
+		// ignore
+	}
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -21,14 +26,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function sleep(ms: number, signal?: AbortSignal) {
-	return new Promise<void>((resolve, reject) => {
-		if (signal?.aborted) return reject(new Error("aborted"));
+	return new Promise<void>((resolve) => {
+		if (signal?.aborted) return resolve();
 		const t = setTimeout(resolve, ms);
 		signal?.addEventListener(
 			"abort",
 			() => {
 				clearTimeout(t);
-				reject(new Error("aborted"));
+				resolve();
 			},
 			{ once: true },
 		);
@@ -184,9 +189,11 @@ export default async function handler(
 			await sleep(pollDelay, abortController.signal);
 		}
 	} catch (error) {
-		writeSseEvent(res, "error", {
-			message: error instanceof Error ? error.message : String(error),
-		});
+		if (!abortController.signal.aborted) {
+			writeSseEvent(res, "error", {
+				message: error instanceof Error ? error.message : String(error),
+			});
+		}
 	} finally {
 		clearInterval(pingInterval);
 		res.end();

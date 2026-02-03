@@ -150,6 +150,9 @@ export const HandleDestinations = ({ destinationId }: Props) => {
 			);
 
 			await utils.destination.all.invalidate();
+			if (destinationId) {
+				await utils.destination.one.invalidate({ destinationId });
+			}
 			setOpen(false);
 		} catch {
 			toast.error(t("settings.destinations.toast.saveError"));

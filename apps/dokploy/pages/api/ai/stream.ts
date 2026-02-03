@@ -106,15 +106,24 @@ export default async function handler(
 	req.on("close", handleClose);
 	req.on("aborted", handleClose);
 
-	const pingInterval = setInterval(() => {
+	const safeWrite = (
+		event: string,
+		data: Record<string, unknown>,
+	): void => {
+		if (abortController.signal.aborted || res.writableEnded || res.finished)
+			return;
 		try {
-			writeSseEvent(res, "ping", { ts: Date.now() });
+			writeSseEvent(res, event, data);
 		} catch {
 			abortController.abort();
 		}
+	};
+
+	const pingInterval = setInterval(() => {
+		safeWrite("ping", { ts: Date.now() });
 	}, 15000);
 
-	writeSseEvent(res, "start", { conversationId: parsed.data.conversationId });
+	safeWrite("start", { conversationId: parsed.data.conversationId });
 
 	let textChunks = 0;
 	let reasoningChunks = 0;
@@ -136,26 +145,26 @@ export default async function handler(
 				onTextDelta: (delta) => {
 					if (typeof delta !== "string" || delta.length === 0) return;
 					textChunks++;
-					writeSseEvent(res, "delta", { delta });
+					safeWrite("delta", { delta });
 				},
 				onReasoningDelta: (delta) => {
 					if (typeof delta !== "string" || delta.length === 0) return;
 					reasoningChunks++;
-					writeSseEvent(res, "reasoning-delta", { delta });
+					safeWrite("reasoning-delta", { delta });
 				},
 				onToolCall: (toolCallId, toolName, args) => {
 					toolCalls++;
-					writeSseEvent(res, "tool-call", {
+					safeWrite("tool-call", {
 						toolCallId,
 						toolName,
 						arguments: args,
 					});
 				},
 				onToolResult: (toolCallId, toolName, result) => {
-					writeSseEvent(res, "tool-result", { toolCallId, toolName, result });
+					safeWrite("tool-result", { toolCallId, toolName, result });
 				},
 				onError: (error) => {
-					writeSseEvent(res, "stream-error", { error });
+					safeWrite("stream-error", { error });
 				},
 			},
 		);
@@ -165,15 +174,17 @@ export default async function handler(
 			`[AI Stream] Completed: ${textChunks} text chunks, ${reasoningChunks} reasoning chunks, ${toolCalls} tool calls, message: ${messageId ?? ""}`,
 		);
 
-		writeSseEvent(res, "done", {
+		safeWrite("done", {
 			conversationId: parsed.data.conversationId,
 			messageId: messageId ?? "",
 			usage: result.usage,
 		});
 	} catch (error) {
-		writeSseEvent(res, "error", {
-			message: error instanceof Error ? error.message : String(error),
-		});
+		if (!abortController.signal.aborted) {
+			safeWrite("error", {
+				message: error instanceof Error ? error.message : String(error),
+			});
+		}
 	} finally {
 		clearInterval(pingInterval);
 		res.end();

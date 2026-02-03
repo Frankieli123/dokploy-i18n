@@ -317,7 +317,7 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 						type: "postgres",
 						dockerImage: "",
 						name: "",
-						appName: `${projectName}-`,
+						appName: `${slug}-`,
 						databasePassword: "",
 						description: "",
 						databaseName: "",

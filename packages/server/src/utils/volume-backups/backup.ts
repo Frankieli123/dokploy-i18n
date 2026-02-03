@@ -37,6 +37,8 @@ export const backupVolume = async (
 			: > "$MOUNTS_FILE"
 			MOUNT_COUNT=0
 			set -- docker run --rm -v "$BACKUP_DIR:/backup" --mount "type=bind,source=$MOUNTS_FILE,target=/sources/.dokploy_all_mounts_mounts.txt,readonly" ubuntu bash -c "cd /sources; tar cvf \"/backup/${backupFileName}\" .; TAR_STATUS=$?; if [ $TAR_STATUS -gt 1 ]; then exit $TAR_STATUS; fi; exit 0"
+			MOUNTS_RAW_FILE="$BACKUP_DIR/.dokploy_all_mounts_raw.txt"
+			printf '%s\n' "$MOUNTS_RAW" > "$MOUNTS_RAW_FILE"
 			while IFS='|' read -r TYPE SOURCE NAME DEST RW; do
 				[ -n "$DEST" ] || continue
 				case "$DEST" in
@@ -80,9 +82,8 @@ export const backupVolume = async (
 					printf '%s|%s|%s|%s|%s\n' "$TYPE" "$SOURCE" "" "$DEST" "$RW" >> "$MOUNTS_FILE"
 					MOUNT_COUNT=$((MOUNT_COUNT+1))
 				fi
-			done <<EOF
-	${"$"}{MOUNTS_RAW}
-	EOF
+			done < "$MOUNTS_RAW_FILE"
+			rm -f "$MOUNTS_RAW_FILE"
 
 			if [ "$MOUNT_COUNT" -le 0 ]; then
 				echo "No eligible mounts found to backup."

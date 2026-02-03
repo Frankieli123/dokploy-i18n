@@ -231,6 +231,10 @@ const trpcProcedureCall: Tool<
 						? params.params
 						: undefined;
 
+			if (input === null) {
+				input = undefined;
+			}
+
 			if (typeof input === "string") {
 				const trimmed = input.trim();
 				if (
@@ -242,6 +246,45 @@ const trpcProcedureCall: Tool<
 					} catch {
 						// Ignore parse failures and forward raw string input.
 					}
+				}
+			}
+
+			const isPlainObject =
+				typeof input === "object" && input !== null && !Array.isArray(input);
+
+			if (typeof input !== "undefined" && !isPlainObject) {
+				try {
+					const desc = await bridge.describeProcedure(procedureName);
+					if (desc.inputExample !== null) {
+						const requiredFields = (desc.fields ?? [])
+							.filter((f) => f.required)
+							.map((f) => f.name);
+
+						if (desc.type === "query" && requiredFields.length === 0) {
+							input = {};
+						} else if (requiredFields.length === 1) {
+							input = { [requiredFields[0] as string]: input };
+						} else {
+							return {
+								success: false,
+								message: `tRPC procedure "${procedureName}" expects an input object`,
+								error: "TRPC_INPUT_OBJECT_EXPECTED",
+								data: {
+									procedure: desc,
+									requiredFields,
+									exampleToolCall: {
+										toolName: "trpc_procedure_call",
+										params: {
+											procedureName,
+											input: desc.inputExample,
+										},
+									},
+								},
+							};
+						}
+					}
+				} catch {
+					// Ignore and fall through to calling the procedure.
 				}
 			}
 

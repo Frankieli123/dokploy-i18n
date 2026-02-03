@@ -26,7 +26,7 @@ import {
 	type UpdateConfigSwarm,
 	UpdateConfigSwarmSchema,
 } from "./shared";
-import { generateAppName } from "./utils";
+import { APP_NAME_MESSAGE, APP_NAME_REGEX, generateAppName } from "./utils";
 
 export const mariadb = pgTable("mariadb", {
 	mariadbId: text("mariadbId")
@@ -96,7 +96,12 @@ export const mariadbRelations = relations(mariadb, ({ one, many }) => ({
 const createSchema = createInsertSchema(mariadb, {
 	mariadbId: z.string(),
 	name: z.string().min(1),
-	appName: z.string().min(1),
+	appName: z
+		.string()
+		.min(1)
+		.max(63)
+		.regex(APP_NAME_REGEX, APP_NAME_MESSAGE)
+		.optional(),
 	createdAt: z.string(),
 	databaseName: z.string().min(1),
 	databaseUser: z.string().min(1),

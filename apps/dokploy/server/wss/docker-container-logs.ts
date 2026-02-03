@@ -1,9 +1,9 @@
 import type http from "node:http";
-import { findServerById, validateRequest } from "@dokploy/server";
+import { findServerById, IS_CLOUD, validateRequest } from "@dokploy/server";
 import { spawn } from "node-pty";
 import { Client } from "ssh2";
 import { WebSocketServer } from "ws";
-import { getShell } from "./utils";
+import { getShell, isValidContainerId } from "./utils";
 
 export const setupDockerContainerLogsWebSocketServer = (
 	server: http.Server<typeof http.IncomingMessage, typeof http.ServerResponse>,
@@ -38,7 +38,12 @@ export const setupDockerContainerLogsWebSocketServer = (
 		const { user, session } = await validateRequest(req);
 
 		if (!containerId) {
-			ws.close(4000, "containerId no provided");
+			ws.close(4000, "containerId not provided");
+			return;
+		}
+
+		if (!isValidContainerId(containerId)) {
+			ws.close(4000, "Invalid container ID format");
 			return;
 		}
 
@@ -46,6 +51,23 @@ export const setupDockerContainerLogsWebSocketServer = (
 			ws.close();
 			return;
 		}
+
+		const runMode = runType === "swarm" ? "swarm" : "native";
+
+		const tailLines = Number.parseInt(tail ?? "100", 10);
+		const safeTail = Number.isFinite(tailLines) && tailLines > 0 ? tailLines : 100;
+
+		const safeSince = (() => {
+			if (!since || since === "all") return "all";
+			return /^(?:1|6|24|168|720)h$/.test(since) ? since : "all";
+		})();
+
+		const safeSearch = (() => {
+			if (!search) return "";
+			return search.replace(/\r?\n/g, " ").slice(0, 500);
+		})();
+
+		const escapedSearch = safeSearch.replace(/'/g, "'\\''");
 
 		// Set up keep-alive ping mechanism to prevent timeout
 		// Send ping every 45 seconds to keep connection alive
@@ -62,14 +84,13 @@ export const setupDockerContainerLogsWebSocketServer = (
 				const client = new Client();
 				client
 					.once("ready", () => {
-						const baseCommand = `docker ${runType === "swarm" ? "service" : "container"} logs --timestamps ${
-							runType === "swarm" ? "--raw" : ""
-						} --tail ${tail} ${
-							since === "all" ? "" : `--since ${since}`
+						const baseCommand = `docker ${runMode === "swarm" ? "service" : "container"} logs --timestamps ${
+							runMode === "swarm" ? "--raw" : ""
+						} --tail ${safeTail} ${
+							safeSince === "all" ? "" : `--since ${safeSince}`
 						} --follow ${containerId}`;
-						const escapedSearch = search ? search.replace(/'/g, "'\\''") : "";
-						const command = search
-							? `${baseCommand} 2>&1 | grep --line-buffered -iF "${escapedSearch}"`
+						const command = safeSearch
+							? `${baseCommand} 2>&1 | grep --line-buffered -iF '${escapedSearch}'`
 							: baseCommand;
 						client.exec(command, (err, stream) => {
 							if (err) {
@@ -109,14 +130,19 @@ export const setupDockerContainerLogsWebSocketServer = (
 					client.end();
 				});
 			} else {
+				if (IS_CLOUD) {
+					ws.send("This feature is not available in the cloud version.");
+					ws.close();
+					return;
+				}
 				const shell = getShell();
-				const baseCommand = `docker ${runType === "swarm" ? "service" : "container"} logs --timestamps ${
-					runType === "swarm" ? "--raw" : ""
-				} --tail ${tail} ${
-					since === "all" ? "" : `--since ${since}`
+				const baseCommand = `docker ${runMode === "swarm" ? "service" : "container"} logs --timestamps ${
+					runMode === "swarm" ? "--raw" : ""
+				} --tail ${safeTail} ${
+					safeSince === "all" ? "" : `--since ${safeSince}`
 				} --follow ${containerId}`;
-				const command = search
-					? `${baseCommand} 2>&1 | grep -iF '${search}'`
+				const command = safeSearch
+					? `${baseCommand} 2>&1 | grep --line-buffered -iF '${escapedSearch}'`
 					: baseCommand;
 				const ptyProcess = spawn(shell, ["-c", command], {
 					name: "xterm-256color",

@@ -213,7 +213,7 @@ export const cleanUpDockerBuilder = async (serverId?: string) => {
 };
 
 export const cleanUpSystemPrune = async (serverId?: string) => {
-	const command = "docker system prune --force --volumes";
+	const command = "docker system prune --force";
 	if (serverId) {
 		await execAsyncRemote(serverId, command);
 	} else {

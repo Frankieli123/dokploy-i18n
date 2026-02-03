@@ -7,6 +7,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isAbortLikeError(error: unknown): boolean {
+	if (!error) return false;
+	const maybe = error as { name?: unknown; message?: unknown };
+	const name = typeof maybe.name === "string" ? maybe.name : "";
+	if (name === "AbortError") return true;
+	const message = typeof maybe.message === "string" ? maybe.message : "";
+	const normalized = message.trim().toLowerCase();
+	if (normalized === "aborted") return true;
+	if (normalized.includes("bodystreambuffer") && normalized.includes("aborted")) {
+		return true;
+	}
+	return false;
+}
+
 function getExecutionIdFromResultPayload(
 	payloadResult: Record<string, unknown>,
 ): string | undefined {
@@ -1105,6 +1119,19 @@ export function useChat(options: UseChatOptions = {}) {
 					}
 				} catch (error) {
 					setAbortController(null);
+					if (isAbortLikeError(error)) {
+						addTrace("event", "Agent stream aborted");
+						setPendingMessages((prev) =>
+							prev.map((m) =>
+								m.messageId === userTempId || m.messageId === assistantTempId
+									? { ...m, status: "sent" as const }
+									: m,
+							),
+						);
+						setIsLoading(false);
+						return;
+					}
+
 					const errorMsg =
 						error instanceof Error
 							? error.message
@@ -1541,7 +1568,7 @@ export function useChat(options: UseChatOptions = {}) {
 				setAbortController(null);
 			} catch (error) {
 				setAbortController(null);
-				if ((error as Error).name === "AbortError") {
+				if (isAbortLikeError(error)) {
 					// Best effort: apply any buffered delta before finalizing.
 					finalizeExecutingToolCalls(
 						abortedBySafetyTimer

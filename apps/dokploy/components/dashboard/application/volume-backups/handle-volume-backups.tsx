@@ -176,6 +176,20 @@ export const HandleVolumeBackups = ({
 	);
 
 	const serviceName = form.watch("serviceName");
+	const volumeName = form.watch("volumeName");
+	const isAllMounts =
+		(serviceTypeForm === "compose" || serviceTypeForm === "application") &&
+		["all", ALL_MOUNTS_VOLUME_NAME_INTERNAL].includes(
+			(volumeName || "").trim().toLowerCase(),
+		);
+
+	const toggleAllMounts = () => {
+		form.setValue("volumeName", isAllMounts ? "" : ALL_MOUNTS_VOLUME_NAME, {
+			shouldDirty: true,
+			shouldTouch: true,
+			shouldValidate: true,
+		});
+	};
 
 	const { data: mountsByService } = api.compose.loadMountsByService.useQuery(
 		{
@@ -490,7 +504,8 @@ export const HandleVolumeBackups = ({
 										)}
 									/>
 								</div>
-								{mountsByService && mountsByService.length > 0 && (
+								{((mountsByService && mountsByService.length > 0) ||
+									isAllMounts) && (
 									<FormField
 										control={form.control}
 										name="volumeName"
@@ -499,25 +514,23 @@ export const HandleVolumeBackups = ({
 												<FormLabel>
 													{t("volumeBackups.handle.field.volumeSelect.label")}
 												</FormLabel>
-													<Select
-														onValueChange={field.onChange}
-														defaultValue={field.value || ""}
-													>
-														<FormControl>
-															<SelectTrigger className="text-left">
-																<SelectValue
-																	placeholder={t(
-																		"volumeBackups.handle.field.volumeSelect.placeholder",
-																	)}
-																/>
-															</SelectTrigger>
-												</FormControl>
-												<SelectContent>
-													<SelectItem value={ALL_MOUNTS_VOLUME_NAME}>
-														<span className="whitespace-normal break-all text-left">
-															ALL
-														</span>
-													</SelectItem>
+												<div className="flex items-center gap-2">
+													<div className="flex-1">
+														<Select
+															onValueChange={field.onChange}
+															value={field.value || ""}
+															disabled={isAllMounts}
+														>
+															<FormControl>
+																<SelectTrigger className="text-left">
+																	<SelectValue
+																		placeholder={t(
+																			"volumeBackups.handle.field.volumeSelect.placeholder",
+																		)}
+																	/>
+																</SelectTrigger>
+															</FormControl>
+															<SelectContent>
 													{mountsByService?.map((mount) => {
 														const value =
 															mount.Type === "bind" ? mount.Source : mount.Name;
@@ -537,11 +550,22 @@ export const HandleVolumeBackups = ({
 															</SelectItem>
 														);
 													})}
-												</SelectContent>
-											</Select>
-										<FormDescription>
-											{t(
-												"volumeBackups.handle.field.volumeSelect.description",
+															</SelectContent>
+														</Select>
+													</div>
+													<Button
+														size="sm"
+														type="button"
+														variant={isAllMounts ? "default" : "outline"}
+														className="h-10 shrink-0"
+														onClick={toggleAllMounts}
+													>
+														{t("filter.all")}
+													</Button>
+												</div>
+												<FormDescription>
+													{t(
+														"volumeBackups.handle.field.volumeSelect.description",
 													)}
 												</FormDescription>
 												<FormMessage />
@@ -560,25 +584,23 @@ export const HandleVolumeBackups = ({
 										<FormLabel>
 											{t("volumeBackups.handle.field.volumeSelect.label")}
 										</FormLabel>
-											<Select
-												onValueChange={field.onChange}
-												defaultValue={field.value || ""}
-											>
-												<FormControl>
-													<SelectTrigger className="text-left">
-														<SelectValue
-															placeholder={t(
-																"volumeBackups.handle.field.volumeSelect.placeholder",
-															)}
-														/>
-													</SelectTrigger>
-												</FormControl>
-												<SelectContent>
-													<SelectItem value={ALL_MOUNTS_VOLUME_NAME}>
-														<span className="whitespace-normal break-all text-left">
-															ALL
-														</span>
-													</SelectItem>
+										<div className="flex items-center gap-2">
+											<div className="flex-1">
+												<Select
+													onValueChange={field.onChange}
+													value={field.value || ""}
+													disabled={isAllMounts}
+												>
+													<FormControl>
+														<SelectTrigger className="text-left">
+															<SelectValue
+																placeholder={t(
+																	"volumeBackups.handle.field.volumeSelect.placeholder",
+																)}
+															/>
+														</SelectTrigger>
+													</FormControl>
+													<SelectContent>
 													{mounts?.map((mount) => {
 														const value =
 															mount.Type === "bind" ? mount.Source : mount.Name;
@@ -598,8 +620,19 @@ export const HandleVolumeBackups = ({
 															</SelectItem>
 														);
 													})}
-												</SelectContent>
-											</Select>
+													</SelectContent>
+												</Select>
+											</div>
+											<Button
+												size="sm"
+												type="button"
+												variant={isAllMounts ? "default" : "outline"}
+												className="h-10 shrink-0"
+												onClick={toggleAllMounts}
+											>
+												{t("filter.all")}
+											</Button>
+										</div>
 										<FormDescription>
 											{t("volumeBackups.handle.field.volumeSelect.description")}
 										</FormDescription>
@@ -623,6 +656,7 @@ export const HandleVolumeBackups = ({
 												"volumeBackups.handle.field.volumeName.placeholder",
 											)}
 											{...field}
+											disabled={isAllMounts}
 										/>
 									</FormControl>
 									<FormDescription>

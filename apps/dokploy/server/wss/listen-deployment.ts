@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import type http from "node:http";
-import { findServerById, validateRequest } from "@dokploy/server";
+import { findServerById, IS_CLOUD, validateRequest } from "@dokploy/server";
 import { Client } from "ssh2";
 import { WebSocketServer } from "ws";
+import { readValidDirectory } from "./utils";
 
 export const setupDeploymentLogsWebSocketServer = (
 	server: http.Server<typeof http.IncomingMessage, typeof http.ServerResponse>,
@@ -34,6 +35,11 @@ export const setupDeploymentLogsWebSocketServer = (
 		if (!logPath) {
 			console.log("logPath no provided");
 			ws.close(4000, "logPath no provided");
+			return;
+		}
+
+		if (!readValidDirectory(logPath)) {
+			ws.close(4000, "Invalid log path");
 			return;
 		}
 
@@ -88,6 +94,11 @@ export const setupDeploymentLogsWebSocketServer = (
 					client.end();
 				});
 			} else {
+				if (IS_CLOUD) {
+					ws.send("This feature is not available in the cloud version.");
+					ws.close();
+					return;
+				}
 				const tail = spawn("tail", ["-n", "+1", "-f", logPath]);
 
 				tail.stdout.on("data", (data) => {
