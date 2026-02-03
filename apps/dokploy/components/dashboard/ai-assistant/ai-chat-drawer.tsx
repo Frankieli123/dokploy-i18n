@@ -257,6 +257,12 @@ export function AIChatDrawer({
 		[],
 	);
 
+	const scrollToBottom = useCallback(() => {
+		const viewport = viewportRef.current;
+		if (!viewport) return;
+		viewport.scrollTop = viewport.scrollHeight;
+	}, []);
+
 	// Smart auto-scroll - only if near bottom
 	useEffect(() => {
 		if (viewportRef.current && isNearBottomRef.current) {
@@ -266,9 +272,15 @@ export function AIChatDrawer({
 
 	useEffect(() => {
 		if (!isOpen) return;
-		if (!viewportRef.current) return;
-		viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
-	}, [isOpen]);
+		isNearBottomRef.current = true;
+		scrollToBottom();
+		const raf1 = requestAnimationFrame(scrollToBottom);
+		const raf2 = requestAnimationFrame(scrollToBottom);
+		return () => {
+			cancelAnimationFrame(raf1);
+			cancelAnimationFrame(raf2);
+		};
+	}, [conversationId, isOpen, scrollToBottom]);
 
 	const addDraftImages = useCallback(
 		(files: File[]) => {

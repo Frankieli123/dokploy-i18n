@@ -21,24 +21,51 @@ const ScrollArea = React.forwardRef<
 			...props
 		},
 		ref,
-	) => (
-		<ScrollAreaPrimitive.Root
-			ref={ref}
-			className={cn("relative overflow-hidden", className)}
-			{...props}
-		>
-			<ScrollAreaPrimitive.Viewport
-				ref={viewportRef}
-				onScroll={onViewportScroll}
-				// [&>div]:!block
-				className={cn("h-full w-full rounded-[inherit]", viewPortClassName)}
+	) => {
+		const viewportRefLocal = React.useRef<HTMLDivElement | null>(null);
+		const mergedViewportRef = React.useCallback(
+			(node: HTMLDivElement | null) => {
+				viewportRefLocal.current = node;
+				if (!viewportRef) return;
+				if (typeof viewportRef === "function") {
+					viewportRef(node);
+					return;
+				}
+				(viewportRef as React.MutableRefObject<HTMLDivElement | null>).current =
+					node;
+			},
+			[viewportRef],
+		);
+
+		const handleScrollbarWheel = React.useCallback(
+			(event: React.WheelEvent<HTMLDivElement>) => {
+				const viewport = viewportRefLocal.current;
+				if (!viewport) return;
+				if (event.deltaY) viewport.scrollTop += event.deltaY;
+				if (event.deltaX) viewport.scrollLeft += event.deltaX;
+			},
+			[],
+		);
+
+		return (
+			<ScrollAreaPrimitive.Root
+				ref={ref}
+				className={cn("relative overflow-hidden", className)}
+				{...props}
 			>
-				{children}
-			</ScrollAreaPrimitive.Viewport>
-			<ScrollBar />
-			<ScrollAreaPrimitive.Corner />
-		</ScrollAreaPrimitive.Root>
-	),
+				<ScrollAreaPrimitive.Viewport
+					ref={mergedViewportRef}
+					onScroll={onViewportScroll}
+					// [&>div]:!block
+					className={cn("h-full w-full rounded-[inherit]", viewPortClassName)}
+				>
+					{children}
+				</ScrollAreaPrimitive.Viewport>
+				<ScrollBar onWheel={handleScrollbarWheel} />
+				<ScrollAreaPrimitive.Corner />
+			</ScrollAreaPrimitive.Root>
+		);
+	},
 );
 ScrollArea.displayName = ScrollAreaPrimitive.Root.displayName;
 

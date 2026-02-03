@@ -298,6 +298,52 @@ const trpcProcedureCall: Tool<
 
 						if (desc.type === "query" && requiredFields.length === 0) {
 							input = {};
+						} else if (requiredFields.length === 1) {
+							const onlyField = String(requiredFields[0] ?? "").trim();
+							const inferred = (() => {
+								if (
+									onlyField === "projectId" &&
+									typeof ctx.projectId === "string" &&
+									ctx.projectId.trim().length > 0
+								) {
+									return { projectId: ctx.projectId.trim() };
+								}
+								if (
+									onlyField === "serverId" &&
+									typeof ctx.serverId === "string" &&
+									ctx.serverId.trim().length > 0
+								) {
+									return { serverId: ctx.serverId.trim() };
+								}
+								if (onlyField === "organizationId") {
+									return { organizationId: ctx.organizationId };
+								}
+								if (onlyField === "userId") {
+									return { userId: ctx.userId };
+								}
+								return null;
+							})();
+
+							if (inferred) {
+								input = inferred;
+							} else {
+								return {
+									success: false,
+									message: `tRPC procedure "${procedureName}" requires an input object`,
+									error: "TRPC_INPUT_REQUIRED",
+									data: {
+										procedure: desc,
+										requiredFields,
+										exampleToolCall: {
+											toolName: "trpc_procedure_call",
+											params: {
+												procedureName,
+												input: desc.inputExample,
+											},
+										},
+									},
+								};
+							}
 						} else {
 							return {
 								success: false,

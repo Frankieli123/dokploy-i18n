@@ -209,15 +209,43 @@ function buildToolCatalogPromptInfo(params: {
 }): ToolPromptInfo[] {
 	const maxTools = typeof params.maxTools === "number" ? params.maxTools : 24;
 	const all = toolRegistry.getAll();
-	const selectedTools =
-		all.length <= maxTools
-			? sortToolsForPrompt(all)
-			: selectRelevantTools(params.userMessage, {
-					projectId: params.projectId,
-					serverId: params.serverId,
-					minTools: 0,
-					maxTools,
-				});
+	const coreToolOrder = [
+		"trpc_router_list",
+		"trpc_procedure_search",
+		"trpc_procedure_suggest",
+		"trpc_procedure_describe",
+		"trpc_procedure_call",
+	] as const;
+	const coreTools: Tool[] = coreToolOrder
+		.map((name) => toolRegistry.get(name))
+		.filter(Boolean) as Tool[];
+
+	const selectedTools = (() => {
+		if (all.length <= maxTools) return sortToolsForPrompt(all);
+
+		const remaining = Math.max(0, maxTools - coreTools.length);
+		const relevant = selectRelevantTools(params.userMessage, {
+			projectId: params.projectId,
+			serverId: params.serverId,
+			minTools: 0,
+			maxTools: remaining,
+		});
+
+		const byName = new Map<string, Tool>();
+		for (const t of coreTools) byName.set(t.name, t);
+		for (const t of relevant) byName.set(t.name, t);
+
+		const combined: Tool[] = [];
+		for (const name of coreToolOrder) {
+			const t = byName.get(name);
+			if (t) {
+				combined.push(t);
+				byName.delete(name);
+			}
+		}
+
+		return combined.concat(sortToolsForPrompt(Array.from(byName.values())));
+	})();
 
 	return selectedTools.map((t) => {
 		const data = getToolDescribeData(t);
@@ -2831,21 +2859,23 @@ export const chat = async ({
 		let result = await runGenerateWithFallback(systemPrompt);
 
 		if (isLikelyActionRequest(message)) {
-			const toolResults = (result as unknown as { toolResults?: unknown })
-				.toolResults;
-			const retryable = getRetryableToolCallFailures(toolResults);
-			const needsToolKickoff = !Array.isArray(result.toolCalls)
-				? true
-				: !result.toolCalls.some((tc) => tc.toolName === "tool_call");
-			const onlySafeSuccesses =
-				retryable.successfulTools.length === 0 ||
-				retryable.successfulTools.every(isSafeSuccessTool);
-			const needsParamRepair =
-				retryable.failures.length > 0 &&
-				!retryable.hasPendingApproval &&
-				onlySafeSuccesses;
+			for (let repairAttempt = 0; repairAttempt < 2; repairAttempt++) {
+				const toolResults = (result as unknown as { toolResults?: unknown })
+					.toolResults;
+				const retryable = getRetryableToolCallFailures(toolResults);
+				const needsToolKickoff = !Array.isArray(result.toolCalls)
+					? true
+					: !result.toolCalls.some((tc) => tc.toolName === "tool_call");
+				const onlySafeSuccesses =
+					retryable.successfulTools.length === 0 ||
+					retryable.successfulTools.every(isSafeSuccessTool);
+				const needsParamRepair =
+					retryable.failures.length > 0 &&
+					!retryable.hasPendingApproval &&
+					onlySafeSuccesses;
 
-			if ((turn === 0 && needsToolKickoff) || needsParamRepair) {
+				if (!((turn === 0 && needsToolKickoff) || needsParamRepair)) break;
+
 				const hint = deriveTrpcSearchQueryHint(message);
 				const hintForPrompt = hint
 					.replaceAll("\\", "\\\\")
@@ -2856,9 +2886,12 @@ export const chat = async ({
 					? safeJsonForPrompt(retryable.failures, 2500)
 					: "";
 				const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_suggest\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_call as needed (or call tool_call with toolName=\"<router>.<procedure>\"). Use trpc_procedure_describe only if you still need schema details.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
+
 				try {
 					result = await runGenerateWithFallback(`${systemPrompt}${extra}`);
-				} catch {}
+				} catch {
+					break;
+				}
 			}
 		}
 
@@ -3560,90 +3593,95 @@ export const chatStream = async (
 		promptTokens: 0,
 		completionTokens: 0,
 	};
-		let streamError: string | null = null;
-		let platformToolCalls = 0;
+	let streamError: string | null = null;
+	let platformToolCalls = 0;
 
-		const likelyActionRequest = isLikelyActionRequest(message);
+	const likelyActionRequest = isLikelyActionRequest(message);
 
-		for (let turn = 0; turn < maxTurns; turn++) {
-			if (options.abortSignal?.aborted) break;
+	for (let turn = 0; turn < maxTurns; turn++) {
+		if (options.abortSignal?.aborted) break;
 
-			await refreshSystemPrompt();
-			const turnStreams: StreamedTurn[] = [];
-			let streamed = await runStreamWithFallback(systemPrompt);
-			turnStreams.push(streamed);
+		await refreshSystemPrompt();
+		const turnStreams: StreamedTurn[] = [];
+		let streamed = await runStreamWithFallback(systemPrompt);
+		turnStreams.push(streamed);
 
-			if (!options.abortSignal?.aborted && likelyActionRequest) {
+		if (!options.abortSignal?.aborted && likelyActionRequest) {
+			for (let repairAttempt = 0; repairAttempt < 2; repairAttempt++) {
 				const retryable = getRetryableToolCallFailures(streamed.toolResults);
 				const needsToolKickoff = streamed.toolCalls.every(
 					(tc) => tc.sourceToolName !== "tool_call",
 				);
-			const onlySafeSuccesses =
-				retryable.successfulTools.length === 0 ||
-				retryable.successfulTools.every(isSafeSuccessTool);
-			const needsParamRepair =
-				retryable.failures.length > 0 &&
-				!retryable.hasPendingApproval &&
-				onlySafeSuccesses;
+				const onlySafeSuccesses =
+					retryable.successfulTools.length === 0 ||
+					retryable.successfulTools.every(isSafeSuccessTool);
+				const needsParamRepair =
+					retryable.failures.length > 0 &&
+					!retryable.hasPendingApproval &&
+					onlySafeSuccesses;
 
-				if ((turn === 0 && needsToolKickoff) || needsParamRepair) {
-					const hint = deriveTrpcSearchQueryHint(message);
-					const hintForPrompt = hint
-						.replaceAll("\\", "\\\\")
+				if (!((turn === 0 && needsToolKickoff) || needsParamRepair)) break;
+
+				const hint = deriveTrpcSearchQueryHint(message);
+				const hintForPrompt = hint
+					.replaceAll("\\", "\\\\")
 					.replaceAll("\"", "\\\"")
 					.replaceAll("\n", " ")
 					.replaceAll("\r", " ");
 				const failureDetails = needsParamRepair
 					? safeJsonForPrompt(retryable.failures, 2500)
 					: "";
-					const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_suggest\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_call as needed (or call tool_call with toolName=\"<router>.<procedure>\"). Use trpc_procedure_describe only if you still need schema details.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
-					try {
-						await refreshSystemPrompt();
-						streamed = await runStreamWithFallback(`${systemPrompt}${extra}`);
-						turnStreams.push(streamed);
-					} catch {}
+				const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_suggest\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_call as needed (or call tool_call with toolName=\"<router>.<procedure>\"). Use trpc_procedure_describe only if you still need schema details.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
+				try {
+					await refreshSystemPrompt();
+					streamed = await runStreamWithFallback(`${systemPrompt}${extra}`);
+					turnStreams.push(streamed);
+				} catch {
+					break;
 				}
 			}
+		}
 
-			const turnToolCalls: StreamedTurn["toolCalls"] = [];
-			const turnToolResults: StreamedTurn["toolResults"] = [];
-			for (const streamedChunk of turnStreams) {
-				fullText += streamedChunk.fullText;
-				allToolCalls.push(...streamedChunk.toolCalls);
-				allToolResults.push(...streamedChunk.toolResults);
-				turnToolCalls.push(...streamedChunk.toolCalls);
-				turnToolResults.push(...streamedChunk.toolResults);
-				aggregatedUsage.promptTokens =
-					(aggregatedUsage.promptTokens ?? 0) +
-					(streamedChunk.usage.promptTokens ?? 0);
-				aggregatedUsage.completionTokens =
-					(aggregatedUsage.completionTokens ?? 0) +
-					(streamedChunk.usage.completionTokens ?? 0);
-				if (
-					typeof streamedChunk.streamError === "string" &&
-					streamedChunk.streamError.length > 0
-				) {
-					streamError = streamedChunk.streamError;
-				}
+		const turnToolCalls: StreamedTurn["toolCalls"] = [];
+		const turnToolResults: StreamedTurn["toolResults"] = [];
+		for (const streamedChunk of turnStreams) {
+			fullText += streamedChunk.fullText;
+			allToolCalls.push(...streamedChunk.toolCalls);
+			allToolResults.push(...streamedChunk.toolResults);
+			turnToolCalls.push(...streamedChunk.toolCalls);
+			turnToolResults.push(...streamedChunk.toolResults);
+			aggregatedUsage.promptTokens =
+				(aggregatedUsage.promptTokens ?? 0) +
+				(streamedChunk.usage.promptTokens ?? 0);
+			aggregatedUsage.completionTokens =
+				(aggregatedUsage.completionTokens ?? 0) +
+				(streamedChunk.usage.completionTokens ?? 0);
+			if (
+				typeof streamedChunk.streamError === "string" &&
+				streamedChunk.streamError.length > 0
+			) {
+				streamError = streamedChunk.streamError;
 			}
+		}
 
-			if (!agenticEnabled || turn >= maxTurns - 1) break;
+		if (!agenticEnabled || turn >= maxTurns - 1) break;
 
-			const retryable = getRetryableToolCallFailures(turnToolResults);
-			const platformThisTurn = turnToolCalls.filter(
-				(tc) => tc.sourceToolName === "tool_call",
-			).length;
-			platformToolCalls += platformThisTurn;
+		const retryable = getRetryableToolCallFailures(turnToolResults);
+		const platformThisTurn = turnToolCalls.filter(
+			(tc) => tc.sourceToolName === "tool_call",
+		).length;
+		platformToolCalls += platformThisTurn;
 
-			if (retryable.hasPendingApproval) break;
-			if (platformThisTurn <= 0) break;
-			if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls) break;
+		if (retryable.hasPendingApproval) break;
+		if (platformThisTurn <= 0) break;
+		if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls)
+			break;
 
-			const assistantSnippet = safeTruncateString(streamed.fullText.trim(), 4000);
-			if (assistantSnippet.length > 0) {
-				messages = messages.concat({ role: "assistant", content: assistantSnippet });
-			}
-			messages = messages.concat({ role: "user", content: buildAgentContinuePrompt() });
+		const assistantSnippet = safeTruncateString(streamed.fullText.trim(), 4000);
+		if (assistantSnippet.length > 0) {
+			messages = messages.concat({ role: "assistant", content: assistantSnippet });
+		}
+		messages = messages.concat({ role: "user", content: buildAgentContinuePrompt() });
 	}
 
 	if (
