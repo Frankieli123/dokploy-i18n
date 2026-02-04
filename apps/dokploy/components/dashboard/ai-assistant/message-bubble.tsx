@@ -4,6 +4,9 @@ import {
 	AlertCircle,
 	AlertTriangle,
 	Bot,
+	Brain,
+	ChevronDown,
+	ChevronRight,
 	Loader2,
 	RotateCcw,
 	Sparkles,
@@ -122,6 +125,7 @@ export function MessageBubble({
 	areToolApprovalsDisabled,
 }: MessageBubbleProps) {
 	const { t } = useTranslation("common");
+	const [isReasoningExpanded, setIsReasoningExpanded] = useState(false);
 
 	if (message.role === "system") {
 		return null;
@@ -142,6 +146,9 @@ export function MessageBubble({
 	const hasToolCalls = message.toolCalls && message.toolCalls.length > 0;
 	const attachments = Array.isArray(message.attachments) ? message.attachments : [];
 	const hasAttachments = attachments.length > 0;
+	const reasoningText =
+		typeof message.reasoning === "string" ? message.reasoning : "";
+	const hasReasoning = !isUser && reasoningText.trim().length > 0;
 	const bubbleText = (() => {
 		if (isUser) return message.content ?? "";
 		return displayedContent;
@@ -152,10 +159,12 @@ export function MessageBubble({
 		!isSending &&
 		!isError &&
 		!hasToolCalls &&
+		!hasReasoning &&
 		(!bubbleText || bubbleText.length === 0) &&
 		!!isLast;
 	const shouldRenderBubble =
 		(bubbleText && bubbleText.length > 0) ||
+		hasReasoning ||
 		hasAttachments ||
 		isSending ||
 		isError ||
@@ -252,6 +261,35 @@ export function MessageBubble({
 								})}
 							</div>
 						)}
+						{hasReasoning && (
+							<div className="mb-2">
+								<button
+									type="button"
+									onClick={() => setIsReasoningExpanded((v) => !v)}
+									aria-expanded={isReasoningExpanded}
+									aria-controls={`reasoning-${message.messageId}`}
+									className="flex items-center gap-1 text-xs text-muted-foreground/70 hover:text-foreground transition-colors select-none"
+								>
+									{isReasoningExpanded ? (
+										<ChevronDown className="h-3 w-3" />
+									) : (
+										<ChevronRight className="h-3 w-3" />
+									)}
+									<Brain className="h-3 w-3" />
+									<span className="font-medium">{t("ai.chat.reasoning")}</span>
+								</button>
+								{isReasoningExpanded && (
+									<div
+										id={`reasoning-${message.messageId}`}
+										className="mt-1 pl-2 border-l-2 border-border/50"
+									>
+										<p className="text-xs text-muted-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed">
+											{reasoningText}
+										</p>
+									</div>
+								)}
+							</div>
+						)}
 						{isUser || shouldShowEmptyAssistantFallback || isSending ? (
 							bubbleText.length > 0 ||
 							shouldShowEmptyAssistantFallback ||
@@ -290,13 +328,17 @@ export function MessageBubble({
 					</div>
 				)}
 
-				{hasToolCalls && !areToolApprovalsDisabled && (
+				{hasToolCalls && (
 					<div className="w-full max-w-full min-w-0 overflow-hidden space-y-1">
 						{message.toolCalls!.length > 1 ? (
 							<ToolGroup
 								toolCalls={message.toolCalls!}
-								onApproveToolCall={onApproveToolCall}
-								onRejectToolCall={onRejectToolCall}
+								onApproveToolCall={
+									areToolApprovalsDisabled ? undefined : onApproveToolCall
+								}
+								onRejectToolCall={
+									areToolApprovalsDisabled ? undefined : onRejectToolCall
+								}
 							/>
 						) : (
 							message.toolCalls!.map((toolCall) => {
@@ -324,6 +366,7 @@ export function MessageBubble({
 								const canApprove =
 									status === "pending" &&
 									effectiveExecutionId.length > 0 &&
+									!areToolApprovalsDisabled &&
 									!!onApproveToolCall &&
 									!!onRejectToolCall;
 

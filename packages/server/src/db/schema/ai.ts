@@ -151,12 +151,73 @@ export const aiEmbeddingProvidersRelations = relations(
 	}),
 );
 
+export const aiMcpServers = pgTable("ai_mcp_server", {
+	mcpServerId: text("mcpServerId")
+		.notNull()
+		.primaryKey()
+		.$defaultFn(() => nanoid()),
+	organizationId: text("organizationId")
+		.notNull()
+		.references(() => organization.id, { onDelete: "cascade" }),
+	name: text("name").notNull(),
+	serverUrl: text("serverUrl").notNull(),
+	headers: jsonb("headers").$type<Record<string, string>>(),
+	isEnabled: boolean("isEnabled").notNull().default(true),
+	createdAt: text("createdAt")
+		.notNull()
+		.$defaultFn(() => new Date().toISOString()),
+	updatedAt: text("updatedAt")
+		.notNull()
+		.$defaultFn(() => new Date().toISOString()),
+});
+
+export const aiMcpServersRelations = relations(aiMcpServers, ({ one }) => ({
+	organization: one(organization, {
+		fields: [aiMcpServers.organizationId],
+		references: [organization.id],
+	}),
+}));
+
 export const apiUpsertAiEmbeddingProvider = z
 	.object({
 		providerType: aiProviderTypeSchema.optional().default("openai_compatible"),
 		apiUrl: z.string().url(),
 		apiKey: z.string().optional().nullable(),
 		model: z.string().min(1),
+	})
+	.required();
+
+export const apiListAiMcpServers = z.object({
+	limit: z.number().min(1).max(100).optional().default(50),
+	offset: z.number().min(0).optional().default(0),
+});
+
+export const apiCreateAiMcpServer = z
+	.object({
+		name: z.string().min(1),
+		serverUrl: z.string().url(),
+		headers: z.record(z.string()).optional().default({}),
+		isEnabled: z.boolean().optional().default(true),
+	})
+	.required();
+
+export const apiUpdateAiMcpServer = z
+	.object({
+		mcpServerId: z.string().min(1),
+		name: z.string().min(1).optional(),
+		serverUrl: z.string().url().optional(),
+		headers: z.record(z.string()).optional(),
+		isEnabled: z.boolean().optional(),
+	})
+	.strict();
+
+export const apiDeleteAiMcpServer = z.object({
+	mcpServerId: z.string().min(1),
+});
+
+export const apiTestAiMcpServer = z
+	.object({
+		mcpServerId: z.string().min(1),
 	})
 	.required();
 
@@ -513,6 +574,16 @@ export const apiUpdateConversation = z.object({
 export const apiSetToolApprovalsDisabled = z.object({
 	conversationId: z.string().min(1),
 	disabled: z.boolean(),
+});
+
+export const apiSetToolBudgetMode = z.object({
+	conversationId: z.string().min(1),
+	mode: z.enum(["standard", "max"]),
+});
+
+export const apiSetMcpEnabled = z.object({
+	conversationId: z.string().min(1),
+	enabled: z.boolean(),
 });
 
 export const aiMessageAttachmentSchema = z.object({

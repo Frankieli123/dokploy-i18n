@@ -132,9 +132,9 @@ export function ToolGroup({
 		summary.unknownToolFailures === summary.failed;
 
 	useEffect(() => {
-		if (!isPending) return;
+		if (!isPending && !isExecuting) return;
 		setIsOpen(true);
-	}, [isPending]);
+	}, [isPending, isExecuting]);
 
 	// Determine overall status color/icon for the header
 	let HeaderIcon = Layers;
@@ -160,10 +160,10 @@ export function ToolGroup({
 	}
 
 	return (
-		<div className="rounded-md border bg-card my-1 overflow-hidden shadow-sm w-full max-w-full min-w-0">
+		<div className="rounded-xl border border-border/40 bg-card/50 my-2 overflow-hidden shadow-sm w-full max-w-full min-w-0 transition-all">
 			<div
 				className={cn(
-					"flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-muted/50 transition-colors min-w-0",
+					"flex items-center justify-between px-3 py-2.5 cursor-pointer select-none hover:bg-muted/30 transition-colors min-w-0",
 					isExecuting && "bg-blue-50/50 dark:bg-blue-900/10",
 					isPending && "bg-amber-50/50 dark:bg-amber-900/10",
 					hasOnlyUnknownToolFailures && "bg-amber-50/50 dark:bg-amber-900/10",
@@ -230,7 +230,7 @@ export function ToolGroup({
 			</div>
 
 			{isOpen && (
-				<div className="border-t bg-muted/10 divide-y divide-border/50 max-w-full min-w-0 max-h-[40vh] overflow-y-auto overflow-x-hidden">
+				<div className="border-t border-border/10 bg-muted/5 max-w-full min-w-0 max-h-[40vh] overflow-y-auto overflow-x-hidden p-1">
 					{orderedToolCalls.map((tc) => {
 						const effectiveExecutionId = getEffectiveExecutionId(tc);
 						const status =

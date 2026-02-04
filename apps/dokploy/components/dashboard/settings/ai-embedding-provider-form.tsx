@@ -1,7 +1,17 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Check, ChevronDown, PenBoxIcon, PlusIcon, Trash2 } from "lucide-react";
+import {
+	Check,
+	CheckCircle2,
+	ChevronDown,
+	Circle,
+	Loader2,
+	PenBoxIcon,
+	PlusIcon,
+	Trash2,
+	XCircle,
+} from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -48,6 +58,12 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { api } from "@/utils/api";
 import { translateErrorMessage } from "@/utils/error-translation";
@@ -131,6 +147,17 @@ export const AiEmbeddingProviderForm = () => {
 	const { mutateAsync: deleteEmbeddingProvider, isLoading: isDeleting } =
 		api.ai.embeddingProvider.delete.useMutation();
 
+	const {
+		data: testResult,
+		refetch: refetchTest,
+		isLoading: isTesting,
+		isRefetching: isRetesting,
+	} = api.ai.embeddingProvider.test.useQuery(undefined, {
+		enabled: !!embeddingProvider,
+		retry: false,
+		refetchOnWindowFocus: false,
+	});
+
 	const schema = createEmbeddingSchema(t);
 
 	const form = useForm<Schema>({
@@ -210,6 +237,7 @@ export const AiEmbeddingProviderForm = () => {
 			});
 
 			utils.ai.embeddingProvider.get.invalidate();
+			utils.ai.embeddingProvider.test.invalidate();
 			toast.success(t("settings.ai.embeddingProvider.toast.saveSuccess"));
 			refetchEmbeddingProvider();
 			setOpen(false);
@@ -254,6 +282,94 @@ export const AiEmbeddingProviderForm = () => {
 
 				<div className="flex items-center">
 					{embeddingProvider && (
+						<TooltipProvider delayDuration={0}>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										variant="ghost"
+										size="icon"
+										className="hover:bg-transparent"
+										onClick={(e) => {
+											e.preventDefault();
+											refetchTest();
+										}}
+									>
+										{(isTesting || isRetesting) && (
+											<Loader2 className="size-4 animate-spin text-muted-foreground" />
+										)}
+										{!(isTesting || isRetesting) &&
+											testResult?.status === "ok" && (
+												<CheckCircle2 className="size-4 text-green-500" />
+											)}
+										{!(isTesting || isRetesting) &&
+											testResult?.status === "error" && (
+												<XCircle className="size-4 text-red-500" />
+											)}
+										{!(isTesting || isRetesting) &&
+											(!testResult ||
+												testResult.status === "not_configured") && (
+												<Circle className="size-4 text-muted-foreground" />
+											)}
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>
+									{(isTesting || isRetesting) &&
+										t("settings.ai.embeddingProvider.test.testing")}
+									{!(isTesting || isRetesting) &&
+										testResult?.status === "ok" && (
+											<div className="flex flex-col gap-1 text-xs">
+												<span className="font-semibold text-green-500">
+													{t("settings.ai.embeddingProvider.test.status.ok")}
+												</span>
+												<span>
+													{t("settings.ai.embeddingProvider.test.model")}:{" "}
+													{testResult.model}
+												</span>
+												<span>
+													{t("settings.ai.embeddingProvider.test.dim")}:{" "}
+													{testResult.dim}
+												</span>
+												{testResult.latencyMs && (
+													<span>
+														{t("settings.ai.embeddingProvider.test.latency")}:{" "}
+														{testResult.latencyMs}ms
+													</span>
+												)}
+											</div>
+										)}
+									{!(isTesting || isRetesting) &&
+										testResult?.status === "error" && (
+											<div className="flex flex-col gap-1 text-xs max-w-[250px]">
+												<span className="font-semibold text-red-500">
+													{t("settings.ai.embeddingProvider.test.status.error")}
+												</span>
+												<span className="text-muted-foreground">
+													{t("settings.ai.embeddingProvider.test.fallback")}
+												</span>
+												{testResult.error && (
+													<span className="break-words">{testResult.error}</span>
+												)}
+											</div>
+										)}
+									{!(isTesting || isRetesting) &&
+										(!testResult ||
+											testResult.status === "not_configured") && (
+											<div className="flex flex-col gap-1 text-xs">
+												<span>
+													{t(
+														"settings.ai.embeddingProvider.test.status.notConfigured",
+													)}
+												</span>
+												<span className="text-muted-foreground">
+													{t("settings.ai.embeddingProvider.test.fallback")}
+												</span>
+											</div>
+										)}
+								</TooltipContent>
+							</Tooltip>
+						</TooltipProvider>
+					)}
+					{embeddingProvider && (
 						<DialogAction
 							title={t("settings.ai.embeddingProvider.delete.title")}
 							description={t("settings.ai.embeddingProvider.delete.description")}
@@ -265,6 +381,7 @@ export const AiEmbeddingProviderForm = () => {
 											t("settings.ai.embeddingProvider.delete.success"),
 										);
 										refetchEmbeddingProvider();
+										utils.ai.embeddingProvider.test.invalidate();
 									})
 									.catch(() => {
 										toast.error(

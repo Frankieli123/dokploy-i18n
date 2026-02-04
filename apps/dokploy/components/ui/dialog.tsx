@@ -79,6 +79,8 @@ const DialogContent = React.forwardRef<
 		const originalPaddingRight = body.style.paddingRight;
 		const originalOverflow = body.style.overflow;
 
+		body.style.overflow = "hidden";
+
 		if (scrollbarWidth > 0) {
 			body.style.paddingRight = `${scrollbarWidth}px`;
 		}

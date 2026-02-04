@@ -126,6 +126,7 @@ export interface Message {
 	messageId: string;
 	role: "user" | "assistant" | "system" | "tool";
 	content: string | null;
+	reasoning?: string | null;
 	attachments?: Array<{
 		type: "image";
 		data: string;
@@ -147,25 +148,6 @@ export type ToolOutcome = {
 	message?: string;
 	error?: string;
 };
-
-export type TraceEventType =
-	| "start"
-	| "tool-call"
-	| "tool-result"
-	| "reasoning"
-	| "output"
-	| "done"
-	| "error"
-	| "event";
-
-export interface TraceEvent {
-	id: string;
-	timestamp: number;
-	source: "chat" | "agent";
-	type: TraceEventType;
-	title: string;
-	data?: unknown;
-}
 
 export interface UseChatOptions {
 	conversationId?: string;
@@ -192,13 +174,19 @@ export function useChat(options: UseChatOptions = {}) {
 	);
 	const [pendingMessages, setPendingMessages] = useState<Message[]>([]);
 	const [toolOutcomes, setToolOutcomes] = useState<ToolOutcome[]>([]);
-	const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
 	const [toolCallMeta, setToolCallMeta] = useState<
 		Record<string, Pick<ToolCall, "status" | "executionId" | "result">>
 	>({});
 	const [areToolApprovalsDisabled, setAreToolApprovalsDisabled] =
 		useState(false);
 	const hasUserSetToolApprovalsDisabledRef = useRef(false);
+	const [toolBudgetMode, setToolBudgetModeState] = useState<"standard" | "max">(
+		"standard",
+	);
+	const [isMcpEnabled, setIsMcpEnabled] = useState(false);
+	const hasUserSetMcpEnabledRef = useRef(false);
+	const hasUserSetToolBudgetModeRef = useRef(false);
+	const [canContinueChat, setCanContinueChat] = useState(false);
 	const inFlightApprovalExecutionIdsRef = useRef<Set<string>>(new Set());
 	const [isLoading, setIsLoading] = useState(false);
 	const [abortController, setAbortController] =
@@ -209,6 +197,10 @@ export function useChat(options: UseChatOptions = {}) {
 	const executeExecution = api.ai.agent.execute.useMutation();
 	const setToolApprovalsDisabledMutation =
 		api.ai.conversations.setToolApprovalsDisabled.useMutation();
+	const setToolBudgetModeMutation =
+		api.ai.conversations.setToolBudgetMode.useMutation();
+	const setMcpEnabledMutation =
+		api.ai.conversations.setMcpEnabled.useMutation();
 
 	const maybeInvalidateProjectQueries = useCallback(
 		(toolName: string, rawResult: unknown, toolArguments?: string) => {
@@ -341,6 +333,21 @@ export function useChat(options: UseChatOptions = {}) {
 	}, [conversationDetails?.metadata]);
 
 	useEffect(() => {
+		if (hasUserSetToolBudgetModeRef.current) return;
+		const metadata = conversationDetails?.metadata;
+		const mode =
+			isRecord(metadata) && metadata.toolBudgetMode === "max" ? "max" : "standard";
+		setToolBudgetModeState(mode);
+	}, [conversationDetails?.metadata]);
+
+	useEffect(() => {
+		if (hasUserSetMcpEnabledRef.current) return;
+		const metadata = conversationDetails?.metadata;
+		const enabled = isRecord(metadata) && metadata.mcpEnabled === true;
+		setIsMcpEnabled(enabled);
+	}, [conversationDetails?.metadata]);
+
+	useEffect(() => {
 		if (!conversationId) return;
 		if (!areToolApprovalsDisabled) return;
 		const metadata = conversationDetails?.metadata;
@@ -356,6 +363,29 @@ export function useChat(options: UseChatOptions = {}) {
 		conversationId,
 		setToolApprovalsDisabledMutation,
 	]);
+
+	useEffect(() => {
+		if (!conversationId) return;
+		if (!hasUserSetToolBudgetModeRef.current) return;
+		const metadata = conversationDetails?.metadata;
+		const serverMode =
+			isRecord(metadata) && metadata.toolBudgetMode === "max" ? "max" : "standard";
+		if (serverMode === toolBudgetMode) return;
+		void setToolBudgetModeMutation
+			.mutateAsync({ conversationId, mode: toolBudgetMode })
+			.catch(() => {});
+	}, [conversationDetails?.metadata, conversationId, toolBudgetMode, setToolBudgetModeMutation]);
+
+	useEffect(() => {
+		if (!conversationId) return;
+		if (!hasUserSetMcpEnabledRef.current) return;
+		const metadata = conversationDetails?.metadata;
+		const serverEnabled = isRecord(metadata) && metadata.mcpEnabled === true;
+		if (serverEnabled === isMcpEnabled) return;
+		void setMcpEnabledMutation
+			.mutateAsync({ conversationId, enabled: isMcpEnabled })
+			.catch(() => {});
+	}, [conversationDetails?.metadata, conversationId, isMcpEnabled, setMcpEnabledMutation]);
 
 	const executionHydrationTargets = useMemo(() => {
 		const toolCalls = ((serverMessages || []) as Message[])
@@ -767,6 +797,43 @@ export function useChat(options: UseChatOptions = {}) {
 		],
 	);
 
+	const setToolBudgetMode = useCallback(
+		async (mode: "standard" | "max") => {
+			hasUserSetToolBudgetModeRef.current = true;
+			const previousMode = toolBudgetMode;
+			setToolBudgetModeState(mode);
+			if (!conversationId) return;
+			try {
+				await setToolBudgetModeMutation.mutateAsync({
+					conversationId,
+					mode,
+				});
+			} catch (error) {
+				setToolBudgetModeState(previousMode);
+				options.onError?.(error as Error);
+			}
+		},
+		[conversationId, options, setToolBudgetModeMutation, toolBudgetMode],
+	);
+
+	const setMcpEnabled = useCallback(
+		async (enabled: boolean) => {
+			hasUserSetMcpEnabledRef.current = true;
+			setIsMcpEnabled(enabled);
+			if (!conversationId) return;
+			try {
+				await setMcpEnabledMutation.mutateAsync({
+					conversationId,
+					enabled,
+				});
+			} catch (error) {
+				setIsMcpEnabled(!enabled);
+				options.onError?.(error as Error);
+			}
+		},
+		[conversationId, options, setMcpEnabledMutation],
+	);
+
 	const send = useCallback(
 		async (
 			content: string,
@@ -777,6 +844,7 @@ export function useChat(options: UseChatOptions = {}) {
 			if (!content.trim() && attachments.length === 0) return;
 
 			setIsLoading(true);
+			setCanContinueChat(false);
 
 			const timestamp = Date.now();
 			const userTempId = `temp-${timestamp}-user`;
@@ -860,36 +928,6 @@ export function useChat(options: UseChatOptions = {}) {
 				}
 			}
 
-			const traceSource: TraceEvent["source"] = isAgentMode ? "agent" : "chat";
-			const traceBaseId = `${timestamp}-${Math.random().toString(16).slice(2)}`;
-			let traceSeq = 0;
-			const mkTrace = (
-				type: TraceEventType,
-				title: string,
-				data?: unknown,
-			): TraceEvent => ({
-				id: `${traceBaseId}-${traceSeq++}`,
-				timestamp: Date.now(),
-				source: traceSource,
-				type,
-				title,
-				data,
-			});
-			const startEvent = mkTrace(
-				"start",
-				traceSource === "agent" ? "Agent run started" : "Chat stream started",
-				{ conversationId: currentConversationId },
-			);
-			setTraceEvents([startEvent]);
-			const addTrace = (
-				type: TraceEventType,
-				title: string,
-				data?: unknown,
-			) => {
-				const next = mkTrace(type, title, data);
-				setTraceEvents((prev) => [...prev, next]);
-			};
-
 			let abortedBySafetyTimer = false;
 
 			if (isAgentMode) {
@@ -922,11 +960,6 @@ export function useChat(options: UseChatOptions = {}) {
 						throw new Error("settings.ai.errors.streamingResponseNotAvailable");
 					}
 
-					addTrace("event", "Agent stream connected", {
-						url: "/api/ai/agent/stream",
-						status: response.status,
-					});
-
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === userTempId
@@ -936,8 +969,6 @@ export function useChat(options: UseChatOptions = {}) {
 					);
 
 					const deltaBufferRef = { current: "" as string };
-					let outputText = "";
-					let outputTraceId: string | null = null;
 					let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
 					const FLUSH_MS = 80;
 
@@ -960,22 +991,6 @@ export function useChat(options: UseChatOptions = {}) {
 									: m,
 								),
 							);
-						outputText += pending;
-						if (!outputTraceId) {
-							const evt = mkTrace("output", "Output", { text: outputText });
-							outputTraceId = evt.id;
-							setTraceEvents((prev) => [...prev, evt]);
-						} else {
-							setTraceEvents((prev) => {
-								const idx = prev.findIndex((e) => e.id === outputTraceId);
-								if (idx < 0) return prev;
-								const next = prev.slice();
-								const existing = next[idx];
-								if (!existing) return prev;
-								next[idx] = { ...existing, data: { text: outputText } };
-								return next;
-							});
-						}
 					};
 
 					const scheduleFlushDelta = () => {
@@ -988,25 +1003,6 @@ export function useChat(options: UseChatOptions = {}) {
 					const appendAssistantLine = (line: string) => {
 						const trimmed = typeof line === "string" ? line.trim() : "";
 						if (!trimmed) return;
-						if (outputText.length > 0 && !outputText.endsWith("\n")) {
-							outputText += "\n";
-						}
-						outputText += `${trimmed}\n`;
-						if (!outputTraceId) {
-							const evt = mkTrace("output", "Output", { text: outputText });
-							outputTraceId = evt.id;
-							setTraceEvents((prev) => [...prev, evt]);
-						} else {
-							setTraceEvents((prev) => {
-								const idx = prev.findIndex((e) => e.id === outputTraceId);
-								if (idx < 0) return prev;
-								const next = prev.slice();
-								const existing = next[idx];
-								if (!existing) return prev;
-								next[idx] = { ...existing, data: { text: outputText } };
-								return next;
-							});
-						}
 						setPendingMessages((prev) =>
 							prev.map((m) =>
 								m.messageId === assistantTempId
@@ -1031,7 +1027,6 @@ export function useChat(options: UseChatOptions = {}) {
 
 						if (evt.event === "done") {
 							flushDeltaNow();
-							addTrace("done", "Agent stream done");
 							stopReason = "done";
 							break;
 						}
@@ -1041,7 +1036,6 @@ export function useChat(options: UseChatOptions = {}) {
 								message?: string;
 								error?: string;
 							};
-							addTrace("error", "Agent stream error", payload);
 							throw new Error(
 								payload.message ||
 									payload.error ||
@@ -1075,7 +1069,13 @@ export function useChat(options: UseChatOptions = {}) {
 							const text =
 								payload && typeof payload.text === "string" ? payload.text : "";
 							if (text.length === 0) continue;
-							addTrace("reasoning", "Thinking", { text });
+							setPendingMessages((prev) =>
+								prev.map((m) =>
+									m.messageId === assistantTempId
+										? { ...m, reasoning: text, status: "sending" as const }
+										: m,
+								),
+							);
 							continue;
 						}
 
@@ -1093,11 +1093,6 @@ export function useChat(options: UseChatOptions = {}) {
 								payload && typeof payload.summary === "string"
 									? payload.summary
 									: "";
-							addTrace(
-								"tool-result",
-								`agent.step.result ${toolName} ${success ? "OK" : "FAILED"}`,
-								payload ?? undefined,
-							);
 							appendAssistantLine(
 								`[${toolName}] ${success ? "OK" : "FAILED"}${summary ? `: ${summary}` : ""}`,
 							);
@@ -1122,13 +1117,6 @@ export function useChat(options: UseChatOptions = {}) {
 								payload && typeof payload.parametersPreview === "string"
 									? payload.parametersPreview
 									: undefined;
-							addTrace("event", `agent.step.wait_approval ${toolName}`, {
-								toolName,
-								executionId,
-								runId,
-								parametersPreview,
-								payload,
-							});
 							appendAssistantLine(
 								toolName
 									? `Waiting for approval: ${toolName}`
@@ -1144,10 +1132,6 @@ export function useChat(options: UseChatOptions = {}) {
 							}
 							continue;
 						}
-
-						if (evt.event.startsWith("agent.")) {
-							addTrace("event", evt.event, payload ?? { raw: evt.data });
-						}
 					}
 
 					flushDeltaNow();
@@ -1158,7 +1142,6 @@ export function useChat(options: UseChatOptions = {}) {
 				} catch (error) {
 					setAbortController(null);
 					if (isAbortLikeError(error)) {
-						addTrace("event", "Agent stream aborted");
 						setPendingMessages((prev) =>
 							prev.map((m) =>
 								m.messageId === userTempId || m.messageId === assistantTempId
@@ -1174,7 +1157,6 @@ export function useChat(options: UseChatOptions = {}) {
 						error instanceof Error
 							? error.message
 							: "settings.ai.errors.unknownError";
-					addTrace("error", "Agent send exception", { error: errorMsg });
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === userTempId || m.messageId === assistantTempId
@@ -1188,7 +1170,6 @@ export function useChat(options: UseChatOptions = {}) {
 				}
 
 				if (stopReason !== "done") {
-					addTrace("event", "Agent stopped before done", { stopReason });
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === assistantTempId
@@ -1248,11 +1229,6 @@ export function useChat(options: UseChatOptions = {}) {
 					throw new Error("settings.ai.errors.streamingResponseNotAvailable");
 				}
 
-				addTrace("event", "Chat stream connected", {
-					url: "/api/ai/stream",
-					status: response.status,
-				});
-
 				setPendingMessages((prev) =>
 					prev.map((m) =>
 						m.messageId === userTempId ? { ...m, status: "sent" as const } : m,
@@ -1266,10 +1242,7 @@ export function useChat(options: UseChatOptions = {}) {
 					let lastEventTime = streamStartTime;
 					const deltaBufferRef = { current: "" as string };
 					const reasoningBufferRef = { current: "" as string };
-					let outputText = "";
-					let outputTraceId: string | null = null;
 					let reasoningText = "";
-					let reasoningTraceId: string | null = null;
 					let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
 					const FLUSH_VISIBLE_MS = 60;
 				const FLUSH_HIDDEN_MS = 600;
@@ -1293,46 +1266,19 @@ export function useChat(options: UseChatOptions = {}) {
 									: m,
 								),
 							);
-							outputText += pendingText;
-							if (!outputTraceId) {
-								const evt = mkTrace("output", "Output", { text: outputText });
-								outputTraceId = evt.id;
-								setTraceEvents((prev) => [...prev, evt]);
-							} else {
-								setTraceEvents((prev) => {
-									const idx = prev.findIndex((e) => e.id === outputTraceId);
-									if (idx < 0) return prev;
-									const next = prev.slice();
-									const existing = next[idx];
-									if (!existing) return prev;
-									next[idx] = { ...existing, data: { text: outputText } };
-									return next;
-								});
-							}
 						}
 
 					const pendingReasoning = reasoningBufferRef.current;
 					if (pendingReasoning) {
 						reasoningBufferRef.current = "";
 						reasoningText += pendingReasoning;
-
-						if (!reasoningTraceId) {
-							const evt = mkTrace("reasoning", "Thinking", {
-								text: reasoningText,
-							});
-							reasoningTraceId = evt.id;
-							setTraceEvents((prev) => [...prev, evt]);
-						} else {
-							setTraceEvents((prev) => {
-								const idx = prev.findIndex((e) => e.id === reasoningTraceId);
-								if (idx < 0) return prev;
-								const next = prev.slice();
-								const existing = next[idx];
-								if (!existing) return prev;
-								next[idx] = { ...existing, data: { text: reasoningText } };
-								return next;
-							});
-						}
+						setPendingMessages((prev) =>
+							prev.map((m) =>
+								m.messageId === assistantTempId
+									? { ...m, reasoning: reasoningText, status: "sending" as const }
+									: m,
+							),
+						);
 					}
 				};
 
@@ -1363,10 +1309,6 @@ export function useChat(options: UseChatOptions = {}) {
 						return;
 					}
 					abortedBySafetyTimer = true;
-					addTrace("error", "Safety timer aborted stream", {
-						idleMs,
-						activeToolCalls: activeToolCallIds.size,
-					});
 					clearInterval(safetyInterval);
 					controller.abort();
 				}, 1000);
@@ -1401,7 +1343,6 @@ export function useChat(options: UseChatOptions = {}) {
 								toolName: string;
 								arguments?: unknown;
 							};
-							addTrace("tool-call", payload.toolName || "tool-call", payload);
 							activeToolCallIds.add(payload.toolCallId);
 							const argsString =
 								typeof payload.arguments === "string"
@@ -1448,11 +1389,6 @@ export function useChat(options: UseChatOptions = {}) {
 								toolName: string;
 								result?: unknown;
 							};
-							addTrace(
-								"tool-result",
-								payload.toolName || "tool-result",
-								payload,
-							);
 							activeToolCallIds.delete(payload.toolCallId);
 							try {
 								const args = toolCallArgsById.get(payload.toolCallId);
@@ -1552,7 +1488,13 @@ export function useChat(options: UseChatOptions = {}) {
 
 						if (evt.event === "done") {
 							flushDeltaNow();
-							addTrace("done", "Chat stream done");
+							try {
+								const payload = JSON.parse(evt.data) as {
+									needsContinue?: boolean;
+									finishReason?: string;
+								};
+								setCanContinueChat(payload.needsContinue === true);
+							} catch {}
 							receivedDone = true;
 							activeToolCallIds.clear();
 							finalizeExecutingToolCalls(
@@ -1574,7 +1516,6 @@ export function useChat(options: UseChatOptions = {}) {
 								message?: string;
 								error?: string;
 							};
-							addTrace("error", "Chat stream error", payload);
 							throw new Error(
 								payload.message ||
 									payload.error ||
@@ -1589,9 +1530,6 @@ export function useChat(options: UseChatOptions = {}) {
 
 				if (controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
-					addTrace("error", "Chat stream aborted", {
-						abortedBySafetyTimer,
-					});
 					finalizeExecutingToolCalls(
 						abortedBySafetyTimer
 							? "settings.ai.errors.streamingEndedWithoutDone"
@@ -1608,7 +1546,6 @@ export function useChat(options: UseChatOptions = {}) {
 
 				if (!controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
-					addTrace("error", "Chat stream ended without done");
 					finalizeExecutingToolCalls(
 						"settings.ai.errors.streamingEndedWithoutDone",
 					);
@@ -1643,7 +1580,6 @@ export function useChat(options: UseChatOptions = {}) {
 						error instanceof Error
 							? error.message
 							: "settings.ai.errors.unknownError";
-					addTrace("error", "Chat send exception", { error: errorMsg });
 					finalizeExecutingToolCalls(errorMsg);
 					setPendingMessages((prev) =>
 						prev.map((m) =>
@@ -1685,17 +1621,435 @@ export function useChat(options: UseChatOptions = {}) {
 		],
 	);
 
+	const continueChat = useCallback(
+		async (aiId: string) => {
+			if (!conversationId) return;
+			if (isLoading) return;
+
+			setIsLoading(true);
+			setCanContinueChat(false);
+
+			const timestamp = Date.now();
+			const assistantTempId = `temp-${timestamp}-assistant-continue`;
+
+			const assistantMessage: Message = {
+				messageId: assistantTempId,
+				role: "assistant",
+				content: "",
+				reasoning: null,
+				createdAt: new Date().toISOString(),
+				status: "sending",
+			};
+
+			setPendingMessages((prev) => [...prev, assistantMessage]);
+
+			const finalizeExecutingToolCalls = (errorMsg: string) => {
+				setPendingMessages((prev) =>
+					prev.map((m) => {
+						if (m.messageId !== assistantTempId) return m;
+						const toolCalls = (m.toolCalls || []).map((tc) => {
+							if (tc.status !== "executing") return tc;
+							return {
+								...tc,
+								status: "failed" as const,
+								result: {
+									success: false,
+									error: errorMsg,
+								},
+							};
+						});
+						return { ...m, toolCalls };
+					}),
+				);
+			};
+
+			let abortedBySafetyTimer = false;
+			try {
+				const controller = new AbortController();
+				setAbortController(controller);
+
+				const response = await fetch("/api/ai/continue", {
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						Accept: "text/event-stream",
+					},
+					body: JSON.stringify({ conversationId, aiId }),
+					signal: controller.signal,
+				});
+
+				if (!response.ok) {
+					const errorText = await response.text().catch(() => "");
+					throw new Error(errorText || `Request failed (${response.status})`);
+				}
+
+				if (!response.body) {
+					throw new Error("settings.ai.errors.streamingResponseNotAvailable");
+				}
+
+				let receivedDone = false;
+				const activeToolCallIds = new Set<string>();
+				const toolCallArgsById = new Map<string, string>();
+				const streamStartTime = Date.now();
+				let lastEventTime = streamStartTime;
+				const deltaBufferRef = { current: "" as string };
+				const reasoningBufferRef = { current: "" as string };
+				let reasoningText = "";
+				let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
+				const FLUSH_VISIBLE_MS = 60;
+				const FLUSH_HIDDEN_MS = 600;
+
+				const flushDeltaNow = () => {
+					if (flushDeltaTimer) {
+						clearTimeout(flushDeltaTimer);
+						flushDeltaTimer = null;
+					}
+					const pendingText = deltaBufferRef.current;
+					if (pendingText) {
+						deltaBufferRef.current = "";
+						setPendingMessages((prev) =>
+							prev.map((m) =>
+								m.messageId === assistantTempId
+									? {
+											...m,
+											content: (m.content ?? "") + pendingText,
+											status: "sending" as const,
+										}
+									: m,
+							),
+						);
+					}
+
+					const pendingReasoning = reasoningBufferRef.current;
+					if (pendingReasoning) {
+						reasoningBufferRef.current = "";
+						reasoningText += pendingReasoning;
+						setPendingMessages((prev) =>
+							prev.map((m) =>
+								m.messageId === assistantTempId
+									? { ...m, reasoning: reasoningText, status: "sending" as const }
+									: m,
+							),
+						);
+					}
+				};
+
+				const scheduleFlush = () => {
+					if (flushDeltaTimer) return;
+					const delay = uiVisibleRef.current ? FLUSH_VISIBLE_MS : FLUSH_HIDDEN_MS;
+					flushDeltaTimer = setTimeout(flushDeltaNow, delay);
+				};
+
+				const safetyInterval = setInterval(() => {
+					const now = Date.now();
+					const idleMs = now - lastEventTime;
+					const maxIdleMs = uiVisibleRef.current ? 45000 : 120000;
+					if (idleMs > maxIdleMs && !controller.signal.aborted) {
+						abortedBySafetyTimer = true;
+						controller.abort();
+					}
+				}, 2000);
+
+				try {
+					for await (const evt of readSseStream(response.body)) {
+						lastEventTime = Date.now();
+
+						if (evt.event === "ping" || evt.event === "start") continue;
+
+						if (evt.event === "delta") {
+							const payload = JSON.parse(evt.data) as { delta?: string };
+							const delta = typeof payload.delta === "string" ? payload.delta : "";
+							if (!delta) continue;
+							deltaBufferRef.current += delta;
+							scheduleFlush();
+							continue;
+						}
+
+						if (evt.event === "reasoning-delta") {
+							const payload = JSON.parse(evt.data) as { delta?: string };
+							const delta = typeof payload.delta === "string" ? payload.delta : "";
+							if (!delta) continue;
+							reasoningBufferRef.current += delta;
+							scheduleFlush();
+							continue;
+						}
+
+						if (evt.event === "tool-call") {
+							flushDeltaNow();
+							const payload = JSON.parse(evt.data) as {
+								toolCallId: string;
+								toolName: string;
+								arguments: unknown;
+							};
+							const argsText = (() => {
+								try {
+									return JSON.stringify(payload.arguments ?? {}, null, 2);
+								} catch {
+									return String(payload.arguments ?? "");
+								}
+							})();
+							toolCallArgsById.set(payload.toolCallId, argsText);
+							activeToolCallIds.add(payload.toolCallId);
+
+							setPendingMessages((prev) =>
+								prev.map((m) => {
+									if (m.messageId !== assistantTempId) return m;
+									const toolCalls = [...(m.toolCalls || [])];
+									const existingIndex = toolCalls.findIndex(
+										(tc) => tc.id === payload.toolCallId,
+									);
+									const base: ToolCall = {
+										id: payload.toolCallId,
+										type: "function",
+										status: "executing",
+										function: {
+											name: payload.toolName,
+											arguments: argsText,
+										},
+									};
+
+									const merged = { ...base, ...(toolCalls[existingIndex] || {}) };
+									if (existingIndex >= 0) toolCalls[existingIndex] = merged;
+									else toolCalls.push(merged);
+									return { ...m, toolCalls };
+								}),
+							);
+						}
+
+						if (evt.event === "tool-result") {
+							flushDeltaNow();
+							const payload = JSON.parse(evt.data) as {
+								toolCallId: string;
+								toolName: string;
+								result: unknown;
+							};
+							activeToolCallIds.delete(payload.toolCallId);
+
+							setPendingMessages((prev) =>
+								prev.map((m) => {
+									if (m.messageId !== assistantTempId) return m;
+									const toolCalls = [...(m.toolCalls || [])];
+									const existingIndex = toolCalls.findIndex(
+										(tc) => tc.id === payload.toolCallId,
+									);
+									const existingToolCall =
+										existingIndex >= 0 ? toolCalls[existingIndex] : undefined;
+
+									const base: ToolCall =
+										existingToolCall ??
+										({
+											id: payload.toolCallId,
+											type: "function",
+											function: {
+												name: payload.toolName,
+												arguments: toolCallArgsById.get(payload.toolCallId) || "{}",
+											},
+										} as ToolCall);
+
+									let status: ToolCall["status"] = "completed";
+									let executionId: string | undefined;
+									let result: ToolCall["result"] | undefined;
+
+									const payloadResult = isRecord(payload.result)
+										? payload.result
+										: undefined;
+									if (
+										payloadResult &&
+										payloadResult.status === "pending_approval" &&
+										getExecutionIdFromResultPayload(payloadResult)
+									) {
+										status = "pending";
+										executionId = getExecutionIdFromResultPayload(payloadResult);
+										result = {
+											success: true,
+											message:
+												typeof payloadResult.message === "string"
+													? payloadResult.message
+													: undefined,
+											data: payloadResult.data,
+										};
+									} else if (
+										payloadResult &&
+										typeof payloadResult.success === "boolean"
+									) {
+										status = payloadResult.success ? "completed" : "failed";
+										executionId = getExecutionIdFromResultPayload(payloadResult);
+										result = {
+											success: payloadResult.success,
+											message: payloadResult.message as string | undefined,
+											data: payloadResult.data,
+											error: payloadResult.error as string | undefined,
+										};
+									}
+
+									const updated: ToolCall = {
+										...base,
+										executionId: executionId ?? base.executionId,
+										status,
+										result: result ?? base.result,
+										function: {
+											...base.function,
+											name: payload.toolName || base.function.name,
+										},
+									};
+
+									setToolCallMeta((prev) => ({
+										...prev,
+										[payload.toolCallId]: {
+											status: updated.status,
+											executionId: updated.executionId,
+											result: updated.result,
+										},
+									}));
+
+									if (existingIndex >= 0 && existingToolCall) {
+										toolCalls[existingIndex] = updated;
+									} else {
+										toolCalls.push(updated);
+									}
+
+									return { ...m, toolCalls };
+								}),
+							);
+						}
+
+						if (evt.event === "done") {
+							flushDeltaNow();
+							try {
+								const payload = JSON.parse(evt.data) as {
+									needsContinue?: boolean;
+									finishReason?: string;
+								};
+								setCanContinueChat(payload.needsContinue === true);
+							} catch {}
+							receivedDone = true;
+							activeToolCallIds.clear();
+							finalizeExecutingToolCalls(
+								"settings.ai.errors.toolExecutionDidNotReturnResult",
+							);
+							setPendingMessages((prev) =>
+								prev.map((m) =>
+									m.messageId === assistantTempId
+										? { ...m, status: "sent" as const }
+										: m,
+								),
+							);
+							break;
+						}
+
+						if (evt.event === "error" || evt.event === "stream-error") {
+							flushDeltaNow();
+							const payload = JSON.parse(evt.data) as {
+								message?: string;
+								error?: string;
+							};
+							throw new Error(
+								payload.message ||
+									payload.error ||
+									"settings.ai.errors.streamingError",
+							);
+						}
+					}
+				} finally {
+					flushDeltaNow();
+					clearInterval(safetyInterval);
+				}
+
+				if (controller.signal.aborted && !receivedDone) {
+					flushDeltaNow();
+					finalizeExecutingToolCalls(
+						abortedBySafetyTimer
+							? "settings.ai.errors.streamingEndedWithoutDone"
+							: "settings.ai.errors.streamingAborted",
+					);
+					setPendingMessages((prev) =>
+						prev.map((m) =>
+							m.messageId === assistantTempId
+								? { ...m, status: "sent" as const }
+								: m,
+						),
+					);
+				}
+
+				if (!controller.signal.aborted && !receivedDone) {
+					flushDeltaNow();
+					finalizeExecutingToolCalls(
+						"settings.ai.errors.streamingEndedWithoutDone",
+					);
+					setPendingMessages((prev) =>
+						prev.map((m) =>
+							m.messageId === assistantTempId
+								? { ...m, status: "sent" as const }
+								: m,
+						),
+					);
+				}
+
+				setAbortController(null);
+			} catch (error) {
+				setAbortController(null);
+				if (isAbortLikeError(error)) {
+					finalizeExecutingToolCalls(
+						abortedBySafetyTimer
+							? "settings.ai.errors.streamingEndedWithoutDone"
+							: "settings.ai.errors.streamingAborted",
+					);
+					setPendingMessages((prev) =>
+						prev.map((m) =>
+							m.messageId === assistantTempId
+								? { ...m, status: "sent" as const }
+								: m,
+						),
+					);
+				} else {
+					const errorMsg =
+						error instanceof Error
+							? error.message
+							: "settings.ai.errors.unknownError";
+					setPendingMessages((prev) =>
+						prev.map((m) =>
+							m.messageId === assistantTempId
+								? { ...m, status: "error" as const, error: errorMsg }
+								: m,
+						),
+					);
+					setIsLoading(false);
+					options.onError?.(error as Error);
+					return;
+				}
+			}
+
+			try {
+				const refetchPromise = refetchMessages().catch(() => {});
+				await Promise.race([
+					refetchPromise,
+					new Promise((resolve) => setTimeout(resolve, 10000)),
+				]);
+			} finally {
+				setPendingMessages((prev) =>
+					prev.filter((m) => m.messageId !== assistantTempId),
+				);
+				setIsLoading(false);
+			}
+		},
+		[conversationId, isLoading, options, refetchMessages],
+	);
+
 	const reset = useCallback(() => {
 		abortController?.abort();
 		setAbortController(null);
 		setIsLoading(false);
 		setConversationId(undefined);
 		setPendingMessages([]);
-		setTraceEvents([]);
 		setToolCallMeta({});
 		setToolOutcomes([]);
 		hasUserSetToolApprovalsDisabledRef.current = false;
 		setAreToolApprovalsDisabled(false);
+		hasUserSetToolBudgetModeRef.current = false;
+		setToolBudgetModeState("standard");
+		setIsMcpEnabled(false);
+		hasUserSetMcpEnabledRef.current = false;
+		setCanContinueChat(false);
 		setPendingApproval(null);
 	}, [abortController]);
 
@@ -1723,11 +2077,15 @@ export function useChat(options: UseChatOptions = {}) {
 
 			stopGeneration();
 			setPendingMessages([]);
-			setTraceEvents([]);
 			setToolCallMeta({});
 			setToolOutcomes([]);
 			hasUserSetToolApprovalsDisabledRef.current = false;
 			setAreToolApprovalsDisabled(false);
+			hasUserSetToolBudgetModeRef.current = false;
+			setToolBudgetModeState("standard");
+			setIsMcpEnabled(false);
+			hasUserSetMcpEnabledRef.current = false;
+			setCanContinueChat(false);
 			setPendingApproval(null);
 			setConversationId(normalized);
 		},
@@ -1741,6 +2099,12 @@ export function useChat(options: UseChatOptions = {}) {
 		isLoading,
 		areToolApprovalsDisabled,
 		setToolApprovalsDisabled,
+		toolBudgetMode,
+		setToolBudgetMode,
+		isMcpEnabled,
+		setMcpEnabled,
+		canContinueChat,
+		continueChat,
 		toolOutcomes,
 		send,
 		approveToolCall,
@@ -1753,6 +2117,5 @@ export function useChat(options: UseChatOptions = {}) {
 		retryMessage,
 		refetchMessages,
 		stopGeneration,
-		traceEvents,
 	};
 }

@@ -1,9 +1,12 @@
 import { validateRequest } from "@dokploy/server";
-import { apiSendMessage } from "@dokploy/server/db/schema/ai";
-import { chatStream, getConversationById } from "@dokploy/server/services/ai";
+import { chatStream, getConversationById, getMessages } from "@dokploy/server/services/ai";
 import type { NextApiRequest, NextApiResponse } from "next";
+import { z } from "zod";
 
-const bodySchema = apiSendMessage;
+const bodySchema = z.object({
+	conversationId: z.string().min(1),
+	aiId: z.string().min(1),
+});
 
 function writeSseEvent(
 	res: NextApiResponse,
@@ -15,11 +18,7 @@ function writeSseEvent(
 		const replacer = (_key: string, value: unknown) => {
 			if (typeof value === "bigint") return value.toString();
 			if (value instanceof Error) {
-				return {
-					name: value.name,
-					message: value.message,
-					stack: value.stack,
-				};
+				return { name: value.name, message: value.message, stack: value.stack };
 			}
 			if (value instanceof Map) return Array.from(value.entries());
 			if (value instanceof Set) return Array.from(value.values());
@@ -36,10 +35,7 @@ function writeSseEvent(
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			try {
-				return JSON.stringify({
-					error: "UNSERIALIZABLE",
-					message,
-				});
+				return JSON.stringify({ error: "UNSERIALIZABLE", message });
 			} catch {
 				return "{\"error\":\"UNSERIALIZABLE\"}";
 			}
@@ -49,10 +45,21 @@ function writeSseEvent(
 	res.write(`event: ${event}\ndata: ${payload}\n\n`);
 }
 
-export default async function handler(
-	req: NextApiRequest,
-	res: NextApiResponse,
-) {
+function buildContinuePrompt(userRequest: string): string {
+	const clipped = userRequest.trim().slice(0, 500);
+	return [
+		"Continue the task based on the conversation so far.",
+		`User request: ${clipped || "(empty)"}`,
+		"",
+		"Rules:",
+		"- Use the recent tool execution context to avoid repeating completed work.",
+		"- If more actions are required, call tools.",
+		"- If the task is complete, provide a concise final confirmation and DO NOT call any tools.",
+		'- Never ask the user to "wait" or say you are still "processing".',
+	].join("\n");
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
 	if (req.method !== "POST") {
 		res.setHeader("Allow", "POST");
 		res.status(405).end("Method Not Allowed");
@@ -83,11 +90,27 @@ export default async function handler(
 		return;
 	}
 
+	let lastUserMessage = "";
 	try {
 		const conversation = await getConversationById(parsed.data.conversationId);
 		if (conversation.organizationId !== session.activeOrganizationId) {
 			res.status(403).json({ message: "Forbidden" });
 			return;
+		}
+
+		const history = await getMessages({
+			conversationId: parsed.data.conversationId,
+			limit: 50,
+		});
+		for (let i = history.length - 1; i >= 0; i--) {
+			const msg = history[i];
+			if (!msg) continue;
+			if (msg.role !== "user") continue;
+			const content = typeof msg.content === "string" ? msg.content.trim() : "";
+			if (content) {
+				lastUserMessage = content;
+				break;
+			}
 		}
 	} catch {
 		res.status(404).json({ message: "Conversation not found" });
@@ -106,12 +129,8 @@ export default async function handler(
 	req.on("close", handleClose);
 	req.on("aborted", handleClose);
 
-	const safeWrite = (
-		event: string,
-		data: Record<string, unknown>,
-	): void => {
-		if (abortController.signal.aborted || res.writableEnded || res.finished)
-			return;
+	const safeWrite = (event: string, data: Record<string, unknown>): void => {
+		if (abortController.signal.aborted || res.writableEnded || res.finished) return;
 		try {
 			writeSseEvent(res, event, data);
 		} catch {
@@ -123,7 +142,10 @@ export default async function handler(
 		safeWrite("ping", { ts: Date.now() });
 	}, 15000);
 
-	safeWrite("start", { conversationId: parsed.data.conversationId });
+	safeWrite("start", {
+		conversationId: parsed.data.conversationId,
+		continuation: true,
+	});
 
 	let textChunks = 0;
 	let reasoningChunks = 0;
@@ -133,12 +155,13 @@ export default async function handler(
 		const result = await chatStream(
 			{
 				conversationId: parsed.data.conversationId,
-				message: parsed.data.message,
+				message: buildContinuePrompt(lastUserMessage),
 				aiId: parsed.data.aiId,
-				attachments: parsed.data.attachments,
+				attachments: [],
 				organizationId: session.activeOrganizationId,
 				userId: user.id,
 				uiLocale: req.cookies.DOKPLOY_LOCALE,
+				persistUserMessage: false,
 			},
 			{
 				abortSignal: abortController.signal,
@@ -154,14 +177,14 @@ export default async function handler(
 				},
 				onToolCall: (toolCallId, toolName, args) => {
 					toolCalls++;
-					safeWrite("tool-call", {
+					safeWrite("tool-call", { toolCallId, toolName, arguments: args });
+				},
+				onToolResult: (toolCallId, toolName, resultPayload) => {
+					safeWrite("tool-result", {
 						toolCallId,
 						toolName,
-						arguments: args,
+						result: resultPayload,
 					});
-				},
-				onToolResult: (toolCallId, toolName, result) => {
-					safeWrite("tool-result", { toolCallId, toolName, result });
 				},
 				onError: (error) => {
 					safeWrite("stream-error", { error });
@@ -171,7 +194,7 @@ export default async function handler(
 
 		const messageId = result?.message?.messageId;
 		console.log(
-			`[AI Stream] Completed: ${textChunks} text chunks, ${reasoningChunks} reasoning chunks, ${toolCalls} tool calls, message: ${messageId ?? ""}`,
+			`[AI Continue] Completed: ${textChunks} text chunks, ${reasoningChunks} reasoning chunks, ${toolCalls} tool calls, message: ${messageId ?? ""}`,
 		);
 
 		safeWrite("done", {
@@ -198,3 +221,4 @@ export const config = {
 		responseLimit: false,
 	},
 };
+

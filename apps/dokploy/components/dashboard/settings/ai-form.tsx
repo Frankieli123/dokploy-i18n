@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { api } from "@/utils/api";
 import { AiEmbeddingProviderForm } from "./ai-embedding-provider-form";
+import { AiMcpServersForm } from "./ai-mcp-servers-form";
 import { HandleAi } from "./handle-ai";
 
 export const AiForm = () => {
@@ -39,6 +40,7 @@ export const AiForm = () => {
 					</CardHeader>
 					<CardContent className="space-y-6 py-8 border-t">
 						<AiEmbeddingProviderForm />
+						<AiMcpServersForm />
 						{isLoading ? (
 							<div className="flex flex-row gap-2 items-center justify-center text-sm text-muted-foreground min-h-[25vh]">
 								<span>{t("settings.common.loading")}</span>

@@ -4,15 +4,22 @@ import {
 	apiApproveExecution,
 	apiCancelRun,
 	apiCreateAi,
+	apiCreateAiMcpServer,
 	apiCreateConversation,
+	apiDeleteAiMcpServer,
 	apiFindConversation,
 	apiGetMessages,
 	apiGetRun,
+	apiListAiMcpServers,
 	apiListConversations,
 	apiSendMessage,
+	apiSetMcpEnabled,
+	apiSetToolBudgetMode,
 	apiSetToolApprovalsDisabled,
 	apiStartAgent,
+	apiTestAiMcpServer,
 	apiUpsertAiEmbeddingProvider,
+	apiUpdateAiMcpServer,
 	apiUpdateAi,
 	apiUpdateConversation,
 	deploySuggestionSchema,
@@ -29,10 +36,15 @@ import {
 	createConversation,
 	deleteAiSettings,
 	deleteConversation,
+	createAiMcpServer,
+	deleteAiMcpServer,
 	executeApprovedTool,
 	getAiSettingById,
 	getAiSettingsByOrganizationId,
 	getAiEmbeddingProviderByOrganizationId,
+	testAiEmbeddingProvider,
+	listAiMcpServersByOrganizationId,
+	testAiMcpServer,
 	getConversationById,
 	getConversationIdForToolExecution,
 	getMessages,
@@ -45,6 +57,7 @@ import {
 	saveAiEmbeddingProvider,
 	startAgentRun,
 	suggestVariants,
+	updateAiMcpServer,
 	updateConversation,
 	deleteAiEmbeddingProvider,
 } from "@dokploy/server/services/ai";
@@ -203,6 +216,11 @@ export const aiRouter = createTRPCRouter({
 				ctx.session.activeOrganizationId,
 			);
 		}),
+		test: adminProcedure.query(async ({ ctx }) => {
+			return await testAiEmbeddingProvider({
+				organizationId: ctx.session.activeOrganizationId,
+			});
+		}),
 		upsert: adminProcedure
 			.input(apiUpsertAiEmbeddingProvider)
 			.mutation(async ({ ctx, input }) => {
@@ -210,6 +228,40 @@ export const aiRouter = createTRPCRouter({
 			}),
 		delete: adminProcedure.mutation(async ({ ctx }) => {
 			return await deleteAiEmbeddingProvider(ctx.session.activeOrganizationId);
+		}),
+	}),
+
+	mcpServers: createTRPCRouter({
+		list: adminProcedure.input(apiListAiMcpServers).query(async ({ ctx, input }) => {
+			return await listAiMcpServersByOrganizationId({
+				organizationId: ctx.session.activeOrganizationId,
+				limit: input.limit,
+				offset: input.offset,
+			});
+		}),
+		create: adminProcedure
+			.input(apiCreateAiMcpServer)
+			.mutation(async ({ ctx, input }) => {
+				return await createAiMcpServer(ctx.session.activeOrganizationId, input);
+			}),
+		update: adminProcedure
+			.input(apiUpdateAiMcpServer)
+			.mutation(async ({ ctx, input }) => {
+				return await updateAiMcpServer(ctx.session.activeOrganizationId, input);
+			}),
+		delete: adminProcedure
+			.input(apiDeleteAiMcpServer)
+			.mutation(async ({ ctx, input }) => {
+				await deleteAiMcpServer(
+					ctx.session.activeOrganizationId,
+					input.mcpServerId,
+				);
+			}),
+		test: adminProcedure.input(apiTestAiMcpServer).query(async ({ ctx, input }) => {
+			return await testAiMcpServer({
+				organizationId: ctx.session.activeOrganizationId,
+				mcpServerId: input.mcpServerId,
+			});
 		}),
 	}),
 
@@ -414,6 +466,62 @@ export const aiRouter = createTRPCRouter({
 							: {};
 					if (input.disabled) (base as any).toolApprovalsDisabled = true;
 					else delete (base as any).toolApprovalsDisabled;
+					return base;
+				})();
+
+				return await updateConversation(input.conversationId, {
+					metadata: nextMetadata,
+				});
+			}),
+
+		setToolBudgetMode: protectedProcedure
+			.input(apiSetToolBudgetMode)
+			.mutation(async ({ ctx, input }) => {
+				const conversation = await getConversationById(input.conversationId);
+				if (conversation.organizationId !== ctx.session.activeOrganizationId) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "settings.ai.errors.noAccessToConversation",
+					});
+				}
+
+				const nextMetadata = (() => {
+					const base =
+						conversation.metadata &&
+						typeof conversation.metadata === "object" &&
+						!Array.isArray(conversation.metadata)
+							? { ...(conversation.metadata as Record<string, unknown>) }
+							: {};
+					if (input.mode === "max") (base as any).toolBudgetMode = "max";
+					else delete (base as any).toolBudgetMode;
+					return base;
+				})();
+
+				return await updateConversation(input.conversationId, {
+					metadata: nextMetadata,
+				});
+			}),
+
+		setMcpEnabled: protectedProcedure
+			.input(apiSetMcpEnabled)
+			.mutation(async ({ ctx, input }) => {
+				const conversation = await getConversationById(input.conversationId);
+				if (conversation.organizationId !== ctx.session.activeOrganizationId) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "settings.ai.errors.noAccessToConversation",
+					});
+				}
+
+				const nextMetadata = (() => {
+					const base =
+						conversation.metadata &&
+						typeof conversation.metadata === "object" &&
+						!Array.isArray(conversation.metadata)
+							? { ...(conversation.metadata as Record<string, unknown>) }
+							: {};
+					if (input.enabled) (base as any).mcpEnabled = true;
+					else delete (base as any).mcpEnabled;
 					return base;
 				})();
 

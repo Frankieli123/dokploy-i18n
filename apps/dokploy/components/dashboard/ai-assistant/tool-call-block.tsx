@@ -27,7 +27,7 @@ import {
 	Wrench,
 } from "lucide-react";
 import { useTranslation } from "next-i18next";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ToolCall } from "./use-chat";
@@ -115,7 +115,7 @@ function getRiskColor(toolName: string) {
 		toolName.includes("revoke") ||
 		toolName.includes("restore")
 	) {
-		return "border-destructive bg-destructive/5";
+		return "border-destructive/20 bg-destructive/5";
 	}
 	if (
 		toolName.includes("deploy") ||
@@ -124,9 +124,9 @@ function getRiskColor(toolName: string) {
 		toolName.includes("restart") ||
 		toolName.includes("rollback")
 	) {
-		return "border-amber-500/50 bg-amber-500/5";
+		return "border-amber-500/20 bg-amber-500/5";
 	}
-	return "border-border bg-card";
+	return "border-border/40 bg-muted/20";
 }
 
 function getConfirmLiteral(parsedArgs: unknown): string {
@@ -159,6 +159,12 @@ export function ToolCallBlock({
 }: ToolCallBlockProps) {
 	const { t } = useTranslation("common");
 	const [expanded, setExpanded] = useState(false);
+
+	useEffect(() => {
+		if (status === "executing") {
+			setExpanded(true);
+		}
+	}, [status]);
 
 	const Icon = getToolIcon(toolCall.function.name);
 
@@ -210,7 +216,7 @@ export function ToolCallBlock({
 
 	const isUnknownToolError = !!unknownToolInfo;
 	const riskColor = isUnknownToolError
-		? "border-amber-500/50 bg-amber-500/5"
+		? "border-amber-500/20 bg-amber-500/5"
 		: getRiskColor(toolCall.function.name);
 
 	const statusConfig = {
@@ -335,17 +341,17 @@ export function ToolCallBlock({
 		<>
 			<div
 				className={cn(
-					"w-full max-w-full min-w-0 overflow-hidden rounded border p-2 my-1 text-xs transition-colors shadow-sm",
+					"w-full max-w-full min-w-0 overflow-hidden rounded-xl border p-3 my-1.5 text-xs transition-all",
 					riskColor,
 					className,
 				)}
 			>
 				<div
-					className="flex items-center justify-between cursor-pointer select-none group min-w-0"
+					className="flex items-center justify-between cursor-pointer select-none group min-w-0 gap-2"
 					onClick={() => setExpanded(!expanded)}
 				>
 					<div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-						<div className="p-1 rounded bg-background border shadow-sm">
+						<div className="p-1.5 rounded-lg bg-background/50 border border-border/20 shadow-sm shrink-0">
 							<Icon className="h-3 w-3 text-foreground" />
 						</div>
 						<div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
@@ -383,9 +389,12 @@ export function ToolCallBlock({
 					</Button>
 				</div>
 
-				{!expanded && resultPreview.length > 0 && (
+				{!expanded && (
 					<div className="mt-1 text-[10px] text-muted-foreground font-mono break-words [overflow-wrap:anywhere]">
-						{resultPreview}
+						<div className="opacity-75 truncate mb-0.5">
+							{JSON.stringify(parsedArgs)}
+						</div>
+						{resultPreview.length > 0 && <div>{resultPreview}</div>}
 					</div>
 				)}
 

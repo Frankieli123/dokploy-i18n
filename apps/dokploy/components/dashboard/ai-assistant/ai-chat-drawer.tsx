@@ -49,9 +49,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/utils/api";
 import { translateErrorMessage } from "@/utils/error-translation";
+import { McpControlDialog } from "./mcp-control-dialog";
 import { MessageBubble } from "./message-bubble";
-import { TracePanel } from "./trace-panel";
-import { ToolExecutionHistory } from "./tool-execution-history";
 import { useChat } from "./use-chat";
 
 type DraftImage = {
@@ -187,6 +186,10 @@ export function AIChatDrawer({
 		conversationId,
 		areToolApprovalsDisabled,
 		setToolApprovalsDisabled,
+		toolBudgetMode,
+		setToolBudgetMode,
+		canContinueChat,
+		continueChat,
 		send,
 		reset,
 		retryMessage,
@@ -197,7 +200,8 @@ export function AIChatDrawer({
 		pendingApproval,
 		approvePending,
 		rejectPending,
-		traceEvents,
+		isMcpEnabled,
+		setMcpEnabled,
 	} = useChat({
 		onError: (error) => {
 			const errorMessage = error.message || t("ai.chat.sendError");
@@ -531,8 +535,10 @@ export function AIChatDrawer({
 									openConversation(nextId);
 								}}
 							/>
-							<ToolExecutionHistory messages={messages} />
-							<TracePanel events={traceEvents} />
+							<McpControlDialog
+								isMcpEnabled={isMcpEnabled}
+								setMcpEnabled={setMcpEnabled}
+							/>
 							<Button
 								variant="ghost"
 								size="icon"
@@ -782,6 +788,18 @@ export function AIChatDrawer({
 							<Plus className="h-5 w-5" />
 						</Button>
 
+						{canContinueChat && !isAgentMode && (
+							<Button
+								type="button"
+								variant="secondary"
+								className="h-8 w-auto shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0"
+								disabled={!hasAiConfigs || isLoading || !!pendingApproval || !selectedAiId}
+								onClick={() => void continueChat(selectedAiId)}
+							>
+								{t("ai.chat.continue")}
+							</Button>
+						)}
+
 						<Select
 							value={isAgentMode ? "agent" : "chat"}
 							onValueChange={(v) => setIsAgentMode(v === "agent")}
@@ -815,6 +833,34 @@ export function AIChatDrawer({
 										<Bot className="h-4 w-4" />
 										<span>{t("ai.chat.mode.agent")}</span>
 									</div>
+								</SelectItem>
+							</SelectContent>
+						</Select>
+
+						<Select
+							value={toolBudgetMode}
+							onValueChange={(v) =>
+								void setToolBudgetMode(v === "max" ? "max" : "standard")
+							}
+							disabled={!hasAiConfigs || isLoading || !!pendingApproval}
+						>
+							<SelectTrigger className="h-8 w-auto shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
+								<SelectValue>
+									<span className="flex items-center gap-1.5">
+										<span>
+											{toolBudgetMode === "max"
+												? t("ai.chat.budget.max")
+												: t("ai.chat.budget.standard")}
+										</span>
+									</span>
+								</SelectValue>
+							</SelectTrigger>
+							<SelectContent side="top" align="start">
+								<SelectItem value="standard">
+									<span>{t("ai.chat.budget.standard")}</span>
+								</SelectItem>
+								<SelectItem value="max">
+									<span>{t("ai.chat.budget.max")}</span>
 								</SelectItem>
 							</SelectContent>
 						</Select>
@@ -975,7 +1021,11 @@ function ConversationHistoryDialog(props: {
 					</div>
 				</DialogHeader>
 
-				<ScrollArea className="flex-1 min-h-0" viewPortClassName="p-6 pt-2">
+				<ScrollArea
+					type="always"
+					className="flex-1 min-h-0"
+					viewPortClassName="p-6 pt-2"
+				>
 					<div className="space-y-2">
 						{isLoading ? (
 							<div className="flex items-center justify-center py-10 text-muted-foreground">

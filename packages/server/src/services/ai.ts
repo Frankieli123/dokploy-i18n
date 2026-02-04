@@ -12,6 +12,7 @@ import { selectAIProvider } from "@dokploy/server/utils/ai/select-ai-provider";
 import { TRPCError } from "@trpc/server";
 import {
 	type CoreMessage,
+	embed,
 	generateObject,
 	generateText,
 	stepCountIs,
@@ -52,11 +53,16 @@ type ToolPromptInfo = {
 	parameters?: string;
 };
 
+type ToolBudgetMode = "standard" | "max";
+
 const RISK_RANK = {
 	low: 1,
 	medium: 2,
 	high: 3,
 } as const;
+
+const TOOL_BUDGET_STANDARD_STEPS = 60;
+const TOOL_BUDGET_MAX_STEPS = 200;
 
 function normalizeRiskLevel(value: unknown): string {
 	return typeof value === "string" ? value.toLowerCase() : "high";
@@ -906,6 +912,124 @@ export const deleteAiEmbeddingProvider = async (organizationId: string) => {
 		.where(eq(aiEmbeddingProviders.organizationId, organizationId));
 };
 
+export {
+	type AiMcpServerTestResult,
+	createAiMcpServer,
+	deleteAiMcpServer,
+	listAiMcpServersByOrganizationId,
+	testAiMcpServer,
+	updateAiMcpServer,
+} from "./ai/mcp-servers";
+
+export type AiEmbeddingProviderTestResult = {
+	status: "ok" | "not_configured" | "error";
+	mode: "embedding" | "local_hash";
+	providerType?: string;
+	model?: string;
+	dim: number;
+	latencyMs?: number;
+	error?: string;
+};
+
+export const testAiEmbeddingProvider = async (params: {
+	organizationId: string;
+	text?: string;
+}): Promise<AiEmbeddingProviderTestResult> => {
+	const provider = await getAiEmbeddingProviderByOrganizationId(
+		params.organizationId,
+	);
+	const text = String(params.text ?? "Dokploy embedding test").trim() || "Dokploy embedding test";
+
+	if (!provider) {
+		return {
+			status: "not_configured",
+			mode: "local_hash",
+			model: "hash(blake2b512)",
+			dim: PLAYBOOK_HASH_DIMENSIONS,
+		};
+	}
+
+	const config: EmbeddingProviderConfig = {
+		providerType: provider.providerType,
+		apiUrl: provider.apiUrl,
+		apiKey: provider.apiKey,
+		model: provider.model,
+	};
+
+	const modelId = String(config.model ?? "").trim();
+	if (!modelId) {
+		return {
+			status: "error",
+			mode: "local_hash",
+			providerType: config.providerType ?? undefined,
+			model: modelId,
+			dim: PLAYBOOK_HASH_DIMENSIONS,
+			error: "Embedding model is required",
+		};
+	}
+
+	const providerClient = selectAIProvider(config) as unknown as Record<string, unknown>;
+	const embeddingFactory =
+		(providerClient as { textEmbeddingModel?: unknown }).textEmbeddingModel ??
+		(providerClient as { textEmbedding?: unknown }).textEmbedding ??
+		(providerClient as { embedding?: unknown }).embedding;
+	if (typeof embeddingFactory !== "function") {
+		return {
+			status: "error",
+			mode: "local_hash",
+			providerType: config.providerType ?? undefined,
+			model: modelId,
+			dim: PLAYBOOK_HASH_DIMENSIONS,
+			error: "Provider does not support text embeddings",
+		};
+	}
+
+	let embeddingModel: unknown;
+	try {
+		embeddingModel = (embeddingFactory as (id: string) => unknown)(modelId);
+	} catch (error) {
+		return {
+			status: "error",
+			mode: "local_hash",
+			providerType: config.providerType ?? undefined,
+			model: modelId,
+			dim: PLAYBOOK_HASH_DIMENSIONS,
+			error: getProviderErrorText(error) || "Failed to initialize embedding model",
+		};
+	}
+
+	const startedAt = Date.now();
+	try {
+		const res = await embed({ model: embeddingModel as never, value: text });
+		const raw = (res as unknown as { embedding?: unknown }).embedding;
+		if (!Array.isArray(raw)) {
+			throw new Error("No embedding vector returned");
+		}
+		const vec = raw.map((v) => Number(v)).filter((v) => Number.isFinite(v));
+		if (vec.length === 0) {
+			throw new Error("Empty embedding vector returned");
+		}
+		return {
+			status: "ok",
+			mode: "embedding",
+			providerType: config.providerType ?? undefined,
+			model: modelId,
+			dim: vec.length,
+			latencyMs: Date.now() - startedAt,
+		};
+	} catch (error) {
+		return {
+			status: "error",
+			mode: "local_hash",
+			providerType: config.providerType ?? undefined,
+			model: modelId,
+			dim: PLAYBOOK_HASH_DIMENSIONS,
+			latencyMs: Date.now() - startedAt,
+			error: getProviderErrorText(error) || "Embedding test failed",
+		};
+	}
+};
+
 const resolveEmbeddingProviderConfig = async (params: {
 	organizationId: string;
 	aiSettings: {
@@ -1509,6 +1633,7 @@ interface ChatParams {
 	organizationId: string;
 	userId: string;
 	uiLocale?: string;
+	persistUserMessage?: boolean;
 }
 
 type ChatUsage = {
@@ -1523,6 +1648,67 @@ function buildChatTools(params: {
 	messageId?: string;
 	toolApprovalsDisabled?: boolean;
 }): Record<string, any> {
+	let cachedConversationMetadata: unknown | undefined;
+	const getConversationMetadata = async (): Promise<unknown> => {
+		if (cachedConversationMetadata !== undefined) return cachedConversationMetadata;
+		try {
+			const conversation = await db.query.aiConversations.findFirst({
+				where: eq(aiConversations.conversationId, params.conversationId),
+				columns: { metadata: true },
+			});
+			cachedConversationMetadata = conversation?.metadata ?? null;
+		} catch {
+			cachedConversationMetadata = null;
+		}
+		return cachedConversationMetadata;
+	};
+	const getGithubRepoForConversation = async (): Promise<string | null> => {
+		const metadata = await getConversationMetadata();
+		return getGithubRepoFromMetadata(metadata);
+	};
+	let cachedUserMessageText: string | null | undefined;
+	const getUserMessageTextForToolCall = async (): Promise<string> => {
+		if (cachedUserMessageText !== undefined) return cachedUserMessageText ?? "";
+
+		const messageId =
+			typeof params.messageId === "string" ? params.messageId.trim() : "";
+		if (messageId) {
+			try {
+				const msg = await db.query.aiMessages.findFirst({
+					where: eq(aiMessages.messageId, messageId),
+					columns: { role: true, content: true },
+				});
+				if (msg?.role === "user" && typeof msg.content === "string") {
+					cachedUserMessageText = msg.content;
+					return msg.content;
+				}
+			} catch {}
+		}
+
+		try {
+			const msg = await db.query.aiMessages.findFirst({
+				where: and(
+					eq(aiMessages.conversationId, params.conversationId),
+					eq(aiMessages.role, "user"),
+				),
+				columns: { content: true },
+				orderBy: desc(aiMessages.createdAt),
+			});
+			cachedUserMessageText = typeof msg?.content === "string" ? msg.content : "";
+		} catch {
+			cachedUserMessageText = "";
+		}
+		return cachedUserMessageText ?? "";
+	};
+
+	let cachedMcpEnabled: boolean | undefined;
+	const isMcpEnabledForConversation = async (): Promise<boolean> => {
+		if (typeof cachedMcpEnabled === "boolean") return cachedMcpEnabled;
+		const metadata = await getConversationMetadata();
+		cachedMcpEnabled = getMcpEnabledFromMetadata(metadata);
+		return cachedMcpEnabled;
+	};
+
 	return {
 		tool_suggest: tool({
 			description:
@@ -1539,12 +1725,16 @@ function buildChatTools(params: {
 			}),
 			execute: async (input: { query: string; limit?: number }) => {
 				const limit = input.limit ?? 15;
-				const selected = selectRelevantTools(input.query, {
+				const selectedRaw = selectRelevantTools(input.query, {
 					projectId: params.toolContext.projectId,
 					serverId: params.toolContext.serverId,
 					minTools: 0,
 					maxTools: limit,
 				});
+				const mcpEnabled = await isMcpEnabledForConversation();
+				const selected = mcpEnabled
+					? selectedRaw
+					: selectedRaw.filter((t) => !t.name.startsWith("mcp_"));
 				return {
 					success: true,
 					message:
@@ -1597,7 +1787,21 @@ function buildChatTools(params: {
 				riskLevelMax?: "low" | "medium" | "high";
 				requiresApproval?: boolean;
 			}) => {
-				return searchToolCatalog(input);
+				const res = searchToolCatalog(input);
+				const mcpEnabled = await isMcpEnabledForConversation();
+				if (mcpEnabled) return res;
+
+				const filtered = res.data.filter((t) => !t.name.startsWith("mcp_"));
+				const nextCall =
+					res.meta.nextCall && res.meta.nextCall.toolName.startsWith("mcp_")
+						? undefined
+						: res.meta.nextCall;
+
+				return {
+					...res,
+					meta: { ...res.meta, nextCall },
+					data: filtered,
+				};
 			},
 		}),
 		tool_describe: tool({
@@ -1610,13 +1814,27 @@ function buildChatTools(params: {
 					.describe('Exact tool name, e.g. "trpc_procedure_call"'),
 			}),
 			execute: async (input: { toolName: string }) => {
-				const t = toolRegistry.get(input.toolName);
+				const toolName = input.toolName.trim();
+				const mcpEnabled = await isMcpEnabledForConversation();
+				if (!mcpEnabled && toolName.startsWith("mcp_")) {
+					return {
+						success: false,
+						message: `MCP tools are disabled for this conversation`,
+						error: "MCP_DISABLED",
+						data: {
+							toolName,
+							hint: "Enable MCP in the UI to use MCP tools.",
+						},
+					};
+				}
+
+				const t = toolRegistry.get(toolName);
 				if (!t) {
-					if (input.toolName.includes(".")) {
+					if (toolName.includes(".")) {
 						const bridge = getTrpcBridge();
 						if (bridge) {
 							try {
-								const desc = await bridge.describeProcedure(input.toolName);
+								const desc = await bridge.describeProcedure(toolName);
 								return {
 									success: true,
 									message: `tRPC procedure "${desc.name}" described`,
@@ -1625,7 +1843,7 @@ function buildChatTools(params: {
 							} catch {}
 						}
 					}
-					return buildUnknownToolSuggestionResult(input.toolName);
+					return buildUnknownToolSuggestionResult(toolName);
 				}
 				const data = getToolDescribeData(t);
 				return {
@@ -1650,6 +1868,21 @@ function buildChatTools(params: {
 				.passthrough(),
 			execute: async (input: { toolName: string; params?: unknown }) => {
 				const inputAny = input as unknown as Record<string, unknown>;
+				const normalizedToolName = input.toolName.trim();
+				const mcpEnabled = await isMcpEnabledForConversation();
+				if (!mcpEnabled && normalizedToolName.startsWith("mcp_")) {
+					return {
+						success: false,
+						message: `MCP tools are disabled for this conversation`,
+						error: "MCP_DISABLED",
+						data: {
+							toolName: normalizedToolName,
+							hint: "Enable MCP in the UI to use MCP tools.",
+						},
+					};
+				}
+				input.toolName = normalizedToolName;
+
 				const rawParams: Record<string, unknown> = {
 					...(isRecord(inputAny.params)
 						? (inputAny.params as Record<string, unknown>)
@@ -1802,18 +2035,137 @@ function buildChatTools(params: {
 					let requiresApproval =
 						t.requiresApproval && params.toolApprovalsDisabled !== true;
 					if (
-						requiresApproval &&
 						t.name === "trpc_procedure_call" &&
 						typeof validatedParams.procedureName === "string" &&
 						validatedParams.procedureName.trim().length > 0
 					) {
+						const procedureName = validatedParams.procedureName.trim();
 						const bridge = getTrpcBridge();
 						if (bridge) {
 							try {
-								const desc = await bridge.describeProcedure(
-									validatedParams.procedureName.trim(),
-								);
-								if (desc.type === "query") {
+								const desc = await bridge.describeProcedure(procedureName);
+								const inputCandidate =
+									typeof validatedParams.input !== "undefined"
+										? validatedParams.input
+										: typeof validatedParams.params !== "undefined"
+											? validatedParams.params
+											: undefined;
+
+								if (typeof inputCandidate === "undefined") {
+									if (desc.inputExample !== null) {
+										const requiredFields = (desc.fields ?? [])
+											.filter((f) => f.required)
+											.map((f) => f.name);
+
+										if (desc.type === "query" && requiredFields.length === 0) {
+											validatedParams.input = {};
+										} else if (requiredFields.length === 1) {
+											const onlyField = String(
+												requiredFields[0] ?? "",
+											).trim();
+											let inferred: Record<string, unknown> | null = null;
+											if (
+												onlyField === "projectId" &&
+												typeof params.toolContext.projectId === "string" &&
+												params.toolContext.projectId.trim().length > 0
+											) {
+												inferred = {
+													projectId: params.toolContext.projectId.trim(),
+												};
+											} else if (
+												onlyField === "serverId" &&
+												typeof params.toolContext.serverId === "string" &&
+												params.toolContext.serverId.trim().length > 0
+											) {
+												inferred = { serverId: params.toolContext.serverId.trim() };
+											} else if (onlyField === "organizationId") {
+												inferred = { organizationId: params.toolContext.organizationId };
+											} else if (onlyField === "userId") {
+												inferred = { userId: params.toolContext.userId };
+											} else if (onlyField === "repo") {
+												let repo = await getGithubRepoForConversation();
+												if (!repo) {
+													const userText = await getUserMessageTextForToolCall();
+													repo = extractGithubRepoFromText(userText);
+												}
+												if (repo) inferred = { repo };
+											}
+
+											if (inferred) {
+												validatedParams.input = inferred;
+											} else {
+												return {
+													success: false,
+													message: `Invalid parameters: tRPC procedure "${procedureName}" requires an input object`,
+													error: "TRPC_INPUT_REQUIRED",
+													data: {
+														procedure: desc,
+														requiredFields,
+														exampleToolCall: {
+															toolName: "trpc_procedure_call",
+															params: {
+																procedureName,
+																input: desc.inputExample,
+															},
+														},
+													},
+												};
+											}
+										} else if (
+											requiredFields.length === 2 &&
+											requiredFields.includes("repo") &&
+											requiredFields.includes("path")
+										) {
+											const repo = await getGithubRepoForConversation();
+											const userText = await getUserMessageTextForToolCall();
+											const path = extractFilePathFromText(userText);
+
+											if (repo && path) {
+												validatedParams.input = { repo, path };
+											} else {
+												const inferred: Record<string, unknown> = {};
+												if (repo) inferred.repo = repo;
+												if (path) inferred.path = path;
+												return {
+													success: false,
+													message: `Invalid parameters: tRPC procedure "${procedureName}" requires an input object`,
+													error: "TRPC_INPUT_REQUIRED",
+													data: {
+														procedure: desc,
+														requiredFields,
+														inferredInput: inferred,
+														exampleToolCall: {
+															toolName: "trpc_procedure_call",
+															params: {
+																procedureName,
+																input: desc.inputExample,
+															},
+														},
+													},
+												};
+											}
+										} else {
+											return {
+												success: false,
+												message: `Invalid parameters: tRPC procedure "${procedureName}" requires an input object`,
+												error: "TRPC_INPUT_REQUIRED",
+												data: {
+													procedure: desc,
+													requiredFields,
+													exampleToolCall: {
+														toolName: "trpc_procedure_call",
+														params: {
+															procedureName,
+															input: desc.inputExample,
+														},
+													},
+												},
+											};
+										}
+									}
+								}
+
+								if (requiresApproval && desc.type === "query") {
 									requiresApproval = false;
 								}
 							} catch {}
@@ -2291,6 +2643,30 @@ function setToolApprovalsDisabledInMetadata(
 	return next;
 }
 
+function getToolBudgetModeFromMetadata(metadata: unknown): ToolBudgetMode {
+	if (!isRecord(metadata)) return "standard";
+	const raw = (metadata as { toolBudgetMode?: unknown }).toolBudgetMode;
+	return raw === "max" ? "max" : "standard";
+}
+
+function getMcpEnabledFromMetadata(metadata: unknown): boolean {
+	return isRecord(metadata) && metadata.mcpEnabled === true;
+}
+
+function setToolBudgetModeInMetadata(
+	metadata: unknown,
+	mode: ToolBudgetMode,
+): Record<string, unknown> {
+	const next = isRecord(metadata) ? { ...metadata } : {};
+	if (mode === "max") next.toolBudgetMode = "max";
+	else delete (next as { toolBudgetMode?: unknown }).toolBudgetMode;
+	return next;
+}
+
+function getToolStepBudget(mode: ToolBudgetMode): number {
+	return mode === "max" ? TOOL_BUDGET_MAX_STEPS : TOOL_BUDGET_STANDARD_STEPS;
+}
+
 function normalizeUiLocale(value: unknown): string | null {
 	if (typeof value !== "string") return null;
 	const trimmed = value.trim();
@@ -2310,6 +2686,127 @@ function setUiLocaleInMetadata(
 	if (uiLocale) next.uiLocale = uiLocale;
 	else delete (next as { uiLocale?: unknown }).uiLocale;
 	return next;
+}
+
+function getGithubRepoFromMetadata(metadata: unknown): string | null {
+	if (!isRecord(metadata)) return null;
+	const raw =
+		(metadata as { githubRepo?: unknown }).githubRepo ??
+		(metadata as { repo?: unknown }).repo;
+	if (typeof raw !== "string") return null;
+	const trimmed = raw.trim();
+	return trimmed.length > 0 ? trimmed : null;
+}
+
+function setGithubRepoInMetadata(
+	metadata: unknown,
+	repo: string | null,
+): Record<string, unknown> {
+	const next = isRecord(metadata) ? { ...metadata } : {};
+	if (repo) next.githubRepo = repo;
+	else delete (next as { githubRepo?: unknown }).githubRepo;
+	return next;
+}
+
+function isLikelyPathLikeOwnerRepo(owner: string, repo: string): boolean {
+	const o = owner.toLowerCase();
+	const r = repo.toLowerCase();
+	if (o === "docker" && (r === "volumes" || r === "volume")) return true;
+	if (o === "apps" || o === "packages" || o === "src" || o === "public")
+		return true;
+	if (r === "src" || r === "dist" || r === "config" || r === "volumes")
+		return true;
+	return false;
+}
+
+function scoreGithubRepoCandidate(owner: string, repo: string): number {
+	const full = `${owner}/${repo}`;
+	let score = 0;
+	if (owner.length > 0 && owner.length <= 39) score += 1;
+	if (repo.length > 0 && repo.length <= 100) score += 1;
+	if (/[A-Z0-9]/.test(full)) score += 2;
+	if (full.includes("-")) score += 2;
+	if (full.includes("_")) score += 1;
+	if (full.includes(".")) score += 1;
+	if (isLikelyPathLikeOwnerRepo(owner, repo)) score -= 8;
+	return score;
+}
+
+function extractGithubRepoFromText(text: string): string | null {
+	const input = text.trim();
+	if (!input) return null;
+
+	const urlMatch = input.match(
+		/https?:\/\/github\.com\/([^/\s]+)\/([^/\s?#]+)(?:\.git)?/i,
+	);
+	if (urlMatch) {
+		const owner = String(urlMatch[1] ?? "").trim();
+		const repo = String(urlMatch[2] ?? "").replace(/\.git$/i, "").trim();
+		if (owner && repo) return `${owner}/${repo}`;
+	}
+
+	const tokenRe =
+		/\b([A-Za-z0-9][A-Za-z0-9_.-]{0,80})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,100})(?:\.git)?\b/g;
+	const candidates: Array<{ owner: string; repo: string; score: number }> = [];
+	for (const match of input.matchAll(tokenRe)) {
+		const owner = String(match[1] ?? "").trim();
+		const repo = String(match[2] ?? "").replace(/\.git$/i, "").trim();
+		if (!owner || !repo) continue;
+		candidates.push({ owner, repo, score: scoreGithubRepoCandidate(owner, repo) });
+	}
+	if (candidates.length === 0) return null;
+
+	candidates.sort((a, b) => b.score - a.score);
+	const best = candidates[0];
+	if (!best) return null;
+
+	const hasRepoHint = /(github|repo|repository|仓库|git)/i.test(input);
+	const threshold = hasRepoHint ? 2 : 4;
+	if (best.score < threshold) return null;
+	return `${best.owner}/${best.repo}`;
+}
+
+function scoreFilePathCandidate(path: string): number {
+	const p = path.trim();
+	const lower = p.toLowerCase();
+	let score = 0;
+	if (lower.includes("docker-compose")) score += 10;
+	if (lower.endsWith(".yml") || lower.endsWith(".yaml")) score += 4;
+	if (lower.endsWith(".env")) score += 4;
+	if (lower.includes("/")) score += 2;
+	if (p.length > 0 && p.length <= 120) score += 1;
+	return score;
+}
+
+function extractFilePathFromText(text: string): string | null {
+	const input = text.trim();
+	if (!input) return null;
+
+	const quoted = input.match(
+		/["'`“”‘’]([^"'`“”‘’\s]+\.(?:ya?ml|json|env|conf|toml|ini|ts|tsx|js|jsx|sh|md|txt|sql|csv))["'`“”‘’]/i,
+	);
+	if (quoted) {
+		const v = String(quoted[1] ?? "").trim();
+		if (v) return v.replaceAll("\\", "/");
+	}
+
+	const tokenRe =
+		/(?:^|[\s(])([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\.(?:ya?ml|json|env|conf|toml|ini|ts|tsx|js|jsx|sh|md|txt|sql|csv))(?:$|[\s),.!?])/gi;
+	const candidates: Array<{ value: string; score: number }> = [];
+	for (const match of input.matchAll(tokenRe)) {
+		const raw = String(match[1] ?? "").trim();
+		if (!raw) continue;
+		const normalized = raw.replaceAll("\\", "/");
+		candidates.push({
+			value: normalized,
+			score: scoreFilePathCandidate(normalized),
+		});
+	}
+	if (candidates.length === 0) return null;
+	candidates.sort(
+		(a, b) => b.score - a.score || a.value.length - b.value.length,
+	);
+	return candidates[0]?.value ?? null;
 }
 
 function buildReplyLanguageInstruction(uiLocale: string | null): string {
@@ -2586,12 +3083,21 @@ export const chat = async ({
 	const existingUiLocale = getUiLocaleFromMetadata(conversation.metadata);
 	const effectiveUiLocale = requestedUiLocale ?? existingUiLocale;
 	let conversationMetadata = conversation.metadata;
+	let metadataChanged = false;
 	if (requestedUiLocale && requestedUiLocale !== existingUiLocale) {
 		conversationMetadata = setUiLocaleInMetadata(
-			conversation.metadata,
+			conversationMetadata,
 			requestedUiLocale,
 		);
-		await updateConversation(conversationId, { metadata: conversationMetadata });
+		metadataChanged = true;
+	}
+	const inferredRepo = extractGithubRepoFromText(message);
+	if (inferredRepo && inferredRepo !== getGithubRepoFromMetadata(conversationMetadata)) {
+		conversationMetadata = setGithubRepoInMetadata(conversationMetadata, inferredRepo);
+		metadataChanged = true;
+	}
+	if (metadataChanged) {
+		await updateConversation(conversationId, { metadata: conversationMetadata ?? {} });
 	}
 	const conversationForPrompt =
 		conversationMetadata === conversation.metadata
@@ -2615,6 +3121,7 @@ export const chat = async ({
 			message: "Failed to save user message",
 		});
 	}
+	const userMessageId = userMessage.messageId;
 
 	// Get conversation history
 	const history = await getMessages({ conversationId, limit: 20 });
@@ -2679,10 +3186,12 @@ export const chat = async ({
 	const toolApprovalsDisabled = getToolApprovalsDisabledFromMetadata(
 		conversationMetadata,
 	);
+	const toolBudgetMode = getToolBudgetModeFromMetadata(conversationMetadata);
+	const toolStepBudget = getToolStepBudget(toolBudgetMode);
 	const tools = buildChatTools({
 		conversationId,
 		toolContext,
-		messageId: userMessage.messageId,
+		messageId: userMessageId,
 		toolApprovalsDisabled,
 	});
 
@@ -2774,7 +3283,7 @@ export const chat = async ({
 			system: systemMode === "system" ? effectiveSystemPrompt : undefined,
 			messages: nextMessages,
 			tools: withTools ? tools : undefined,
-			stopWhen: stepCountIs(10),
+			stopWhen: stepCountIs(toolStepBudget),
 		});
 	};
 
@@ -2841,9 +3350,9 @@ export const chat = async ({
 		return !!t && t.riskLevel === "low" && !t.requiresApproval;
 	};
 
-	const agenticEnabled = toolApprovalsDisabled && isLikelyActionRequest(message);
+	const agenticEnabled = toolApprovalsDisabled;
 	const maxTurns = agenticEnabled ? 4 : 1;
-	const maxPlatformToolCalls = agenticEnabled ? 60 : 0;
+	const maxPlatformToolCalls = agenticEnabled ? toolStepBudget : 0;
 
 	let finalText = "";
 	const allToolCalls: NonNullable<GeneratedTurn["toolCalls"]> = [];
@@ -2885,7 +3394,7 @@ export const chat = async ({
 				const failureDetails = needsParamRepair
 					? safeJsonForPrompt(retryable.failures, 2500)
 					: "";
-				const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_suggest\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_call as needed (or call tool_call with toolName=\"<router>.<procedure>\"). Use trpc_procedure_describe only if you still need schema details.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
+				const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST use tools (not a text-only plan).\n- If you already know the exact tool/procedure + params, call tool_call directly.\n- If you need to discover tRPC procedures, use trpc_procedure_suggest (query: \"${hintForPrompt}\") or trpc_procedure_search, then call trpc_procedure_call.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nIf blocked, ask exactly ONE question.`;
 
 				try {
 					result = await runGenerateWithFallback(`${systemPrompt}${extra}`);
@@ -3122,6 +3631,7 @@ export const chatStream = async (
 		organizationId,
 		userId,
 		uiLocale,
+		persistUserMessage,
 	}: ChatParams,
 	options: ChatStreamOptions = {},
 ) => {
@@ -3152,12 +3662,21 @@ export const chatStream = async (
 	const existingUiLocale = getUiLocaleFromMetadata(conversation.metadata);
 	const effectiveUiLocale = requestedUiLocale ?? existingUiLocale;
 	let conversationMetadata = conversation.metadata;
+	let metadataChanged = false;
 	if (requestedUiLocale && requestedUiLocale !== existingUiLocale) {
 		conversationMetadata = setUiLocaleInMetadata(
-			conversation.metadata,
+			conversationMetadata,
 			requestedUiLocale,
 		);
-		await updateConversation(conversationId, { metadata: conversationMetadata });
+		metadataChanged = true;
+	}
+	const inferredRepo = extractGithubRepoFromText(message);
+	if (inferredRepo && inferredRepo !== getGithubRepoFromMetadata(conversationMetadata)) {
+		conversationMetadata = setGithubRepoInMetadata(conversationMetadata, inferredRepo);
+		metadataChanged = true;
+	}
+	if (metadataChanged) {
+		await updateConversation(conversationId, { metadata: conversationMetadata ?? {} });
 	}
 	const conversationForPrompt =
 		conversationMetadata === conversation.metadata
@@ -3166,25 +3685,38 @@ export const chatStream = async (
 
 	initializeTools();
 
+	const shouldPersistUserMessage = persistUserMessage !== false;
 	const normalizedAttachments = normalizeMessageAttachments(attachments);
-	const userMessage = await saveMessage({
-		conversationId,
-		role: "user",
-		content: message,
-		attachments:
-			normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
-	});
-	if (!userMessage) {
-		throw new TRPCError({
-			code: "INTERNAL_SERVER_ERROR",
-			message: "Failed to save user message",
+	let userMessageId: string | undefined;
+	if (shouldPersistUserMessage) {
+		const userMessage = await saveMessage({
+			conversationId,
+			role: "user",
+			content: message,
+			attachments:
+				normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
 		});
+		if (!userMessage) {
+			throw new TRPCError({
+				code: "INTERNAL_SERVER_ERROR",
+				message: "Failed to save user message",
+			});
+		}
+		userMessageId = userMessage.messageId;
 	}
 
 	const history = await getMessages({ conversationId, limit: 20 });
 	let messages: CoreMessage[] = history
 		.map(messageToCoreMessage)
 		.filter(Boolean) as CoreMessage[];
+
+	if (!shouldPersistUserMessage) {
+		const trimmed = message.trim();
+		messages = messages.concat({
+			role: "user",
+			content: trimmed.length > 0 ? trimmed : "Continue.",
+		});
+	}
 
 		const provider = selectAIProvider(aiSettings);
 		const model = provider(aiSettings.model);
@@ -3240,10 +3772,12 @@ export const chatStream = async (
 	const toolApprovalsDisabled = getToolApprovalsDisabledFromMetadata(
 		conversationMetadata,
 	);
+	const toolBudgetMode = getToolBudgetModeFromMetadata(conversationMetadata);
+	const toolStepBudget = getToolStepBudget(toolBudgetMode);
 	const tools = buildChatTools({
 		conversationId,
 		toolContext,
-		messageId: userMessage.messageId,
+		messageId: userMessageId,
 		toolApprovalsDisabled,
 	});
 
@@ -3326,7 +3860,7 @@ export const chatStream = async (
 		systemMode: "system" | "inline" = "system",
 		overrideSystemPrompt?: string,
 	) => {
-		const stopWhen = stepCountIs(10);
+		const stopWhen = stepCountIs(toolStepBudget);
 		const effectiveSystemPrompt = overrideSystemPrompt ?? systemPrompt;
 		const nextMessages =
 			systemMode === "inline"
@@ -3359,6 +3893,7 @@ export const chatStream = async (
 		}> = [];
 		const toolNameByToolCallId = new Map<string, string>();
 		let usage: { promptTokens?: number; completionTokens?: number } = {};
+		let finishReason: string | null = null;
 		const toolResults: Array<{
 			toolCallId: string;
 			toolName: string;
@@ -3477,13 +4012,15 @@ export const chatStream = async (
 						// Ignore callback errors
 					}
 				} else if (chunk.type === "finish") {
-					const usageObj = (chunk as { usage?: unknown }).usage as
+					const usageObj = (chunk as { totalUsage?: unknown }).totalUsage as
 						| { inputTokens?: number; outputTokens?: number }
 						| undefined;
 					usage = {
 						promptTokens: usageObj?.inputTokens,
 						completionTokens: usageObj?.outputTokens,
 					};
+					const reason = (chunk as { finishReason?: unknown }).finishReason;
+					finishReason = typeof reason === "string" ? reason : finishReason;
 				} else if (chunk.type === "error") {
 					streamError = normalizeUnknownToString(
 						(chunk as unknown as { error?: unknown }).error,
@@ -3516,7 +4053,7 @@ export const chatStream = async (
 			}
 		}
 
-		return { fullText, toolCalls, toolResults, usage, streamError };
+		return { fullText, toolCalls, toolResults, usage, streamError, finishReason };
 	};
 
 	type StreamedTurn = Awaited<ReturnType<typeof runStream>>;
@@ -3582,9 +4119,9 @@ export const chatStream = async (
 		return !!t && t.riskLevel === "low" && !t.requiresApproval;
 	};
 
-	const agenticEnabled = toolApprovalsDisabled && isLikelyActionRequest(message);
+	const agenticEnabled = toolApprovalsDisabled;
 	const maxTurns = agenticEnabled ? 4 : 1;
-	const maxPlatformToolCalls = agenticEnabled ? 60 : 0;
+	const maxPlatformToolCalls = agenticEnabled ? toolStepBudget : 0;
 
 	let fullText = "";
 	const allToolCalls: StreamedTurn["toolCalls"] = [];
@@ -3594,6 +4131,8 @@ export const chatStream = async (
 		completionTokens: 0,
 	};
 	let streamError: string | null = null;
+	let lastFinishReason: string | null = null;
+	let needsContinue = false;
 	let platformToolCalls = 0;
 
 	const likelyActionRequest = isLikelyActionRequest(message);
@@ -3631,7 +4170,7 @@ export const chatStream = async (
 				const failureDetails = needsParamRepair
 					? safeJsonForPrompt(retryable.failures, 2500)
 					: "";
-				const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_suggest\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_call as needed (or call tool_call with toolName=\"<router>.<procedure>\"). Use trpc_procedure_describe only if you still need schema details.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
+				const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST use tools (not a text-only plan).\n- If you already know the exact tool/procedure + params, call tool_call directly.\n- If you need to discover tRPC procedures, use trpc_procedure_suggest (query: \"${hintForPrompt}\") or trpc_procedure_search, then call trpc_procedure_call.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nIf blocked, ask exactly ONE question.`;
 				try {
 					await refreshSystemPrompt();
 					streamed = await runStreamWithFallback(`${systemPrompt}${extra}`);
@@ -3650,6 +4189,9 @@ export const chatStream = async (
 			allToolResults.push(...streamedChunk.toolResults);
 			turnToolCalls.push(...streamedChunk.toolCalls);
 			turnToolResults.push(...streamedChunk.toolResults);
+			if (typeof streamedChunk.finishReason === "string") {
+				lastFinishReason = streamedChunk.finishReason;
+			}
 			aggregatedUsage.promptTokens =
 				(aggregatedUsage.promptTokens ?? 0) +
 				(streamedChunk.usage.promptTokens ?? 0);
@@ -3674,8 +4216,10 @@ export const chatStream = async (
 
 		if (retryable.hasPendingApproval) break;
 		if (platformThisTurn <= 0) break;
-		if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls)
+		if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls) {
+			needsContinue = true;
 			break;
+		}
 
 		const assistantSnippet = safeTruncateString(streamed.fullText.trim(), 4000);
 		if (assistantSnippet.length > 0) {
@@ -3810,12 +4354,21 @@ export const chatStream = async (
 		})();
 	}
 
-		return {
-			message: assistantMessage,
-			usage,
-			toolResults: [],
-		};
+	if (
+		!options.abortSignal?.aborted &&
+		(lastFinishReason === "tool-calls" || lastFinishReason === "length")
+	) {
+		needsContinue = true;
+	}
+
+	return {
+		message: assistantMessage,
+		usage,
+		toolResults: [],
+		needsContinue,
+		finishReason: lastFinishReason ?? undefined,
 	};
+};
 
 	type PlaybookStep = {
 		toolName: string;
@@ -4145,6 +4698,10 @@ export const chatStream = async (
 	if (conversation.serverId) {
 		context += `\nUser is on server: ${conversation.serverId}`;
 	}
+	const githubRepo = getGithubRepoFromMetadata(conversation.metadata);
+	if (githubRepo) {
+		context += `\nDefault GitHub repo: ${githubRepo}`;
+	}
 	context += `\nPlatform mode: ${IS_CLOUD ? "cloud" : "self-hosted"}`;
 	context += `\nTool approvals: ${getToolApprovalsDisabledFromMetadata(conversation.metadata) ? "disabled" : "manual"}`;
 
@@ -4391,6 +4948,9 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 	const toolApprovalsDisabled = getToolApprovalsDisabledFromMetadata(
 		conversation.metadata,
 	);
+	const toolBudgetMode = getToolBudgetModeFromMetadata(conversation.metadata);
+	const toolStepBudget = getToolStepBudget(toolBudgetMode);
+	const agenticEnabled = toolApprovalsDisabled;
 	const tools = buildChatTools({
 		conversationId: run.conversationId,
 		runId,
@@ -4587,7 +5147,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			system: systemMode === "system" ? effectiveSystemPrompt : undefined,
 			messages: nextMessages,
 			tools: withTools ? tools : undefined,
-			stopWhen: stepCountIs(10),
+			stopWhen: stepCountIs(toolStepBudget),
 		});
 	};
 
@@ -4651,8 +5211,8 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		return !!t && t.riskLevel === "low" && !t.requiresApproval;
 	};
 
-	const maxTurns = 12;
-	const maxPlatformToolCalls = 120;
+	const maxTurns = agenticEnabled ? 12 : 1;
+	const maxPlatformToolCalls = agenticEnabled ? toolStepBudget : 0;
 	let platformToolCalls = 0;
 
 	let finalText = "";
@@ -4722,7 +5282,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 				const failureDetails = needsParamRepair
 					? safeJsonForPrompt(retryable.failures, 2500)
 					: "";
-				const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST begin by invoking tools.\n- First, call tool_call with toolName=\"trpc_procedure_suggest\" and params={\"query\":\"${hintForPrompt}\"}.\n- Then use trpc_procedure_call as needed (or call tool_call with toolName=\"<router>.<procedure>\"). Use trpc_procedure_describe only if you still need schema details.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nDo NOT respond with a text-only plan. If blocked, ask exactly ONE question.`;
+				const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST use tools (not a text-only plan).\n- If you already know the exact tool/procedure + params, call tool_call directly.\n- If you need to discover tRPC procedures, use trpc_procedure_suggest (query: \"${hintForPrompt}\") or trpc_procedure_search, then call trpc_procedure_call.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nIf blocked, ask exactly ONE question.`;
 				try {
 					await refreshSystemPrompt();
 					result = await runGenerateWithFallback(`${systemPrompt}${extra}`);
@@ -4819,7 +5379,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			(tc) => tc.toolName === "tool_call",
 		).length;
 		platformToolCalls += platformThisTurn;
-		if (platformToolCalls >= maxPlatformToolCalls) {
+		if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls) {
 			const msg = "Agent tool call budget exceeded";
 			await updateRun(runId, {
 				status: "failed",
@@ -5489,6 +6049,8 @@ async function autoContinueAfterApprovedToolExecution(params: {
 			conversation.metadata,
 		),
 	});
+	const toolBudgetMode = getToolBudgetModeFromMetadata(conversation.metadata);
+	const toolStepBudget = getToolStepBudget(toolBudgetMode);
 
 	const initialSystemMode = getInitialSystemMode(aiSettings);
 
@@ -5511,7 +6073,7 @@ async function autoContinueAfterApprovedToolExecution(params: {
 			system: systemMode === "system" ? systemPrompt : undefined,
 			messages: nextMessages,
 			tools: withTools ? tools : undefined,
-			stopWhen: stepCountIs(10),
+			stopWhen: stepCountIs(toolStepBudget),
 		});
 	};
 
