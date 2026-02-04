@@ -1,7 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Circle, Loader2, Plug, Server, XCircle } from "lucide-react";
+import {
+	CheckCircle2,
+	Circle,
+	Loader2,
+	Plug,
+	Plus,
+	Server,
+	XCircle,
+} from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -14,8 +22,12 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import { api } from "@/utils/api";
 
 type McpTestResult = {
@@ -25,6 +37,25 @@ type McpTestResult = {
 	error?: string;
 };
 
+function safeJsonParseObject(input: string): Record<string, string> | null {
+	const trimmed = input.trim();
+	if (!trimmed) return {};
+	let value: unknown;
+	try {
+		value = JSON.parse(trimmed);
+	} catch {
+		return null;
+	}
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+		const key = String(k ?? "").trim();
+		if (!key) continue;
+		out[key] = typeof v === "string" ? v : v == null ? "" : String(v);
+	}
+	return out;
+}
+
 export function McpControlDialog(props: {
 	isMcpEnabled: boolean;
 	setMcpEnabled: (enabled: boolean) => Promise<void>;
@@ -32,6 +63,7 @@ export function McpControlDialog(props: {
 	const { t } = useTranslation("common");
 	const utils = api.useUtils();
 	const [open, setOpen] = useState(false);
+	const [view, setView] = useState<"list" | "add">("list");
 	const [isTogglingConversation, setIsTogglingConversation] = useState(false);
 
 	const { data: servers, isLoading: isLoadingServers } =
@@ -39,8 +71,15 @@ export function McpControlDialog(props: {
 			{ limit: 100, offset: 0 },
 			{ enabled: open, refetchOnWindowFocus: false },
 		);
+	const { mutateAsync: createServer, isLoading: isCreatingServer } =
+		api.ai.mcpServers.create.useMutation();
 	const { mutateAsync: updateServer, isLoading: isUpdatingServer } =
 		api.ai.mcpServers.update.useMutation();
+
+	const [formName, setFormName] = useState("");
+	const [formUrl, setFormUrl] = useState("");
+	const [formHeaders, setFormHeaders] = useState("");
+	const [formEnabled, setFormEnabled] = useState(true);
 
 	const [testResults, setTestResults] = useState<Record<string, McpTestResult>>(
 		{},
@@ -89,6 +128,11 @@ export function McpControlDialog(props: {
 
 	useEffect(() => {
 		if (!open) {
+			setView("list");
+			setFormName("");
+			setFormUrl("");
+			setFormHeaders("");
+			setFormEnabled(true);
 			testedIdsRef.current = new Set();
 			inFlightTestIdsRef.current = new Set();
 			return;
@@ -165,15 +209,50 @@ export function McpControlDialog(props: {
 		}
 	};
 
+	const submitAdd = async () => {
+		const name = formName.trim();
+		const serverUrl = formUrl.trim();
+		if (!name || !serverUrl) return;
+
+		const headers = safeJsonParseObject(formHeaders);
+		if (headers === null) {
+			toast.error(t("ai.chat.mcp.form.headersInvalid"));
+			return;
+		}
+
+		try {
+			const created = await createServer({
+				name,
+				serverUrl,
+				headers,
+				isEnabled: formEnabled,
+			});
+			await utils.ai.mcpServers.list.invalidate();
+			setFormName("");
+			setFormUrl("");
+			setFormHeaders("");
+			setFormEnabled(true);
+			setView("list");
+			toast.success(t("ai.chat.mcp.form.created"));
+			if (created?.mcpServerId) {
+				void runTest(created.mcpServerId);
+			}
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			toast.error(t("common.unknownError"), { description: errorMessage });
+		}
+	};
+
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
 				<Button
 					variant={props.isMcpEnabled ? "secondary" : "ghost"}
 					size="icon"
-					className={
-						props.isMcpEnabled ? "bg-primary/10 text-primary hover:bg-primary/20" : ""
-					}
+					className={cn(
+						"h-8 w-8 p-0",
+						props.isMcpEnabled && "bg-primary/10 text-primary hover:bg-primary/20",
+					)}
 					title={t("ai.chat.mcp.manage")}
 					aria-label={t("ai.chat.mcp.manage")}
 				>
@@ -212,6 +291,39 @@ export function McpControlDialog(props: {
 							}
 						/>
 					</div>
+
+					<div className="mt-4 flex items-center justify-between gap-2">
+						<div className="text-xs text-muted-foreground">
+							{t("ai.chat.mcp.panel.count", { count: serverRows.length })}
+						</div>
+						{view === "list" ? (
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								className="h-7 px-2 text-xs gap-1"
+								onClick={() => setView("add")}
+							>
+								<Plus className="h-3 w-3" />
+								{t("ai.chat.mcp.panel.add")}
+							</Button>
+						) : (
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+								onClick={() => setView("list")}
+							>
+								{t("button.back")}
+							</Button>
+						)}
+					</div>
+					{view === "list" && (
+						<div className="mt-1 text-xs text-muted-foreground">
+							{t("ai.chat.mcp.panel.hint")}
+						</div>
+					)}
 				</DialogHeader>
 
 				<ScrollArea
@@ -219,7 +331,84 @@ export function McpControlDialog(props: {
 					className="flex-1 min-h-0"
 					viewPortClassName="px-6 pb-6"
 				>
-					{isLoadingServers ? (
+					{view === "add" ? (
+						<div className="space-y-4">
+							<div className="text-sm font-medium">
+								{t("ai.chat.mcp.form.addTitle")}
+							</div>
+
+							<div className="space-y-2">
+								<Label htmlFor="mcp-name">{t("ai.chat.mcp.form.nameLabel")}</Label>
+								<Input
+									id="mcp-name"
+									value={formName}
+									placeholder={t("ai.chat.mcp.form.namePlaceholder")}
+									onChange={(e) => setFormName(e.target.value)}
+								/>
+							</div>
+
+							<div className="space-y-2">
+								<Label htmlFor="mcp-url">{t("ai.chat.mcp.form.urlLabel")}</Label>
+								<Input
+									id="mcp-url"
+									value={formUrl}
+									placeholder={t("ai.chat.mcp.form.urlPlaceholder")}
+									onChange={(e) => setFormUrl(e.target.value)}
+								/>
+							</div>
+
+							<div className="space-y-2">
+								<Label htmlFor="mcp-headers">
+									{t("ai.chat.mcp.form.headersLabel")}
+								</Label>
+								<Textarea
+									id="mcp-headers"
+									value={formHeaders}
+									placeholder={t("ai.chat.mcp.form.headersPlaceholder")}
+									onChange={(e) => setFormHeaders(e.target.value)}
+									className="min-h-[96px] font-mono text-xs"
+								/>
+							</div>
+
+							<div className="flex items-center justify-between rounded-lg border bg-muted/10 p-3">
+								<div className="text-sm">
+									{t("ai.chat.mcp.form.enabledLabel")}
+								</div>
+								<Switch
+									checked={formEnabled}
+									onCheckedChange={(v) => setFormEnabled(v)}
+									disabled={isCreatingServer}
+								/>
+							</div>
+
+							<div className="flex justify-end gap-2 pt-2">
+								<Button
+									type="button"
+									variant="ghost"
+									className="h-8"
+									onClick={() => setView("list")}
+									disabled={isCreatingServer}
+								>
+									{t("button.cancel")}
+								</Button>
+								<Button
+									type="button"
+									className="h-8"
+									onClick={() => void submitAdd()}
+									disabled={
+										isCreatingServer ||
+										formName.trim().length === 0 ||
+										formUrl.trim().length === 0
+									}
+								>
+									{isCreatingServer && (
+										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+									)}
+									{t("button.create")}
+								</Button>
+							</div>
+						</div>
+					) : isLoadingServers ? (
 						<div className="flex items-center justify-center py-10 text-muted-foreground">
 							<Loader2 className="h-5 w-5 animate-spin" />
 						</div>

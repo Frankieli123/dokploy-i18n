@@ -492,7 +492,7 @@ export const aiRouter = createTRPCRouter({
 						!Array.isArray(conversation.metadata)
 							? { ...(conversation.metadata as Record<string, unknown>) }
 							: {};
-					if (input.mode === "max") (base as any).toolBudgetMode = "max";
+					if (input.mode === "standard") (base as any).toolBudgetMode = "standard";
 					else delete (base as any).toolBudgetMode;
 					return base;
 				})();

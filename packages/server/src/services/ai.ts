@@ -2644,9 +2644,9 @@ function setToolApprovalsDisabledInMetadata(
 }
 
 function getToolBudgetModeFromMetadata(metadata: unknown): ToolBudgetMode {
-	if (!isRecord(metadata)) return "standard";
+	if (!isRecord(metadata)) return "max";
 	const raw = (metadata as { toolBudgetMode?: unknown }).toolBudgetMode;
-	return raw === "max" ? "max" : "standard";
+	return raw === "standard" ? "standard" : "max";
 }
 
 function getMcpEnabledFromMetadata(metadata: unknown): boolean {
@@ -2658,7 +2658,7 @@ function setToolBudgetModeInMetadata(
 	mode: ToolBudgetMode,
 ): Record<string, unknown> {
 	const next = isRecord(metadata) ? { ...metadata } : {};
-	if (mode === "max") next.toolBudgetMode = "max";
+	if (mode === "standard") next.toolBudgetMode = "standard";
 	else delete (next as { toolBudgetMode?: unknown }).toolBudgetMode;
 	return next;
 }

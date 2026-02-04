@@ -1,9 +1,9 @@
 import { db } from "@dokploy/server/db";
 import { aiMcpServers } from "@dokploy/server/db/schema";
-import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { TRPCError } from "@trpc/server";
 import { desc, eq } from "drizzle-orm";
+
+type McpClient = import("@modelcontextprotocol/sdk/client/index.js").Client;
 
 export type AiMcpServerTestResult = {
 	status: "ok" | "error";
@@ -62,13 +62,28 @@ async function withMcpClient<T>(params: {
 	headers: Record<string, string>;
 	fn: (client: McpClient) => Promise<T>;
 }): Promise<T> {
+	let Client: typeof import("@modelcontextprotocol/sdk/client/index.js").Client;
+	let StreamableHTTPClientTransport: typeof import("@modelcontextprotocol/sdk/client/streamableHttp.js").StreamableHTTPClientTransport;
+	try {
+		({ Client } = await import("@modelcontextprotocol/sdk/client/index.js"));
+		({ StreamableHTTPClientTransport } = await import(
+			"@modelcontextprotocol/sdk/client/streamableHttp.js"
+		));
+	} catch (error) {
+		throw new TRPCError({
+			code: "INTERNAL_SERVER_ERROR",
+			message: "MCP SDK is not available on this server",
+			cause: error,
+		});
+	}
+
 	const url = new URL(params.serverUrl);
 	const transport = new StreamableHTTPClientTransport(url, {
 		requestInit: {
 			headers: params.headers,
 		},
 	});
-	const client = new McpClient({ name: "dokploy", version: "1.0.0" });
+	const client = new Client({ name: "dokploy", version: "1.0.0" });
 	await client.connect(transport);
 	try {
 		return await params.fn(client);

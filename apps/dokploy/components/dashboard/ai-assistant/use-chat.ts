@@ -181,7 +181,7 @@ export function useChat(options: UseChatOptions = {}) {
 		useState(false);
 	const hasUserSetToolApprovalsDisabledRef = useRef(false);
 	const [toolBudgetMode, setToolBudgetModeState] = useState<"standard" | "max">(
-		"standard",
+		"max",
 	);
 	const [isMcpEnabled, setIsMcpEnabled] = useState(false);
 	const hasUserSetMcpEnabledRef = useRef(false);
@@ -336,7 +336,9 @@ export function useChat(options: UseChatOptions = {}) {
 		if (hasUserSetToolBudgetModeRef.current) return;
 		const metadata = conversationDetails?.metadata;
 		const mode =
-			isRecord(metadata) && metadata.toolBudgetMode === "max" ? "max" : "standard";
+			isRecord(metadata) && metadata.toolBudgetMode === "standard"
+				? "standard"
+				: "max";
 		setToolBudgetModeState(mode);
 	}, [conversationDetails?.metadata]);
 
@@ -369,7 +371,9 @@ export function useChat(options: UseChatOptions = {}) {
 		if (!hasUserSetToolBudgetModeRef.current) return;
 		const metadata = conversationDetails?.metadata;
 		const serverMode =
-			isRecord(metadata) && metadata.toolBudgetMode === "max" ? "max" : "standard";
+			isRecord(metadata) && metadata.toolBudgetMode === "standard"
+				? "standard"
+				: "max";
 		if (serverMode === toolBudgetMode) return;
 		void setToolBudgetModeMutation
 			.mutateAsync({ conversationId, mode: toolBudgetMode })
@@ -1344,6 +1348,7 @@ export function useChat(options: UseChatOptions = {}) {
 								arguments?: unknown;
 							};
 							activeToolCallIds.add(payload.toolCallId);
+							const marker = `\n\n<<tool:${payload.toolCallId}>>\n\n`;
 							const argsString =
 								typeof payload.arguments === "string"
 									? payload.arguments
@@ -1354,6 +1359,7 @@ export function useChat(options: UseChatOptions = {}) {
 									m.messageId === assistantTempId
 										? {
 												...m,
+												content: (m.content ?? "") + marker,
 												toolCalls: [
 													...(m.toolCalls || []),
 													{
@@ -2046,7 +2052,7 @@ export function useChat(options: UseChatOptions = {}) {
 		hasUserSetToolApprovalsDisabledRef.current = false;
 		setAreToolApprovalsDisabled(false);
 		hasUserSetToolBudgetModeRef.current = false;
-		setToolBudgetModeState("standard");
+		setToolBudgetModeState("max");
 		setIsMcpEnabled(false);
 		hasUserSetMcpEnabledRef.current = false;
 		setCanContinueChat(false);
@@ -2082,7 +2088,7 @@ export function useChat(options: UseChatOptions = {}) {
 			hasUserSetToolApprovalsDisabledRef.current = false;
 			setAreToolApprovalsDisabled(false);
 			hasUserSetToolBudgetModeRef.current = false;
-			setToolBudgetModeState("standard");
+			setToolBudgetModeState("max");
 			setIsMcpEnabled(false);
 			hasUserSetMcpEnabledRef.current = false;
 			setCanContinueChat(false);

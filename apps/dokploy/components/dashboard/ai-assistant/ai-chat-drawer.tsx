@@ -186,8 +186,6 @@ export function AIChatDrawer({
 		conversationId,
 		areToolApprovalsDisabled,
 		setToolApprovalsDisabled,
-		toolBudgetMode,
-		setToolBudgetMode,
 		canContinueChat,
 		continueChat,
 		send,
@@ -791,8 +789,8 @@ export function AIChatDrawer({
 						{canContinueChat && !isAgentMode && (
 							<Button
 								type="button"
-								variant="secondary"
-								className="h-8 w-auto shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0"
+								variant="ghost"
+								className="h-8 w-auto shrink-0 px-2 text-xs text-muted-foreground hover:text-foreground hover:bg-transparent"
 								disabled={!hasAiConfigs || isLoading || !!pendingApproval || !selectedAiId}
 								onClick={() => void continueChat(selectedAiId)}
 							>
@@ -805,7 +803,7 @@ export function AIChatDrawer({
 							onValueChange={(v) => setIsAgentMode(v === "agent")}
 							disabled={!hasAiConfigs || isLoading || !!pendingApproval}
 						>
-							<SelectTrigger className="h-8 w-auto shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
+							<SelectTrigger className="h-8 w-auto shrink-0 gap-2 border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:bg-transparent hover:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0">
 								<SelectValue>
 									<span className="flex items-center gap-1.5">
 										{isAgentMode ? (
@@ -838,39 +836,11 @@ export function AIChatDrawer({
 						</Select>
 
 						<Select
-							value={toolBudgetMode}
-							onValueChange={(v) =>
-								void setToolBudgetMode(v === "max" ? "max" : "standard")
-							}
-							disabled={!hasAiConfigs || isLoading || !!pendingApproval}
-						>
-							<SelectTrigger className="h-8 w-auto shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
-								<SelectValue>
-									<span className="flex items-center gap-1.5">
-										<span>
-											{toolBudgetMode === "max"
-												? t("ai.chat.budget.max")
-												: t("ai.chat.budget.standard")}
-										</span>
-									</span>
-								</SelectValue>
-							</SelectTrigger>
-							<SelectContent side="top" align="start">
-								<SelectItem value="standard">
-									<span>{t("ai.chat.budget.standard")}</span>
-								</SelectItem>
-								<SelectItem value="max">
-									<span>{t("ai.chat.budget.max")}</span>
-								</SelectItem>
-							</SelectContent>
-						</Select>
-
-						<Select
 							value={areToolApprovalsDisabled ? "auto" : "manual"}
 							onValueChange={(v) => void setToolApprovalsDisabled(v === "auto")}
 							disabled={!hasAiConfigs || isLoading || !!pendingApproval}
 						>
-							<SelectTrigger className="h-8 w-auto shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0">
+							<SelectTrigger className="h-8 w-auto shrink-0 gap-2 border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:bg-transparent hover:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0">
 								<SelectValue>
 									<span className="flex items-center gap-1.5">
 										{areToolApprovalsDisabled ? (
@@ -916,7 +886,7 @@ export function AIChatDrawer({
 							}}
 						>
 							<SelectTrigger
-								className="h-8 w-auto max-w-[140px] shrink-0 gap-2 rounded-full border-0 bg-secondary/50 px-3 text-xs shadow-none hover:bg-secondary/80 focus-visible:ring-0 focus-visible:ring-offset-0"
+								className="h-8 w-auto max-w-[140px] shrink-0 gap-2 border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:bg-transparent hover:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
 								aria-label={t("server.select")}
 							>
 								<SelectValue>
