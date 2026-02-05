@@ -1666,8 +1666,8 @@ function buildChatTools(params: {
 		const metadata = await getConversationMetadata();
 		return getGithubRepoFromMetadata(metadata);
 	};
-	let cachedUserMessageText: string | null | undefined;
-	const getUserMessageTextForToolCall = async (): Promise<string> => {
+		let cachedUserMessageText: string | null | undefined;
+		const getUserMessageTextForToolCall = async (): Promise<string> => {
 		if (cachedUserMessageText !== undefined) return cachedUserMessageText ?? "";
 
 		const messageId =
@@ -1698,19 +1698,11 @@ function buildChatTools(params: {
 		} catch {
 			cachedUserMessageText = "";
 		}
-		return cachedUserMessageText ?? "";
-	};
+			return cachedUserMessageText ?? "";
+		};
 
-	let cachedMcpEnabled: boolean | undefined;
-	const isMcpEnabledForConversation = async (): Promise<boolean> => {
-		if (typeof cachedMcpEnabled === "boolean") return cachedMcpEnabled;
-		const metadata = await getConversationMetadata();
-		cachedMcpEnabled = getMcpEnabledFromMetadata(metadata);
-		return cachedMcpEnabled;
-	};
-
-	return {
-		tool_suggest: tool({
+		return {
+			tool_suggest: tool({
 			description:
 				"Suggest likely relevant tools for a request. Returns a short list; use tool_search if the list is empty or insufficient.",
 			inputSchema: z.object({
@@ -1725,28 +1717,24 @@ function buildChatTools(params: {
 			}),
 			execute: async (input: { query: string; limit?: number }) => {
 				const limit = input.limit ?? 15;
-				const selectedRaw = selectRelevantTools(input.query, {
-					projectId: params.toolContext.projectId,
-					serverId: params.toolContext.serverId,
-					minTools: 0,
-					maxTools: limit,
-				});
-				const mcpEnabled = await isMcpEnabledForConversation();
-				const selected = mcpEnabled
-					? selectedRaw
-					: selectedRaw.filter((t) => !t.name.startsWith("mcp_"));
-				return {
-					success: true,
-					message:
-						selected.length > 0
-							? `Suggested ${selected.length} tool(s) for "${input.query}"`
-							: `No direct suggestions for "${input.query}". Use tool_search to explore the full catalog.`,
-					data: selected.map((t) => ({
-						name: t.name,
-						description: t.description,
-						category: t.category,
-						riskLevel: t.riskLevel,
-						requiresApproval: t.requiresApproval,
+					const selectedRaw = selectRelevantTools(input.query, {
+						projectId: params.toolContext.projectId,
+						serverId: params.toolContext.serverId,
+						minTools: 0,
+						maxTools: limit,
+					});
+					return {
+						success: true,
+						message:
+							selectedRaw.length > 0
+								? `Suggested ${selectedRaw.length} tool(s) for "${input.query}"`
+								: `No direct suggestions for "${input.query}". Use tool_search to explore the full catalog.`,
+						data: selectedRaw.map((t) => ({
+							name: t.name,
+							description: t.description,
+							category: t.category,
+							riskLevel: t.riskLevel,
+							requiresApproval: t.requiresApproval,
 					})),
 				};
 			},
@@ -1784,27 +1772,13 @@ function buildChatTools(params: {
 				query: string;
 				limit?: number;
 				category?: string;
-				riskLevelMax?: "low" | "medium" | "high";
-				requiresApproval?: boolean;
-			}) => {
-				const res = searchToolCatalog(input);
-				const mcpEnabled = await isMcpEnabledForConversation();
-				if (mcpEnabled) return res;
-
-				const filtered = res.data.filter((t) => !t.name.startsWith("mcp_"));
-				const nextCall =
-					res.meta.nextCall && res.meta.nextCall.toolName.startsWith("mcp_")
-						? undefined
-						: res.meta.nextCall;
-
-				return {
-					...res,
-					meta: { ...res.meta, nextCall },
-					data: filtered,
-				};
-			},
-		}),
-		tool_describe: tool({
+					riskLevelMax?: "low" | "medium" | "high";
+					requiresApproval?: boolean;
+				}) => {
+					return searchToolCatalog(input);
+				},
+			}),
+			tool_describe: tool({
 			description:
 				"Describe a specific tool, including parameter hints extracted from its schema.",
 			inputSchema: z.object({
@@ -1812,26 +1786,14 @@ function buildChatTools(params: {
 					.string()
 					.min(1)
 					.describe('Exact tool name, e.g. "trpc_procedure_call"'),
-			}),
-			execute: async (input: { toolName: string }) => {
-				const toolName = input.toolName.trim();
-				const mcpEnabled = await isMcpEnabledForConversation();
-				if (!mcpEnabled && toolName.startsWith("mcp_")) {
-					return {
-						success: false,
-						message: `MCP tools are disabled for this conversation`,
-						error: "MCP_DISABLED",
-						data: {
-							toolName,
-							hint: "Enable MCP in the UI to use MCP tools.",
-						},
-					};
-				}
+				}),
+				execute: async (input: { toolName: string }) => {
+					const toolName = input.toolName.trim();
 
-				const t = toolRegistry.get(toolName);
-				if (!t) {
-					if (toolName.includes(".")) {
-						const bridge = getTrpcBridge();
+					const t = toolRegistry.get(toolName);
+					if (!t) {
+						if (toolName.includes(".")) {
+							const bridge = getTrpcBridge();
 						if (bridge) {
 							try {
 								const desc = await bridge.describeProcedure(toolName);
@@ -1865,26 +1827,14 @@ function buildChatTools(params: {
 						.default({})
 						.describe("Parameters object for the tool"),
 				})
-				.passthrough(),
-			execute: async (input: { toolName: string; params?: unknown }) => {
-				const inputAny = input as unknown as Record<string, unknown>;
-				const normalizedToolName = input.toolName.trim();
-				const mcpEnabled = await isMcpEnabledForConversation();
-				if (!mcpEnabled && normalizedToolName.startsWith("mcp_")) {
-					return {
-						success: false,
-						message: `MCP tools are disabled for this conversation`,
-						error: "MCP_DISABLED",
-						data: {
-							toolName: normalizedToolName,
-							hint: "Enable MCP in the UI to use MCP tools.",
-						},
-					};
-				}
-				input.toolName = normalizedToolName;
+					.passthrough(),
+				execute: async (input: { toolName: string; params?: unknown }) => {
+					const inputAny = input as unknown as Record<string, unknown>;
+					const normalizedToolName = input.toolName.trim();
+					input.toolName = normalizedToolName;
 
-				const rawParams: Record<string, unknown> = {
-					...(isRecord(inputAny.params)
+					const rawParams: Record<string, unknown> = {
+						...(isRecord(inputAny.params)
 						? (inputAny.params as Record<string, unknown>)
 						: isRecord(inputAny.input)
 							? (inputAny.input as Record<string, unknown>)
@@ -2647,10 +2597,6 @@ function getToolBudgetModeFromMetadata(metadata: unknown): ToolBudgetMode {
 	if (!isRecord(metadata)) return "max";
 	const raw = (metadata as { toolBudgetMode?: unknown }).toolBudgetMode;
 	return raw === "standard" ? "standard" : "max";
-}
-
-function getMcpEnabledFromMetadata(metadata: unknown): boolean {
-	return isRecord(metadata) && metadata.mcpEnabled === true;
 }
 
 function setToolBudgetModeInMetadata(
@@ -4737,6 +4683,7 @@ export const chatStream = async (
 - Tool UX: do not narrate tool names or internal errors; focus on outcomes. If a tool fails due to invalid params/unknown tool, correct and retry (use tool_describe/tool_search as needed). Ask the user only when blocked.
 - Context: reuse recent tool results; do not re-run the same read-only checks/config reads unnecessarily.
 - ServerId: self-hosted defaults to the local Dokploy host when serverId is missing; only require serverId for remote targets. Cloud mode requires serverId for server operations.
+- Containers: project_containers relies on services.appName. If it returns "No Dokploy services with appName", do NOT conclude there are no running containers. Continue by re-running project_containers with includeUnmatched=true, calling docker.getContainers (via trpc_procedure_call), or asking for serverId/container name.
 - Safety: run low-risk read tools immediately; for medium/high-risk actions, explain before executing; if approval is required, create the pending_approval tool_call first.
 - Accuracy: never invent tool names; never guess IDs. Use list/find/get tools; ask the user to confirm only when ambiguous.
 - Idempotency: before creating backups/schedules (or other recurring resources), list existing items first and avoid duplicates; prefer updating an existing item when it matches the intent.

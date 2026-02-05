@@ -183,8 +183,6 @@ export function useChat(options: UseChatOptions = {}) {
 	const [toolBudgetMode, setToolBudgetModeState] = useState<"standard" | "max">(
 		"max",
 	);
-	const [isMcpEnabled, setIsMcpEnabled] = useState(false);
-	const hasUserSetMcpEnabledRef = useRef(false);
 	const hasUserSetToolBudgetModeRef = useRef(false);
 	const [canContinueChat, setCanContinueChat] = useState(false);
 	const inFlightApprovalExecutionIdsRef = useRef<Set<string>>(new Set());
@@ -199,8 +197,6 @@ export function useChat(options: UseChatOptions = {}) {
 		api.ai.conversations.setToolApprovalsDisabled.useMutation();
 	const setToolBudgetModeMutation =
 		api.ai.conversations.setToolBudgetMode.useMutation();
-	const setMcpEnabledMutation =
-		api.ai.conversations.setMcpEnabled.useMutation();
 
 	const maybeInvalidateProjectQueries = useCallback(
 		(toolName: string, rawResult: unknown, toolArguments?: string) => {
@@ -316,6 +312,20 @@ export function useChat(options: UseChatOptions = {}) {
 			},
 		);
 
+	useEffect(() => {
+		if (!conversationId) return;
+		const serverIds = new Set(
+			((serverMessages || []) as Message[]).map((m) => m.messageId),
+		);
+		setPendingMessages((prev) =>
+			prev.filter((m) => {
+				if (m.status === "sending" || m.status === "error") return true;
+				if (m.role !== "assistant") return true;
+				return serverIds.has(m.messageId);
+			}),
+		);
+	}, [conversationId, serverMessages]);
+
 	const { data: conversationDetails } = api.ai.conversations.get.useQuery(
 		{ conversationId: conversationId || "" },
 		{
@@ -340,13 +350,6 @@ export function useChat(options: UseChatOptions = {}) {
 				? "standard"
 				: "max";
 		setToolBudgetModeState(mode);
-	}, [conversationDetails?.metadata]);
-
-	useEffect(() => {
-		if (hasUserSetMcpEnabledRef.current) return;
-		const metadata = conversationDetails?.metadata;
-		const enabled = isRecord(metadata) && metadata.mcpEnabled === true;
-		setIsMcpEnabled(enabled);
 	}, [conversationDetails?.metadata]);
 
 	useEffect(() => {
@@ -379,17 +382,6 @@ export function useChat(options: UseChatOptions = {}) {
 			.mutateAsync({ conversationId, mode: toolBudgetMode })
 			.catch(() => {});
 	}, [conversationDetails?.metadata, conversationId, toolBudgetMode, setToolBudgetModeMutation]);
-
-	useEffect(() => {
-		if (!conversationId) return;
-		if (!hasUserSetMcpEnabledRef.current) return;
-		const metadata = conversationDetails?.metadata;
-		const serverEnabled = isRecord(metadata) && metadata.mcpEnabled === true;
-		if (serverEnabled === isMcpEnabled) return;
-		void setMcpEnabledMutation
-			.mutateAsync({ conversationId, enabled: isMcpEnabled })
-			.catch(() => {});
-	}, [conversationDetails?.metadata, conversationId, isMcpEnabled, setMcpEnabledMutation]);
 
 	const executionHydrationTargets = useMemo(() => {
 		const toolCalls = ((serverMessages || []) as Message[])
@@ -501,19 +493,28 @@ export function useChat(options: UseChatOptions = {}) {
 			return pendingMessages.map(applyMeta);
 		}
 
-		const server = ((serverMessages || []) as Message[]).map(applyMeta);
-		const pendingOnly = pendingMessages
-			.filter((pm) => {
-				if (pm.status === "sending") return true;
-				return !server.some(
-					(sm) =>
-						sm.role === pm.role &&
-						sm.content === pm.content &&
-						JSON.stringify(sm.attachments ?? null) ===
-							JSON.stringify(pm.attachments ?? null),
-				);
-			})
-			.map(applyMeta);
+		const serverRaw = ((serverMessages || []) as Message[]).map(applyMeta);
+		const pendingWithMeta = pendingMessages.map(applyMeta);
+		const pendingById = new Map(pendingWithMeta.map((m) => [m.messageId, m]));
+
+		const server = serverRaw.map((sm) => {
+			const pending = pendingById.get(sm.messageId);
+			return pending ? { ...sm, ...pending } : sm;
+		});
+		const serverIds = new Set(server.map((m) => m.messageId));
+
+		const pendingOnly = pendingWithMeta.filter((pm) => {
+			if (serverIds.has(pm.messageId)) return false;
+			if (pm.status === "sending") return true;
+			return !server.some(
+				(sm) =>
+					sm.role === pm.role &&
+					sm.content === pm.content &&
+					JSON.stringify(sm.attachments ?? null) ===
+						JSON.stringify(pm.attachments ?? null),
+			);
+		});
+
 		return [...server, ...pendingOnly];
 	}, [conversationId, serverMessages, pendingMessages, toolCallMeta]);
 
@@ -818,24 +819,6 @@ export function useChat(options: UseChatOptions = {}) {
 			}
 		},
 		[conversationId, options, setToolBudgetModeMutation, toolBudgetMode],
-	);
-
-	const setMcpEnabled = useCallback(
-		async (enabled: boolean) => {
-			hasUserSetMcpEnabledRef.current = true;
-			setIsMcpEnabled(enabled);
-			if (!conversationId) return;
-			try {
-				await setMcpEnabledMutation.mutateAsync({
-					conversationId,
-					enabled,
-				});
-			} catch (error) {
-				setIsMcpEnabled(!enabled);
-				options.onError?.(error as Error);
-			}
-		},
-		[conversationId, options, setMcpEnabledMutation],
 	);
 
 	const send = useCallback(
@@ -1494,13 +1477,20 @@ export function useChat(options: UseChatOptions = {}) {
 
 						if (evt.event === "done") {
 							flushDeltaNow();
+							let realId = "";
 							try {
 								const payload = JSON.parse(evt.data) as {
 									needsContinue?: boolean;
 									finishReason?: string;
+									messageId?: string;
 								};
 								setCanContinueChat(payload.needsContinue === true);
+								realId =
+									typeof payload.messageId === "string"
+										? payload.messageId.trim()
+										: "";
 							} catch {}
+
 							receivedDone = true;
 							activeToolCallIds.clear();
 							finalizeExecutingToolCalls(
@@ -1513,6 +1503,15 @@ export function useChat(options: UseChatOptions = {}) {
 										: m,
 								),
 							);
+							if (realId) {
+								setPendingMessages((prev) =>
+									prev.map((m) =>
+										m.messageId === assistantTempId
+											? { ...m, messageId: realId, status: "sent" as const }
+											: m,
+									),
+								);
+							}
 							break;
 						}
 
@@ -1921,13 +1920,20 @@ export function useChat(options: UseChatOptions = {}) {
 
 						if (evt.event === "done") {
 							flushDeltaNow();
+							let realId = "";
 							try {
 								const payload = JSON.parse(evt.data) as {
 									needsContinue?: boolean;
 									finishReason?: string;
+									messageId?: string;
 								};
 								setCanContinueChat(payload.needsContinue === true);
+								realId =
+									typeof payload.messageId === "string"
+										? payload.messageId.trim()
+										: "";
 							} catch {}
+
 							receivedDone = true;
 							activeToolCallIds.clear();
 							finalizeExecutingToolCalls(
@@ -1940,6 +1946,15 @@ export function useChat(options: UseChatOptions = {}) {
 										: m,
 								),
 							);
+							if (realId) {
+								setPendingMessages((prev) =>
+									prev.map((m) =>
+										m.messageId === assistantTempId
+											? { ...m, messageId: realId, status: "sent" as const }
+											: m,
+									),
+								);
+							}
 							break;
 						}
 
@@ -2053,8 +2068,6 @@ export function useChat(options: UseChatOptions = {}) {
 		setAreToolApprovalsDisabled(false);
 		hasUserSetToolBudgetModeRef.current = false;
 		setToolBudgetModeState("max");
-		setIsMcpEnabled(false);
-		hasUserSetMcpEnabledRef.current = false;
 		setCanContinueChat(false);
 		setPendingApproval(null);
 	}, [abortController]);
@@ -2089,8 +2102,6 @@ export function useChat(options: UseChatOptions = {}) {
 			setAreToolApprovalsDisabled(false);
 			hasUserSetToolBudgetModeRef.current = false;
 			setToolBudgetModeState("max");
-			setIsMcpEnabled(false);
-			hasUserSetMcpEnabledRef.current = false;
 			setCanContinueChat(false);
 			setPendingApproval(null);
 			setConversationId(normalized);
@@ -2107,8 +2118,6 @@ export function useChat(options: UseChatOptions = {}) {
 		setToolApprovalsDisabled,
 		toolBudgetMode,
 		setToolBudgetMode,
-		isMcpEnabled,
-		setMcpEnabled,
 		canContinueChat,
 		continueChat,
 		toolOutcomes,

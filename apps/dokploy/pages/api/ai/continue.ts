@@ -43,6 +43,9 @@ function writeSseEvent(
 	})();
 
 	res.write(`event: ${event}\ndata: ${payload}\n\n`);
+	try {
+		(res as any).flush?.();
+	} catch {}
 }
 
 function buildContinuePrompt(userRequest: string): string {
@@ -123,6 +126,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 		Connection: "keep-alive",
 		"X-Accel-Buffering": "no",
 	});
+	try {
+		(res as any).flushHeaders?.();
+	} catch {}
+	try {
+		// Helps bypass proxy buffering so deltas/tool events are visible during streaming.
+		res.write(`:${" ".repeat(2048)}\n\n`);
+	} catch {}
 
 	const abortController = new AbortController();
 	const handleClose = () => abortController.abort();
@@ -221,4 +231,3 @@ export const config = {
 		responseLimit: false,
 	},
 };
-

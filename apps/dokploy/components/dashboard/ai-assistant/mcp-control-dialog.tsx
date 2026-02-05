@@ -56,20 +56,27 @@ function safeJsonParseObject(input: string): Record<string, string> | null {
 	return out;
 }
 
-export function McpControlDialog(props: {
-	isMcpEnabled: boolean;
-	setMcpEnabled: (enabled: boolean) => Promise<void>;
-}) {
+export function McpControlDialog() {
 	const { t } = useTranslation("common");
 	const utils = api.useUtils();
 	const [open, setOpen] = useState(false);
 	const [view, setView] = useState<"list" | "add">("list");
-	const [isTogglingConversation, setIsTogglingConversation] = useState(false);
 
-	const { data: servers, isLoading: isLoadingServers } =
+	const {
+		data: servers,
+		isLoading: isLoadingServers,
+		isError: isServersError,
+		error: serversError,
+		refetch: refetchServers,
+	} =
 		api.ai.mcpServers.list.useQuery(
 			{ limit: 100, offset: 0 },
-			{ enabled: open, refetchOnWindowFocus: false },
+			{
+				enabled: open,
+				refetchOnWindowFocus: false,
+				retry: false,
+				staleTime: 60_000,
+			},
 		);
 	const { mutateAsync: createServer, isLoading: isCreatingServer } =
 		api.ai.mcpServers.create.useMutation();
@@ -101,6 +108,7 @@ export function McpControlDialog(props: {
 	const enabledServers = useMemo(() => {
 		return serverRows.filter((s) => s.isEnabled);
 	}, [serverRows]);
+	const hasEnabledServers = enabledServers.length > 0;
 
 	const runTest = useCallback(async (mcpServerId: string) => {
 		const id = String(mcpServerId ?? "").trim();
@@ -156,44 +164,6 @@ export function McpControlDialog(props: {
 		};
 	}, [open, runTest, serverRows]);
 
-	const toggleConversation = async (enabled: boolean) => {
-		if (!enabled) {
-			await props.setMcpEnabled(false);
-			toast.info(t("ai.chat.mcp.disabled"));
-			return;
-		}
-
-		if (enabledServers.length === 0) {
-			toast.error(t("ai.chat.mcp.noEnabledServers"));
-			return;
-		}
-
-		setIsTogglingConversation(true);
-		const toastId = toast.loading(t("ai.chat.mcp.testing"));
-		try {
-			for (const s of enabledServers) {
-				const res = (await utils.ai.mcpServers.test.fetch({
-					mcpServerId: s.mcpServerId,
-				})) as McpTestResult;
-				setTestResults((prev) => ({ ...prev, [s.mcpServerId]: res }));
-				if (res.status === "error") {
-					throw new Error(`${s.name}: ${res.error ?? "MCP test failed"}`);
-				}
-			}
-
-			await props.setMcpEnabled(true);
-			toast.success(t("ai.chat.mcp.enabled"));
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : String(error);
-			toast.error(t("ai.chat.mcp.connectionFailed"), {
-				description: errorMessage,
-			});
-		} finally {
-			toast.dismiss(toastId);
-			setIsTogglingConversation(false);
-		}
-	};
-
 	const toggleServer = async (mcpServerId: string, isEnabled: boolean) => {
 		const id = mcpServerId.trim();
 		if (!id) return;
@@ -247,11 +217,12 @@ export function McpControlDialog(props: {
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
 				<Button
-					variant={props.isMcpEnabled ? "secondary" : "ghost"}
+					variant={hasEnabledServers ? "secondary" : "ghost"}
 					size="icon"
 					className={cn(
 						"h-8 w-8 p-0",
-						props.isMcpEnabled && "bg-primary/10 text-primary hover:bg-primary/20",
+						hasEnabledServers &&
+							"bg-primary/10 text-primary hover:bg-primary/20",
 					)}
 					title={t("ai.chat.mcp.manage")}
 					aria-label={t("ai.chat.mcp.manage")}
@@ -273,28 +244,11 @@ export function McpControlDialog(props: {
 						{t("ai.chat.mcp.dialog.description")}
 					</DialogDescription>
 
-					<div className="mt-4 flex items-center justify-between rounded-lg border bg-muted/10 p-3 gap-4">
-						<div className="min-w-0">
-							<div className="flex items-center gap-2 min-w-0">
-								<Plug className="h-4 w-4 text-muted-foreground shrink-0" />
-								<span className="text-sm font-medium truncate">
-									{t("ai.chat.mcp.useInChat")}
-								</span>
-							</div>
-						</div>
-						<Switch
-							checked={props.isMcpEnabled}
-							onCheckedChange={(v) => void toggleConversation(v)}
-							disabled={
-								isTogglingConversation ||
-								isLoadingServers
-							}
-						/>
-					</div>
-
 					<div className="mt-4 flex items-center justify-between gap-2">
 						<div className="text-xs text-muted-foreground">
-							{t("ai.chat.mcp.panel.count", { count: serverRows.length })}
+							{isLoadingServers
+								? t("common.loading")
+								: t("ai.chat.mcp.panel.count", { count: serverRows.length })}
 						</div>
 						{view === "list" ? (
 							<Button
@@ -411,6 +365,25 @@ export function McpControlDialog(props: {
 					) : isLoadingServers ? (
 						<div className="flex items-center justify-center py-10 text-muted-foreground">
 							<Loader2 className="h-5 w-5 animate-spin" />
+						</div>
+					) : isServersError ? (
+						<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+							<XCircle className="h-10 w-10 opacity-20 mb-2" />
+							<p className="text-sm">{t("common.unknownError")}</p>
+							{serversError?.message && (
+								<p className="mt-1 max-w-full text-[10px] text-muted-foreground/80 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+									{serversError.message}
+								</p>
+							)}
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								className="mt-3 h-7 px-2 text-xs"
+								onClick={() => void refetchServers()}
+							>
+								{t("ai.chat.retry")}
+							</Button>
 						</div>
 					) : serverRows.length === 0 ? (
 						<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">

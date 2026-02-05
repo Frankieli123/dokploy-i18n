@@ -70,6 +70,7 @@ export function AIChatDrawer({
 }: AIChatDrawerProps) {
 	const router = useRouter();
 	const { t } = useTranslation("common");
+	const utils = api.useUtils();
 	const [isOpen, setIsOpen] = useState(false);
 	const SERVER_CONTEXT_STORAGE_KEY = "dokploy.ai.serverContext.v2";
 	const LOCAL_SERVER_CONTEXT = "local";
@@ -78,6 +79,13 @@ export function AIChatDrawer({
 	const [selectedAiId, setSelectedAiId] = useState<string>("");
 	const [isAgentMode, setIsAgentMode] = useState(false);
 	const viewportRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!isOpen) return;
+		void utils.ai.mcpServers.list
+			.prefetch({ limit: 100, offset: 0 })
+			.catch(() => {});
+	}, [isOpen, utils]);
 	const isNearBottomRef = useRef(true);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const [draftImages, setDraftImages] = useState<DraftImage[]>([]);
@@ -198,8 +206,6 @@ export function AIChatDrawer({
 		pendingApproval,
 		approvePending,
 		rejectPending,
-		isMcpEnabled,
-		setMcpEnabled,
 	} = useChat({
 		onError: (error) => {
 			const errorMessage = error.message || t("ai.chat.sendError");
@@ -533,10 +539,7 @@ export function AIChatDrawer({
 									openConversation(nextId);
 								}}
 							/>
-							<McpControlDialog
-								isMcpEnabled={isMcpEnabled}
-								setMcpEnabled={setMcpEnabled}
-							/>
+							<McpControlDialog />
 							<Button
 								variant="ghost"
 								size="icon"

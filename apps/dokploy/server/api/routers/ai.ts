@@ -13,7 +13,6 @@ import {
 	apiListAiMcpServers,
 	apiListConversations,
 	apiSendMessage,
-	apiSetMcpEnabled,
 	apiSetToolBudgetMode,
 	apiSetToolApprovalsDisabled,
 	apiStartAgent,
@@ -494,34 +493,6 @@ export const aiRouter = createTRPCRouter({
 							: {};
 					if (input.mode === "standard") (base as any).toolBudgetMode = "standard";
 					else delete (base as any).toolBudgetMode;
-					return base;
-				})();
-
-				return await updateConversation(input.conversationId, {
-					metadata: nextMetadata,
-				});
-			}),
-
-		setMcpEnabled: protectedProcedure
-			.input(apiSetMcpEnabled)
-			.mutation(async ({ ctx, input }) => {
-				const conversation = await getConversationById(input.conversationId);
-				if (conversation.organizationId !== ctx.session.activeOrganizationId) {
-					throw new TRPCError({
-						code: "UNAUTHORIZED",
-						message: "settings.ai.errors.noAccessToConversation",
-					});
-				}
-
-				const nextMetadata = (() => {
-					const base =
-						conversation.metadata &&
-						typeof conversation.metadata === "object" &&
-						!Array.isArray(conversation.metadata)
-							? { ...(conversation.metadata as Record<string, unknown>) }
-							: {};
-					if (input.enabled) (base as any).mcpEnabled = true;
-					else delete (base as any).mcpEnabled;
 					return base;
 				})();
 

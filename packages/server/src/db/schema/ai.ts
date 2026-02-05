@@ -581,11 +581,6 @@ export const apiSetToolBudgetMode = z.object({
 	mode: z.enum(["standard", "max"]),
 });
 
-export const apiSetMcpEnabled = z.object({
-	conversationId: z.string().min(1),
-	enabled: z.boolean(),
-});
-
 export const aiMessageAttachmentSchema = z.object({
 	type: z.literal("image"),
 	data: z.string().min(1),

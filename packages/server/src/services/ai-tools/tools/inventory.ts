@@ -81,6 +81,12 @@ type ProjectInventory = {
 	}>;
 };
 
+type ProjectSummary = { projectId: string; name: string };
+type ResolveSingleProjectData =
+	| Record<string, unknown>
+	| { matches: ProjectSummary[] }
+	| { projects: ProjectSummary[] };
+
 function pickId(obj: Record<string, unknown>, keys: string[]): string | null {
 	for (const k of keys) {
 		const v = asNonEmptyString(obj[k]);
@@ -233,13 +239,7 @@ async function resolveSingleProject(params: {
 	projectId?: string;
 	projectName?: string;
 	ctx: ToolContext;
-}): Promise<
-	ToolResult<
-		| ProjectInventory
-		| { matches: Array<{ projectId: string; name: string }> }
-		| { projects: Array<{ projectId: string; name: string }> }
-	>
-> {
+}): Promise<ToolResult<ResolveSingleProjectData>> {
 	const directId = asNonEmptyString(params.projectId);
 	if (directId) {
 		const res = await callTrpc({
@@ -247,12 +247,11 @@ async function resolveSingleProject(params: {
 			input: { projectId: directId },
 			ctx: params.ctx,
 		});
-		if (!res.success) return res as ToolResult<ProjectInventory>;
-		const inv = normalizeProject(res.data);
-		if (!inv) {
-			return { success: false, message: "Failed to parse project data" };
+		if (!res.success) return res as ToolResult<ResolveSingleProjectData>;
+		if (!isRecord(res.data)) {
+			return { success: false, message: "Project not found" };
 		}
-		return { success: true, message: "Project loaded", data: inv };
+		return { success: true, message: "Project loaded", data: res.data };
 	}
 
 	const name = asNonEmptyString(params.projectName);
@@ -269,24 +268,35 @@ async function resolveSingleProject(params: {
 		input: undefined,
 		ctx: params.ctx,
 	});
-	if (!listRes.success) return listRes as ToolResult<ProjectInventory>;
+	if (!listRes.success) return listRes as ToolResult<ResolveSingleProjectData>;
 
-	const projects = asArray(listRes.data)
-		.map((p) => normalizeProject(p))
-		.filter((p): p is ProjectInventory => !!p);
+	const candidates = asArray(listRes.data)
+		.map((raw) => {
+			if (!isRecord(raw)) return null;
+			const projectId = asNonEmptyString(raw.projectId);
+			const projectName = asNonEmptyString(raw.name);
+			if (!projectId || !projectName) return null;
+			return {
+				summary: { projectId, name: projectName } satisfies ProjectSummary,
+				raw,
+			};
+		})
+		.filter(
+			(v): v is { summary: ProjectSummary; raw: Record<string, unknown> } =>
+				!!v,
+		);
 
 	const q = name.toLowerCase();
-	const matches = projects.filter((p) => p.name.toLowerCase().includes(q));
+	const matches = candidates.filter((p) =>
+		p.summary.name.toLowerCase().includes(q),
+	);
 
 	if (matches.length === 0) {
 		return {
 			success: false,
 			message: `No project name matches "${name}"`,
 			data: {
-				projects: projects.slice(0, 20).map((p) => ({
-					projectId: p.projectId,
-					name: p.name,
-				})),
+				projects: candidates.slice(0, 20).map((p) => p.summary),
 			},
 		};
 	}
@@ -296,15 +306,16 @@ async function resolveSingleProject(params: {
 			success: false,
 			message: `Multiple projects match "${name}"`,
 			data: {
-				matches: matches.slice(0, 20).map((p) => ({
-					projectId: p.projectId,
-					name: p.name,
-				})),
+				matches: matches.slice(0, 20).map((p) => p.summary),
 			},
 		};
 	}
 
-	return { success: true, message: "Project loaded", data: matches[0] };
+	const match = matches[0];
+	if (!match) {
+		return { success: false, message: "Project not found" };
+	}
+	return { success: true, message: "Project loaded", data: match.raw };
 }
 
 const projectsInventory: Tool<
@@ -417,13 +428,19 @@ const projectContainers: Tool<
 > = {
 	name: "project_containers",
 	description:
-		"List docker containers belonging to a Dokploy project (auto-resolves services/appNames, groups by server).",
+		"List docker containers associated with a Dokploy project by matching services.appName (groups by server). If includeUnmatched=true and the project has no appName services, it falls back to listing containers from the current server context without matching.",
 	category: "server",
 	tags: ["docker", "containers", "project", "logs", "inventory"],
 	parameters: z.object({
 		projectId: z.string().optional(),
 		projectName: z.string().optional(),
-		includeUnmatched: z.boolean().optional().default(false),
+		includeUnmatched: z
+			.boolean()
+			.optional()
+			.default(false)
+			.describe(
+				"Include containers that do not match any service appName. If the project has no appName services, this returns containers from the current server context without matching.",
+			),
 		limitPerServer: z.number().min(1).max(2000).optional().default(400),
 	}),
 	riskLevel: "low",
@@ -437,14 +454,14 @@ const projectContainers: Tool<
 			projectName: params.projectName,
 			ctx,
 		});
-			if (!single.success) return single as any;
-			if (!isRecord(single.data)) {
-				return { success: false, message: "Project not found" };
-			}
-			const project = normalizeProject(single.data);
-			if (!project) return { success: false, message: "Project not found" };
+		if (!single.success) return single as any;
+		if (!isRecord(single.data)) {
+			return { success: false, message: "Project not found" };
+		}
+		const project = normalizeProject(single.data);
+		if (!project) return { success: false, message: "Project not found" };
 
-			const services = project.environments.flatMap((e) => e.services);
+		const services = project.environments.flatMap((e) => e.services);
 		const byServerKey = new Map<string, ServiceRef[]>();
 		for (const s of services) {
 			const appName = asNonEmptyString(s.appName);
@@ -456,9 +473,59 @@ const projectContainers: Tool<
 		}
 
 		if (byServerKey.size === 0) {
+			if (includeUnmatched) {
+				const serverId = asNonEmptyString(ctx.serverId);
+				const containersRes = await callTrpc({
+					procedureName: "docker.getContainers",
+					input: serverId ? { serverId } : {},
+					ctx,
+				});
+
+				const rawContainers = containersRes.success ? asArray(containersRes.data) : [];
+				const containers: Array<{
+					containerId: string;
+					name: string;
+					image?: string | null;
+					state?: string | null;
+					status?: string | null;
+					ports?: string | null;
+					matchedService?: Pick<ServiceRef, "serviceType" | "serviceId" | "name" | "appName">;
+				}> = [];
+
+				for (const c of rawContainers) {
+					if (!isRecord(c)) continue;
+					const containerId = asNonEmptyString(c.containerId);
+					const name = asNonEmptyString(c.name);
+					if (!containerId || !name) continue;
+
+					containers.push({
+						containerId,
+						name,
+						image: asNonEmptyString(c.image),
+						state: asNonEmptyString(c.state),
+						status: asNonEmptyString(c.status),
+						ports: asNonEmptyString(c.ports),
+						matchedService: undefined,
+					});
+
+					if (containers.length >= limitPerServer) break;
+				}
+
+				return {
+					success: true,
+					message:
+						"No Dokploy services with appName were found in this project; listing containers from the current server context without matching (unmatched).",
+					data: {
+						project: { projectId: project.projectId, name: project.name },
+						servers: [{ serverId: serverId ?? null, containers }],
+					},
+				};
+			}
+
 			return {
 				success: true,
-				message: "No appName-based services found in this project",
+				message:
+					"No Dokploy services with appName were found in this project (this does not mean there are no running containers)",
 				data: { project: { projectId: project.projectId, name: project.name }, servers: [] },
 			};
 		}
