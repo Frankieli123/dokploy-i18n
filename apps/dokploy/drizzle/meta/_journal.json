@@ -960,6 +960,13 @@
       "when": 1766390000000,
       "tag": "0136_ai_message_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "7",
+      "when": 1766400000000,
+      "tag": "0137_ai_mcp_servers",
+      "breakpoints": true
     }
   ]
 }

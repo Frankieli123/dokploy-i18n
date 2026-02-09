@@ -1303,7 +1303,17 @@ export function useChat(options: UseChatOptions = {}) {
 				try {
 					for await (const evt of readSseStream(response.body)) {
 						if (controller.signal.aborted) break;
-						lastEventTime = Date.now();
+						if (
+							evt.event === "delta" ||
+							evt.event === "reasoning-delta" ||
+							evt.event === "tool-call" ||
+							evt.event === "tool-result" ||
+							evt.event === "done" ||
+							evt.event === "error" ||
+							evt.event === "stream-error"
+						) {
+							lastEventTime = Date.now();
+						}
 
 						if (evt.event === "delta") {
 							const payload = JSON.parse(evt.data) as { delta?: unknown };
@@ -1535,11 +1545,25 @@ export function useChat(options: UseChatOptions = {}) {
 
 				if (controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
-					finalizeExecutingToolCalls(
-						abortedBySafetyTimer
-							? "settings.ai.errors.streamingEndedWithoutDone"
-							: "settings.ai.errors.streamingAborted",
-					);
+					const errorMsg = abortedBySafetyTimer
+						? "settings.ai.errors.streamingEndedWithoutDone"
+						: "settings.ai.errors.streamingAborted";
+					finalizeExecutingToolCalls(errorMsg);
+					if (abortedBySafetyTimer) {
+						setPendingMessages((prev) =>
+							prev
+								.filter((m) => m.messageId !== userTempId)
+								.map((m) =>
+									m.messageId === assistantTempId
+										? { ...m, status: "error" as const, error: errorMsg }
+										: m,
+								),
+						);
+						setAbortController(null);
+						setIsLoading(false);
+						options.onError?.(new Error(errorMsg));
+						return;
+					}
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === userTempId || m.messageId === assistantTempId
@@ -1567,12 +1591,24 @@ export function useChat(options: UseChatOptions = {}) {
 			} catch (error) {
 				setAbortController(null);
 				if (isAbortLikeError(error)) {
-					// Best effort: apply any buffered delta before finalizing.
-					finalizeExecutingToolCalls(
-						abortedBySafetyTimer
-							? "settings.ai.errors.streamingEndedWithoutDone"
-							: "settings.ai.errors.streamingAborted",
-					);
+					const errorMsg = abortedBySafetyTimer
+						? "settings.ai.errors.streamingEndedWithoutDone"
+						: "settings.ai.errors.streamingAborted";
+					finalizeExecutingToolCalls(errorMsg);
+					if (abortedBySafetyTimer) {
+						setPendingMessages((prev) =>
+							prev
+								.filter((m) => m.messageId !== userTempId)
+								.map((m) =>
+									m.messageId === assistantTempId
+										? { ...m, status: "error" as const, error: errorMsg }
+										: m,
+								),
+						);
+						setIsLoading(false);
+						options.onError?.(new Error(errorMsg));
+						return;
+					}
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === userTempId || m.messageId === assistantTempId
@@ -1757,9 +1793,19 @@ export function useChat(options: UseChatOptions = {}) {
 
 				try {
 					for await (const evt of readSseStream(response.body)) {
-						lastEventTime = Date.now();
-
 						if (evt.event === "ping" || evt.event === "start") continue;
+
+						if (
+							evt.event === "delta" ||
+							evt.event === "reasoning-delta" ||
+							evt.event === "tool-call" ||
+							evt.event === "tool-result" ||
+							evt.event === "done" ||
+							evt.event === "error" ||
+							evt.event === "stream-error"
+						) {
+							lastEventTime = Date.now();
+						}
 
 						if (evt.event === "delta") {
 							const payload = JSON.parse(evt.data) as { delta?: string };
@@ -1978,11 +2024,23 @@ export function useChat(options: UseChatOptions = {}) {
 
 				if (controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
-					finalizeExecutingToolCalls(
-						abortedBySafetyTimer
-							? "settings.ai.errors.streamingEndedWithoutDone"
-							: "settings.ai.errors.streamingAborted",
-					);
+					const errorMsg = abortedBySafetyTimer
+						? "settings.ai.errors.streamingEndedWithoutDone"
+						: "settings.ai.errors.streamingAborted";
+					finalizeExecutingToolCalls(errorMsg);
+					if (abortedBySafetyTimer) {
+						setPendingMessages((prev) =>
+							prev.map((m) =>
+								m.messageId === assistantTempId
+									? { ...m, status: "error" as const, error: errorMsg }
+									: m,
+							),
+						);
+						setAbortController(null);
+						setIsLoading(false);
+						options.onError?.(new Error(errorMsg));
+						return;
+					}
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === assistantTempId
@@ -2010,11 +2068,22 @@ export function useChat(options: UseChatOptions = {}) {
 			} catch (error) {
 				setAbortController(null);
 				if (isAbortLikeError(error)) {
-					finalizeExecutingToolCalls(
-						abortedBySafetyTimer
-							? "settings.ai.errors.streamingEndedWithoutDone"
-							: "settings.ai.errors.streamingAborted",
-					);
+					const errorMsg = abortedBySafetyTimer
+						? "settings.ai.errors.streamingEndedWithoutDone"
+						: "settings.ai.errors.streamingAborted";
+					finalizeExecutingToolCalls(errorMsg);
+					if (abortedBySafetyTimer) {
+						setPendingMessages((prev) =>
+							prev.map((m) =>
+								m.messageId === assistantTempId
+									? { ...m, status: "error" as const, error: errorMsg }
+									: m,
+							),
+						);
+						setIsLoading(false);
+						options.onError?.(new Error(errorMsg));
+						return;
+					}
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === assistantTempId
