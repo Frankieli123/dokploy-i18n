@@ -38,7 +38,7 @@ export const setupDeploymentLogsWebSocketServer = (
 			return;
 		}
 
-		if (!readValidDirectory(logPath)) {
+		if (!readValidDirectory(logPath, serverId)) {
 			ws.close(4000, "Invalid log path");
 			return;
 		}

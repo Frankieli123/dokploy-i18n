@@ -17,7 +17,7 @@ export const backupVolume = async (
 	const isAllMounts = volumeName.trim() === ALL_MOUNTS_VOLUME_NAME;
 	const serverId =
 		volumeBackup.application?.serverId || volumeBackup.compose?.serverId;
-	const { VOLUME_BACKUPS_PATH } = paths(!!serverId);
+	const { VOLUME_BACKUPS_PATH, VOLUME_BACKUP_LOCK_PATH } = paths(!!serverId);
 	const destination = volumeBackup.destination;
 	const isBind = !isAllMounts && isBindPath(volumeName);
 	const backupBaseName = getBackupBaseName(volumeName);
@@ -28,6 +28,42 @@ export const backupVolume = async (
 	const volumeBackupPath = path.join(VOLUME_BACKUPS_PATH, volumeBackup.appName);
 
 	const rcloneCommand = `rclone copyto ${rcloneFlags.join(" ")} "${volumeBackupPath}/${backupFileName}" "${rcloneDestination}"`;
+
+	const serviceLockId =
+		serviceType === "application"
+			? volumeBackup.application?.appName
+			: serviceType === "compose"
+				? `${volumeBackup.compose?.appName || volumeBackup.appName}_${volumeBackup.serviceName || "service"}`
+				: undefined;
+
+	const withVolumeBackupLock = (body: string) => {
+		if (!serviceLockId) {
+			return body;
+		}
+		const lockPath = `${VOLUME_BACKUP_LOCK_PATH}-${serviceLockId}`;
+		return `
+		set -e
+
+		LOCK_PATH=${shEscape(lockPath)}
+		echo "Waiting for volume backup lock: $LOCK_PATH"
+
+		if command -v flock >/dev/null 2>&1; then
+			exec 9>"$LOCK_PATH"
+			flock 9
+		else
+			LOCK_DIR="$LOCK_PATH.dir"
+			while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+				echo "Waiting for volume backup lock: $LOCK_PATH"
+				sleep 5
+			done
+			trap 'rm -rf "$LOCK_DIR"' EXIT
+		fi
+
+		echo "Volume backup lock acquired"
+		${body}
+		echo "Volume backup lock released"
+		`;
+	};
 
 		if (isAllMounts) {
 			const buildDockerArgsFromMounts = `
@@ -116,7 +152,7 @@ export const backupVolume = async (
 			if (serviceType === "application") {
 				const appName = volumeBackup.application?.appName;
 				if (!appName) throw new Error("Application not found for ALL_MOUNTS");
-				return `
+				return withVolumeBackupLock(`
 				SERVICE_NAME=${shEscape(appName)}
 				CONTAINER_ID=$(docker ps -q --filter "label=com.docker.swarm.service.name=$SERVICE_NAME" | head -n 1)
 				if [ -z "$CONTAINER_ID" ]; then
@@ -125,7 +161,7 @@ export const backupVolume = async (
 				fi
 				MOUNTS_RAW=$(docker inspect -f '{{range .Mounts}}{{.Type}}|{{.Source}}|{{.Name}}|{{.Destination}}|{{.RW}}{{\"\\n\"}}{{end}}' "$CONTAINER_ID")
 				${baseCommand}
-				`;
+				`);
 			}
 
 			if (serviceType === "compose") {
@@ -141,7 +177,7 @@ export const backupVolume = async (
 				CONTAINER_ID=$(docker ps -q --filter "label=com.docker.swarm.service.name=$SERVICE_NAME" | head -n 1)`
 						: `CONTAINER_ID=$(docker ps -q --filter "label=com.docker.compose.project=${compose.appName}" --filter "label=com.docker.compose.service=${serviceName}" | head -n 1)`;
 
-				return `
+				return withVolumeBackupLock(`
 				${containerIdCommand}
 				if [ -z "$CONTAINER_ID" ]; then
 					echo "No running container found for compose service: ${compose.appName}/${serviceName}"
@@ -149,14 +185,14 @@ export const backupVolume = async (
 				fi
 				MOUNTS_RAW=$(docker inspect -f '{{range .Mounts}}{{.Type}}|{{.Source}}|{{.Name}}|{{.Destination}}|{{.RW}}{{\"\\n\"}}{{end}}' "$CONTAINER_ID")
 				${baseCommand}
-				`;
+				`);
 			}
 		}
 
 		if (serviceType === "application") {
 			const appName = volumeBackup.application?.appName;
 			if (!appName) throw new Error("Application not found for ALL_MOUNTS");
-			return `
+			return withVolumeBackupLock(`
 			SERVICE_NAME=${shEscape(appName)}
 			CONTAINER_ID=$(docker ps -q --filter "label=com.docker.swarm.service.name=$SERVICE_NAME" | head -n 1)
 			if [ -z "$CONTAINER_ID" ]; then
@@ -168,11 +204,11 @@ export const backupVolume = async (
 			echo "Stopping application to 0 replicas"
 			ACTUAL_REPLICAS=$(docker service inspect $SERVICE_NAME --format "{{.Spec.Mode.Replicated.Replicas}}")
 			echo "Actual replicas: $ACTUAL_REPLICAS"
-			docker service scale $SERVICE_NAME=0
+			docker service update --replicas=0 $SERVICE_NAME
 			${baseCommand}
 			echo "Starting application to $ACTUAL_REPLICAS replicas"
-			docker service scale $SERVICE_NAME=$ACTUAL_REPLICAS
-			`;
+			docker service update --replicas=$ACTUAL_REPLICAS --with-registry-auth $SERVICE_NAME
+			`);
 		}
 
 		if (serviceType === "compose") {
@@ -181,7 +217,7 @@ export const backupVolume = async (
 			if (!serviceName) throw new Error("serviceName is required for ALL_MOUNTS");
 
 			if (compose.composeType === "stack") {
-				return `
+				return withVolumeBackupLock(`
 				SERVICE_NAME=${shEscape(`${compose.appName}_${serviceName}`)}
 				CONTAINER_ID=$(docker ps -q --filter "label=com.docker.swarm.service.name=$SERVICE_NAME" | head -n 1)
 				if [ -z "$CONTAINER_ID" ]; then
@@ -193,14 +229,14 @@ export const backupVolume = async (
 				echo "Stopping compose to 0 replicas"
 				ACTUAL_REPLICAS=$(docker service inspect $SERVICE_NAME --format "{{.Spec.Mode.Replicated.Replicas}}")
 				echo "Actual replicas: $ACTUAL_REPLICAS"
-				docker service scale $SERVICE_NAME=0
+				docker service update --replicas=0 $SERVICE_NAME
 				${baseCommand}
 				echo "Starting compose to $ACTUAL_REPLICAS replicas"
-				docker service scale $SERVICE_NAME=$ACTUAL_REPLICAS
-				`;
+				docker service update --replicas=$ACTUAL_REPLICAS --with-registry-auth $SERVICE_NAME
+				`);
 			}
 
-			return `
+			return withVolumeBackupLock(`
 			CONTAINER_ID=$(docker ps -q --filter "label=com.docker.compose.project=${compose.appName}" --filter "label=com.docker.compose.service=${serviceName}" | head -n 1)
 			if [ -z "$CONTAINER_ID" ]; then
 				echo "No running container found for compose service: ${compose.appName}/${serviceName}"
@@ -214,7 +250,7 @@ export const backupVolume = async (
 			echo "Starting compose container"
 			docker start $CONTAINER_ID
 			echo "Compose container started"
-			`;
+			`);
 		}
 
 		return `
@@ -277,15 +313,15 @@ export const backupVolume = async (
 	}
 
 	if (serviceType === "application") {
-		return `
+		return withVolumeBackupLock(`
 		echo "Stopping application to 0 replicas"
 		ACTUAL_REPLICAS=$(docker service inspect ${volumeBackup.application?.appName} --format "{{.Spec.Mode.Replicated.Replicas}}")
 		echo "Actual replicas: $ACTUAL_REPLICAS"
-		docker service scale ${volumeBackup.application?.appName}=0
+		docker service update --replicas=0 ${volumeBackup.application?.appName}
         ${baseCommand}
 		echo "Starting application to $ACTUAL_REPLICAS replicas"
-        docker service scale ${volumeBackup.application?.appName}=$ACTUAL_REPLICAS
-  `;
+        docker service update --replicas=$ACTUAL_REPLICAS --with-registry-auth ${volumeBackup.application?.appName}
+  `);
 	}
 	if (serviceType === "compose") {
 		const compose = await findComposeById(
@@ -300,10 +336,10 @@ export const backupVolume = async (
 			echo "Service name: ${compose.appName}_${volumeBackup.serviceName}"
             ACTUAL_REPLICAS=$(docker service inspect ${compose.appName}_${volumeBackup.serviceName} --format "{{.Spec.Mode.Replicated.Replicas}}")
             echo "Actual replicas: $ACTUAL_REPLICAS"
-            docker service scale ${compose.appName}_${volumeBackup.serviceName}=0`;
+            docker service update --replicas=0 ${compose.appName}_${volumeBackup.serviceName}`;
 			startCommand = `
 			echo "Starting compose to $ACTUAL_REPLICAS replicas"
-			docker service scale ${compose.appName}_${volumeBackup.serviceName}=$ACTUAL_REPLICAS`;
+			docker service update --replicas=$ACTUAL_REPLICAS --with-registry-auth ${compose.appName}_${volumeBackup.serviceName}`;
 		} else {
 			stopCommand = `
 			echo "Stopping compose container"
@@ -315,10 +351,10 @@ export const backupVolume = async (
 			echo "Compose container started"
 			`;
 		}
-		return `
+		return withVolumeBackupLock(`
         ${stopCommand}
         ${baseCommand}
         ${startCommand}
-  `;
+  `);
 	}
 };

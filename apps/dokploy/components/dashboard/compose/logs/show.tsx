@@ -97,6 +97,7 @@ export const ShowDockerLogsCompose = ({
 									<Badge variant={badgeStateColor(container.state)}>
 										{container.state}
 									</Badge>
+									{container.status ? ` ${container.status}` : ""}
 								</SelectItem>
 							))}
 							<SelectLabel>

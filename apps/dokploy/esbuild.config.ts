@@ -24,6 +24,7 @@ try {
 		.build({
 			entryPoints: {
 				server: "server/server.ts",
+				"wait-for-postgres": "wait-for-postgres.ts",
 				"reset-password": "reset-password.ts",
 				"reset-2fa": "reset-2fa.ts",
 			},

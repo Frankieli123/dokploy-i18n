@@ -2,6 +2,7 @@ import {
 	deployApplication,
 	deployPreviewApplication,
 	rebuildApplication,
+	rebuildPreviewApplication,
 	updateApplicationStatus,
 } from "@dokploy/server/services/application";
 import {
@@ -56,7 +57,14 @@ export const deploy = async (job: DeployJob) => {
 				previewStatus: "running",
 			});
 			if (job.server) {
-				if (job.type === "deploy") {
+				if (job.type === "redeploy") {
+					await rebuildPreviewApplication({
+						applicationId: job.applicationId,
+						titleLog: job.titleLog || "Rebuild Preview Deployment",
+						descriptionLog: job.descriptionLog || "",
+						previewDeploymentId: job.previewDeploymentId,
+					});
+				} else if (job.type === "deploy") {
 					await deployPreviewApplication({
 						applicationId: job.applicationId,
 						titleLog: job.titleLog || "Preview Deployment",

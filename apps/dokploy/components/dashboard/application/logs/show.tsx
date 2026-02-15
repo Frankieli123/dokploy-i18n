@@ -35,6 +35,7 @@ export const DockerLogs = dynamic(
 export const badgeStateColor = (state: string) => {
 	switch (state) {
 		case "running":
+		case "ready":
 			return "green";
 		case "exited":
 		case "shutdown":
@@ -94,6 +95,9 @@ export const ShowDockerLogs = ({ appName, serverId }: Props) => {
 	const isLoading = option === "native" ? containersLoading : servicesLoading;
 	const containersLenght =
 		option === "native" ? containers?.length : services?.length;
+	const selectedService = services?.find((service) => {
+		return service.containerId === containerId;
+	});
 
 	return (
 		<Card className="bg-background">
@@ -148,6 +152,7 @@ export const ShowDockerLogs = ({ appName, serverId }: Props) => {
 											<Badge variant={badgeStateColor(container.state)}>
 												{container.state}
 											</Badge>
+											{container.status ? ` ${container.status}` : ""}
 										</SelectItem>
 									))}
 								</div>
@@ -163,6 +168,9 @@ export const ShowDockerLogs = ({ appName, serverId }: Props) => {
 											<Badge variant={badgeStateColor(container.state)}>
 												{container.state}
 											</Badge>
+											{container.currentState
+												? ` ${container.currentState}`
+												: ""}
 										</SelectItem>
 									))}
 								</>
@@ -176,6 +184,12 @@ export const ShowDockerLogs = ({ appName, serverId }: Props) => {
 						</SelectGroup>
 					</SelectContent>
 				</Select>
+				{option === "swarm" && selectedService?.error && (
+					<div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+						<span className="font-medium">Error: </span>
+						{selectedService.error}
+					</div>
+				)}
 				<DockerLogs
 					serverId={serverId || ""}
 					containerId={containerId || "select-a-container"}

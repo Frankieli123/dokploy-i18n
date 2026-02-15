@@ -49,7 +49,8 @@ export const refreshGiteaToken = async (giteaProviderId: string) => {
 		}
 
 		// Token is expired or about to expire, refresh it
-		const tokenEndpoint = `${giteaProvider.giteaUrl}/login/oauth/access_token`;
+		const baseUrl = giteaProvider.internalUrl || giteaProvider.giteaUrl;
+		const tokenEndpoint = `${baseUrl}/login/oauth/access_token`;
 		const params = new URLSearchParams({
 			grant_type: "refresh_token",
 			refresh_token: giteaProvider.refreshToken,
@@ -207,7 +208,10 @@ export const testGiteaConnection = async (input: { giteaId: string }) => {
 			});
 		}
 
-		const baseUrl = provider.giteaUrl.replace(/\/+$/, "");
+		const baseUrl = (provider.internalUrl || provider.giteaUrl).replace(
+			/\/+$/,
+			"",
+		);
 
 		// Use /user/repos to get authenticated user's repositories with pagination
 		let allRepos = 0;
@@ -264,7 +268,10 @@ export const getGiteaRepositories = async (giteaId?: string) => {
 	await refreshGiteaToken(giteaId);
 	const giteaProvider = await findGiteaById(giteaId);
 
-	const baseUrl = giteaProvider.giteaUrl.replace(/\/+$/, "");
+	const baseUrl = (giteaProvider.internalUrl || giteaProvider.giteaUrl).replace(
+		/\/+$/,
+		"",
+	);
 
 	// Use /user/repos to get authenticated user's repositories with pagination
 	let allRepositories: any[] = [];
@@ -329,7 +336,10 @@ export const getGiteaBranches = async (input: {
 
 	const giteaProvider = await findGiteaById(input.giteaId);
 
-	const baseUrl = giteaProvider.giteaUrl.replace(/\/+$/, "");
+	const baseUrl = (giteaProvider.internalUrl || giteaProvider.giteaUrl).replace(
+		/\/+$/,
+		"",
+	);
 
 	// Handle pagination for branches
 	let allBranches: any[] = [];

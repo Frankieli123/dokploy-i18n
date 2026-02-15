@@ -25,6 +25,7 @@ import {
 	FormLabel,
 	FormMessage,
 } from "@/components/ui/form";
+import { Switch } from "@/components/ui/switch";
 import { api } from "@/utils/api";
 
 const UpdateTraefikConfigSchema = z.object({
@@ -60,6 +61,7 @@ export const validateAndFormatYAML = (yamlText: string) => {
 
 export const UpdateTraefikConfig = ({ applicationId }: Props) => {
 	const [open, setOpen] = useState(false);
+	const [skipYamlValidation, setSkipYamlValidation] = useState(false);
 	const { t } = useTranslation("common");
 	const { data, refetch } = api.application.readTraefikConfig.useQuery(
 		{
@@ -88,7 +90,7 @@ export const UpdateTraefikConfig = ({ applicationId }: Props) => {
 
 	const onSubmit = async (data: UpdateTraefikConfig) => {
 		const { valid, error } = validateAndFormatYAML(data.traefikConfig);
-		if (!valid) {
+		if (!valid && !skipYamlValidation) {
 			form.setError("traefikConfig", {
 				type: "manual",
 				message: (error as string) || t("traefik.config.error.invalidYaml"),
@@ -118,6 +120,7 @@ export const UpdateTraefikConfig = ({ applicationId }: Props) => {
 				setOpen(open);
 				if (!open) {
 					form.reset();
+					setSkipYamlValidation(false);
 				}
 			}}
 		>
@@ -171,6 +174,15 @@ routers:
 										</pre>
 									</FormItem>
 								)}
+							/>
+						</div>
+						<div className="flex items-center justify-between rounded-lg border p-3">
+							<FormLabel className="mb-0">
+								{t("traefik.config.skipValidation")}
+							</FormLabel>
+							<Switch
+								checked={skipYamlValidation}
+								onCheckedChange={setSkipYamlValidation}
 							/>
 						</div>
 					</form>

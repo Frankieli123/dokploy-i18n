@@ -52,7 +52,7 @@
     "better-auth": "v1.2.8-beta.7",
     "bl": "6.0.11",
     "boxen": "^7.1.1",
-    "bullmq": "5.4.2",
+    "bullmq": "5.67.3",
     "date-fns": "3.6.0",
     "dockerode": "4.0.2",
     "dotenv": "16.4.5",

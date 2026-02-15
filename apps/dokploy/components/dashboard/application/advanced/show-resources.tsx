@@ -1,8 +1,8 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { InfoIcon } from "lucide-react";
+import { InfoIcon, Plus, Trash2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { useFieldArray, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { AlertBlock } from "@/components/shared/alert-block";
@@ -24,6 +24,13 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import {
 	Tooltip,
 	TooltipContent,
 	TooltipProvider,
@@ -31,12 +38,35 @@ import {
 } from "@/components/ui/tooltip";
 import { api } from "@/utils/api";
 
+const ulimitSchema = z.object({
+	Name: z.string().min(1),
+	Soft: z.coerce.number().int().min(-1),
+	Hard: z.coerce.number().int().min(-1),
+});
+
 const addResourcesSchema = z.object({
 	memoryReservation: z.string().optional(),
 	cpuLimit: z.string().optional(),
 	memoryLimit: z.string().optional(),
 	cpuReservation: z.string().optional(),
+	ulimitsSwarm: z.array(ulimitSchema).optional(),
 });
+
+const ULIMIT_PRESETS = [
+	{ value: "nofile", label: "nofile" },
+	{ value: "nproc", label: "nproc" },
+	{ value: "memlock", label: "memlock" },
+	{ value: "stack", label: "stack" },
+	{ value: "core", label: "core" },
+	{ value: "cpu", label: "cpu" },
+	{ value: "data", label: "data" },
+	{ value: "fsize", label: "fsize" },
+	{ value: "locks", label: "locks" },
+	{ value: "msgqueue", label: "msgqueue" },
+	{ value: "nice", label: "nice" },
+	{ value: "rtprio", label: "rtprio" },
+	{ value: "sigpending", label: "sigpending" },
+] as const;
 
 export type ServiceType =
 	| "postgres"
@@ -88,8 +118,14 @@ export const ShowResources = ({ id, type }: Props) => {
 			cpuReservation: "",
 			memoryLimit: "",
 			memoryReservation: "",
+			ulimitsSwarm: [],
 		},
 		resolver: zodResolver(addResourcesSchema),
+	});
+
+	const { fields, append, remove } = useFieldArray({
+		control: form.control,
+		name: "ulimitsSwarm",
 	});
 
 	useEffect(() => {
@@ -99,6 +135,7 @@ export const ShowResources = ({ id, type }: Props) => {
 				cpuReservation: data?.cpuReservation || undefined,
 				memoryLimit: data?.memoryLimit || undefined,
 				memoryReservation: data?.memoryReservation || undefined,
+				ulimitsSwarm: data?.ulimitsSwarm || [],
 			});
 		}
 	}, [data, form, form.reset]);
@@ -115,6 +152,10 @@ export const ShowResources = ({ id, type }: Props) => {
 			cpuReservation: formData.cpuReservation || null,
 			memoryLimit: formData.memoryLimit || null,
 			memoryReservation: formData.memoryReservation || null,
+			ulimitsSwarm:
+				formData.ulimitsSwarm && formData.ulimitsSwarm.length > 0
+					? formData.ulimitsSwarm
+					: null,
 		})
 			.then(async () => {
 				toast.success(t("resources.toast.updateSuccess"));
@@ -288,6 +329,137 @@ export const ShowResources = ({ id, type }: Props) => {
 									);
 								}}
 							/>
+						</div>
+						<div className="space-y-4">
+							<div className="flex items-center justify-between">
+								<div className="flex items-center gap-2">
+									<FormLabel className="text-base">
+										{t("resources.form.ulimitsLabel")}
+									</FormLabel>
+									<TooltipProvider>
+										<Tooltip delayDuration={0}>
+											<TooltipTrigger>
+												<InfoIcon className="h-4 w-4 text-muted-foreground" />
+											</TooltipTrigger>
+											<TooltipContent>
+												<p>{t("resources.tooltip.ulimits")}</p>
+											</TooltipContent>
+										</Tooltip>
+									</TooltipProvider>
+								</div>
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									onClick={() => append({ Name: "nofile", Soft: 65535, Hard: 65535 })}
+								>
+									<Plus className="mr-1 h-4 w-4" />
+									{t("resources.form.addUlimit")}
+								</Button>
+							</div>
+
+							{fields.length === 0 ? (
+								<p className="text-sm text-muted-foreground">
+									{t("resources.form.noUlimits")}
+								</p>
+							) : (
+								<div className="space-y-3">
+									{fields.map((field, index) => (
+										<div
+											key={field.id}
+											className="flex items-start gap-3 rounded-lg border bg-muted/30 p-3"
+										>
+											<FormField
+												control={form.control}
+												name={`ulimitsSwarm.${index}.Name`}
+												render={({ field }) => (
+													<FormItem className="flex-1">
+														<FormLabel className="text-xs">
+															{t("resources.form.ulimitType")}
+														</FormLabel>
+														<Select
+															onValueChange={field.onChange}
+															value={field.value}
+														>
+															<FormControl>
+																<SelectTrigger>
+																	<SelectValue
+																		placeholder={t("resources.form.selectUlimit")}
+																	/>
+																</SelectTrigger>
+															</FormControl>
+															<SelectContent>
+																{ULIMIT_PRESETS.map((preset) => (
+																	<SelectItem
+																		key={preset.value}
+																		value={preset.value}
+																	>
+																		{preset.label}
+																	</SelectItem>
+																))}
+															</SelectContent>
+														</Select>
+														<FormMessage />
+													</FormItem>
+												)}
+											/>
+											<FormField
+												control={form.control}
+												name={`ulimitsSwarm.${index}.Soft`}
+												render={({ field }) => (
+													<FormItem className="w-32">
+														<FormLabel className="text-xs">
+															{t("resources.form.softLimit")}
+														</FormLabel>
+														<FormControl>
+															<Input
+																type="number"
+																min={-1}
+																{...field}
+																onChange={(event) =>
+																	field.onChange(Number(event.target.value))
+																}
+															/>
+														</FormControl>
+														<FormMessage />
+													</FormItem>
+												)}
+											/>
+											<FormField
+												control={form.control}
+												name={`ulimitsSwarm.${index}.Hard`}
+												render={({ field }) => (
+													<FormItem className="w-32">
+														<FormLabel className="text-xs">
+															{t("resources.form.hardLimit")}
+														</FormLabel>
+														<FormControl>
+															<Input
+																type="number"
+																min={-1}
+																{...field}
+																onChange={(event) =>
+																	field.onChange(Number(event.target.value))
+																}
+															/>
+														</FormControl>
+														<FormMessage />
+													</FormItem>
+												)}
+											/>
+											<Button
+												type="button"
+												variant="ghost"
+												size="icon"
+												className="mt-6 text-destructive hover:text-destructive"
+												onClick={() => remove(index)}
+											>
+												<Trash2 className="h-4 w-4" />
+											</Button>
+										</div>
+									))}
+								</div>
+							)}
 						</div>
 						<div className="flex w-full justify-end">
 							<Button isLoading={isLoading} type="submit">

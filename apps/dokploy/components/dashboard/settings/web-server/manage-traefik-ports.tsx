@@ -35,6 +35,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { useHealthCheckAfterMutation } from "@/hooks/use-health-check-after-mutation";
 import { api } from "@/utils/api";
 
 interface Props {
@@ -83,9 +84,15 @@ export const ManageTraefikPorts = ({ children, serverId }: Props) => {
 		});
 
 	const { mutateAsync: updatePorts, isLoading } =
-		api.settings.updateTraefikPorts.useMutation({
+		api.settings.updateTraefikPorts.useMutation();
+
+	const { execute: executeWithHealthCheck, isExecuting: isHealthCheckExecuting } =
+		useHealthCheckAfterMutation({
+			initialDelay: 5000,
+			successMessage: t("settings.server.webServer.traefik.portsUpdated"),
 			onSuccess: () => {
 				refetchPorts();
+				setOpen(false);
 			},
 		});
 
@@ -105,14 +112,16 @@ export const ManageTraefikPorts = ({ children, serverId }: Props) => {
 	};
 
 	const onSubmit = async (data: TraefikPortsForm) => {
-		try {
-			await updatePorts({
+		await executeWithHealthCheck(() =>
+			updatePorts({
 				serverId,
 				additionalPorts: data.ports,
-			});
-			toast.success(t("settings.server.webServer.traefik.portsUpdated"));
-			setOpen(false);
-		} catch {}
+			}),
+		).catch((error) => {
+			toast.error(
+				(error as Error)?.message || "Failed to update Traefik ports",
+			);
+		});
 	};
 
 	return (
@@ -336,7 +345,7 @@ export const ManageTraefikPorts = ({ children, serverId }: Props) => {
 									type="submit"
 									variant="default"
 									className="text-sm"
-									isLoading={isLoading}
+									isLoading={isLoading || isHealthCheckExecuting}
 								>
 									{t("settings.common.save")}
 								</Button>

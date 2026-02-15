@@ -19,6 +19,7 @@ import {
 import {
 	Form,
 	FormControl,
+	FormDescription,
 	FormField,
 	FormItem,
 	FormLabel,
@@ -36,6 +37,7 @@ const createSchema = (t: (key: string) => string) =>
 			message: t("settings.gitProviders.validation.gitlabUrlInvalid"),
 		}),
 		groupName: z.string().optional(),
+		internalUrl: z.string().optional(),
 	});
 
 type Schema = z.infer<ReturnType<typeof createSchema>>;
@@ -74,6 +76,7 @@ export const EditGitlabProvider = ({ gitlabId }: Props) => {
 	useEffect(() => {
 		form.reset({
 			groupName: gitlab?.groupName || "",
+			internalUrl: gitlab?.internalUrl || "",
 			name: gitlab?.gitProvider.name || "",
 			gitlabUrl: gitlab?.gitlabUrl || "",
 		});
@@ -84,6 +87,7 @@ export const EditGitlabProvider = ({ gitlabId }: Props) => {
 			gitlabId,
 			gitProviderId: gitlab?.gitProviderId || "",
 			groupName: data.groupName || "",
+			internalUrl: data.internalUrl || null,
 			name: data.name || "",
 			gitlabUrl: data.gitlabUrl || "",
 		})
@@ -164,6 +168,34 @@ export const EditGitlabProvider = ({ gitlabId }: Props) => {
 													{...field}
 												/>
 											</FormControl>
+											<FormMessage />
+										</FormItem>
+									)}
+								/>
+
+								<FormField
+									control={form.control}
+									name="internalUrl"
+									render={({ field }) => (
+										<FormItem>
+											<FormLabel>
+												{t(
+													"settings.gitProviders.gitlab.edit.internalUrlLabel",
+												)}
+											</FormLabel>
+											<FormControl>
+												<Input
+													placeholder={t(
+														"settings.gitProviders.gitlab.edit.internalUrlPlaceholder",
+													)}
+													{...field}
+												/>
+											</FormControl>
+											<FormDescription>
+												{t(
+													"settings.gitProviders.gitlab.edit.internalUrlDescription",
+												)}
+											</FormDescription>
 											<FormMessage />
 										</FormItem>
 									)}

@@ -5,6 +5,9 @@ import {
 	execAsync,
 	execAsyncRemote,
 } from "@dokploy/server/utils/process/execAsync";
+import { and, eq } from "drizzle-orm";
+import { db } from "../db";
+import { compose } from "../db/schema";
 import {
 	initializeStandaloneTraefik,
 	initializeTraefikService,
@@ -72,12 +75,12 @@ export const getDokployImageTag = () => {
 	return process.env.RELEASE_TAG || "latest";
 };
 
-export const getDokployImage = () => {
-	return `a3180623/dokploy-i18n:${getDokployImageTag()}`;
+export const getDokployImage = (tag?: string | null) => {
+	return `a3180623/dokploy-i18n:${tag || getDokployImageTag()}`;
 };
 
-export const pullLatestRelease = async () => {
-	const stream = await docker.pull(getDokployImage());
+export const pullLatestRelease = async (tag?: string | null) => {
+	const stream = await docker.pull(getDokployImage(tag));
 	await new Promise((resolve, reject) => {
 		docker.modem.followProgress(stream, (err, res) =>
 			err ? reject(err) : resolve(res),
@@ -354,11 +357,17 @@ fi`;
 export const reloadDockerResource = async (
 	resourceName: string,
 	serverId?: string,
+	version?: string | null,
 ) => {
 	const resourceType = await getDockerResourceType(resourceName, serverId);
 	let command = "";
 	if (resourceType === "service") {
-		command = `docker service update --force ${resourceName}`;
+		if (resourceName === "dokploy" && version) {
+			const image = getDokployImage(version);
+			command = `docker service update --force --image ${image} ${resourceName} || docker service update --force ${resourceName}`;
+		} else {
+			command = `docker service update --force ${resourceName}`;
+		}
 	} else if (resourceType === "standalone") {
 		command = `docker restart ${resourceName}`;
 	} else {
@@ -465,6 +474,26 @@ export const readPorts = async (
 	);
 };
 
+export const checkPortInUse = async (
+	port: number,
+	serverId?: string,
+): Promise<{ isInUse: boolean; conflictingContainer?: string }> => {
+	try {
+		const command = `docker ps -a --format '{{.Names}}' | grep -v '^dokploy-traefik$' | while read name; do docker port "$name" 2>/dev/null | grep -q ':${port}' && echo "$name" && break; done || true`;
+		const { stdout } = serverId
+			? await execAsyncRemote(serverId, command)
+			: await execAsync(command);
+		const container = stdout.trim();
+		return {
+			isInUse: !!container,
+			conflictingContainer: container || undefined,
+		};
+	} catch (error) {
+		console.error("Error checking port availability:", error);
+		return { isInUse: false };
+	}
+};
+
 export const writeTraefikSetup = async (input: TraefikOptions) => {
 	const resourceType = await getDockerResourceType(
 		"dokploy-traefik",
@@ -477,13 +506,43 @@ export const writeTraefikSetup = async (input: TraefikOptions) => {
 			additionalPorts: input.additionalPorts,
 			serverId: input.serverId,
 		});
+		await reconnectServicesToTraefik(input.serverId);
 	} else if (resourceType === "standalone") {
 		await initializeStandaloneTraefik({
 			env: input.env,
 			additionalPorts: input.additionalPorts,
 			serverId: input.serverId,
 		});
+		await reconnectServicesToTraefik(input.serverId);
 	} else {
 		throw new Error("Traefik resource type not found");
+	}
+};
+
+export const reconnectServicesToTraefik = async (serverId?: string) => {
+	const composeResult = await db.query.compose.findMany({
+		where: and(
+			...(serverId ? [eq(compose.serverId, serverId)] : []),
+			eq(compose.isolatedDeployment, true),
+		),
+	});
+
+	if (!composeResult.length) {
+		return;
+	}
+
+	let commands = "";
+	for (const composeItem of composeResult) {
+		commands += `docker network connect ${composeItem.appName} $(docker ps --filter "name=dokploy-traefik" -q) >/dev/null 2>&1\n`;
+	}
+
+	if (!commands.trim()) {
+		return;
+	}
+
+	if (serverId) {
+		await execAsyncRemote(serverId, commands);
+	} else {
+		await execAsync(commands);
 	}
 };

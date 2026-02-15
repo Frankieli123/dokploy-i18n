@@ -198,6 +198,7 @@ table application {
   modeSwarm json
   labelsSwarm json
   networkSwarm json
+  ulimitsSwarm json
   replicas integer [not null, default: 1]
   applicationStatus applicationStatus [not null, default: 'idle']
   buildType buildType [not null, default: 'nixpacks']
@@ -387,6 +388,7 @@ table github {
 table gitlab {
   gitlabId text [pk, not null]
   gitlabUrl text [not null, default: 'https://gitlab.com']
+  internalUrl text
   application_id text
   redirect_uri text
   secret text
@@ -400,6 +402,7 @@ table gitlab {
 table gitea {
   giteaId text [pk, not null]
   giteaUrl text [not null, default: 'https://gitea.com']
+  internalUrl text
   redirect_uri text
   client_id text [not null]
   client_secret text [not null]
@@ -446,6 +449,7 @@ table mariadb {
   cpuReservation text
   cpuLimit text
   externalPort integer
+  ulimitsSwarm json
   applicationStatus applicationStatus [not null, default: 'idle']
   createdAt text [not null]
   projectId text [not null]
@@ -475,6 +479,7 @@ table mongo {
   cpuReservation text
   cpuLimit text
   externalPort integer
+  ulimitsSwarm json
   applicationStatus applicationStatus [not null, default: 'idle']
   createdAt text [not null]
   projectId text [not null]
@@ -517,6 +522,7 @@ table mysql {
   cpuReservation text
   cpuLimit text
   externalPort integer
+  ulimitsSwarm json
   applicationStatus applicationStatus [not null, default: 'idle']
   createdAt text [not null]
   projectId text [not null]
@@ -576,6 +582,7 @@ table postgres {
   memoryLimit text
   cpuReservation text
   cpuLimit text
+  ulimitsSwarm json
   applicationStatus applicationStatus [not null, default: 'idle']
   createdAt text [not null]
   projectId text [not null]
@@ -631,6 +638,7 @@ table redis {
   cpuReservation text
   cpuLimit text
   externalPort integer
+  ulimitsSwarm json
   createdAt text [not null]
   applicationStatus applicationStatus [not null, default: 'idle']
   projectId text [not null]

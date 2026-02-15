@@ -12,7 +12,7 @@ export default async function handler(
 	}
 
 	const gitlab = await findGitlabById(gitlabId as string);
-	const gitlabUrl = new URL(gitlab.gitlabUrl);
+	const gitlabUrl = new URL(gitlab.internalUrl || gitlab.gitlabUrl);
 
 	const headers: HeadersInit = {
 		"Content-Type": "application/x-www-form-urlencoded",

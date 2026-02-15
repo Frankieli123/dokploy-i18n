@@ -15,7 +15,8 @@ const parseState = (state: string): string | null => {
 
 // Helper to fetch access token from Gitea
 const fetchAccessToken = async (gitea: Gitea, code: string) => {
-	const response = await fetch(`${gitea.giteaUrl}/login/oauth/access_token`, {
+	const baseUrl = gitea.internalUrl || gitea.giteaUrl;
+	const response = await fetch(`${baseUrl}/login/oauth/access_token`, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/x-www-form-urlencoded",

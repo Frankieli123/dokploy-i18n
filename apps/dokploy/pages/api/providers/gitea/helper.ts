@@ -9,6 +9,7 @@ export interface Gitea {
 	refreshToken: string | null;
 	expiresAt: number | null;
 	giteaUrl: string;
+	internalUrl: string | null;
 	clientId: string | null;
 	clientSecret: string | null;
 	organizationName?: string;

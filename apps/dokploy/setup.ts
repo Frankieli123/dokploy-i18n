@@ -1,5 +1,6 @@
 import { exit } from "node:process";
-import { execAsync } from "@dokploy/server";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import { setupDirectories } from "@dokploy/server/setup/config-paths";
 import { initializePostgres } from "@dokploy/server/setup/postgres-setup";
 import { initializeRedis } from "@dokploy/server/setup/redis-setup";
@@ -13,6 +14,8 @@ import {
 	createDefaultTraefikConfig,
 	initializeStandaloneTraefik,
 } from "@dokploy/server/setup/traefik-setup";
+
+const execAsync = promisify(exec);
 
 (async () => {
 	try {

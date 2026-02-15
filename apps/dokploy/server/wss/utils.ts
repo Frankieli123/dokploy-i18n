@@ -60,8 +60,11 @@ export const setupLocalServerSSHKey = async () => {
 	return privateKey;
 };
 
-export const readValidDirectory = (directory: string) => {
-	const { BASE_PATH } = paths();
+export const readValidDirectory = (
+	directory: string,
+	serverId?: string | null,
+) => {
+	const { BASE_PATH } = paths(!!serverId);
 
 	const resolvedBase = path.resolve(BASE_PATH);
 	const resolvedDir = path.resolve(directory);

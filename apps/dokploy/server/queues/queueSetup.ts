@@ -1,28 +1,45 @@
+import { IS_CLOUD } from "@dokploy/server";
 import {
 	execAsync,
 	execAsyncRemote,
 } from "@dokploy/server/utils/process/execAsync";
+import type { Job } from "bullmq";
 import { Queue } from "bullmq";
+import { deploymentWorker } from "./deployments-queue";
 import { redisConfig } from "./redis-connection";
 
-const myQueue = new Queue("deployments", {
-	connection: redisConfig,
-	prefix: process.env.BULLMQ_PREFIX || undefined,
+const createNoopQueue = () => ({
+	name: "deployments",
+	getJobs: () => Promise.resolve([] as Job[]),
+	getJobCounts: () => Promise.resolve({}),
+	add: () =>
+		Promise.resolve({ id: "noop", remove: () => Promise.resolve() } as Job),
+	close: () => Promise.resolve(),
+	on: () => {},
 });
 
-process.on("SIGTERM", () => {
-	myQueue.close();
-	process.exit(0);
-});
+const myQueue = !IS_CLOUD
+	? new Queue("deployments", {
+			connection: redisConfig,
+			prefix: process.env.BULLMQ_PREFIX || undefined,
+		})
+	: (createNoopQueue() as unknown as Queue);
 
-myQueue.on("error", (error) => {
-	if ((error as any).code === "ECONNREFUSED") {
-		console.error(
-			"Make sure you have installed Redis and it is running.",
-			error,
-		);
-	}
-});
+if (!IS_CLOUD) {
+	process.on("SIGTERM", () => {
+		myQueue.close();
+		process.exit(0);
+	});
+
+	myQueue.on("error", (error) => {
+		if ((error as any).code === "ECONNREFUSED") {
+			console.error(
+				"Make sure you have installed Redis and it is running.",
+				error,
+			);
+		}
+	});
+}
 
 export const cleanQueuesByApplication = async (applicationId: string) => {
 	const jobs = await myQueue.getJobs(["waiting", "delayed"]);
@@ -44,6 +61,22 @@ export const cleanQueuesByCompose = async (composeId: string) => {
 			console.log(`Removed job ${job.id} for compose ${composeId}`);
 		}
 	}
+};
+
+export const cleanAllDeploymentQueue = async () => {
+	const worker = deploymentWorker as unknown as {
+		cancelAllJobs?: (reason?: string) => Promise<void>;
+	};
+	if (typeof worker.cancelAllJobs === "function") {
+		await worker.cancelAllJobs("User requested cancellation");
+	}
+
+	const jobs = await myQueue.getJobs(["waiting", "delayed"]);
+	for (const job of jobs) {
+		await job.remove();
+	}
+
+	return true;
 };
 
 export const killDockerBuild = async (

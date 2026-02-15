@@ -2147,6 +2147,20 @@ function buildChatTools(params: {
 					};
 				}
 
+				if (typeof params.runId === "string" && params.runId.trim().length > 0) {
+					await saveAgentEventMessage({
+						conversationId: params.conversationId,
+						payload: {
+							type: "agent.step.start",
+							runId: params.runId.trim(),
+							stepId: execution.executionId,
+							executionId: execution.executionId,
+							toolName: t.name,
+							parametersPreview: safeJsonForPrompt(validatedParams, 4000),
+						},
+					});
+				}
+
 				try {
 					const rawResult = await t.execute(
 						validation.data as never,
@@ -4929,6 +4943,20 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 				status: "executing",
 				startedAt: exec.startedAt || new Date().toISOString(),
 			});
+			await saveAgentEventMessage({
+				conversationId: run.conversationId,
+				payload: {
+					type: "agent.step.start",
+					runId,
+					stepId: exec.executionId,
+					executionId: exec.executionId,
+					toolName: exec.toolName,
+					parametersPreview:
+						exec.parameters != null
+							? safeJsonForPrompt(exec.parameters, 4000)
+							: undefined,
+				},
+			});
 			let rawResult: unknown;
 			try {
 				rawResult = await toolRegistry.execute(
@@ -5350,11 +5378,26 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 					turnToolResults
 						.map((tr) => {
 							if (!tr || typeof tr !== "object") return "";
-							const resultValue = (tr as { result?: unknown }).result;
+							const directExecutionId =
+								typeof (tr as { executionId?: unknown }).executionId === "string"
+									? (tr as { executionId: string }).executionId
+									: "";
+							if (directExecutionId.trim().length > 0) {
+								return directExecutionId.trim();
+							}
+							const resultValue =
+								(tr as { result?: unknown }).result ??
+								(tr as { output?: unknown }).output ??
+								tr;
 							if (!isRecord(resultValue)) return "";
-							return typeof resultValue.executionId === "string"
-								? resultValue.executionId
-								: "";
+							if (typeof resultValue.executionId === "string") {
+								return resultValue.executionId.trim();
+							}
+							const nested = resultValue.data;
+							if (isRecord(nested) && typeof nested.executionId === "string") {
+								return nested.executionId.trim();
+							}
+							return "";
 						})
 						.filter((id) => id.trim().length > 0),
 				),

@@ -18,6 +18,7 @@ import {
 import {
 	Form,
 	FormControl,
+	FormDescription,
 	FormField,
 	FormItem,
 	FormLabel,
@@ -42,6 +43,7 @@ const createSchema = (t: (key: string) => string) =>
 		clientSecret: z.string().min(1, {
 			message: t("settings.gitProviders.validation.clientSecretRequired"),
 		}),
+		internalUrl: z.string().optional(),
 	});
 
 interface Props {
@@ -116,6 +118,7 @@ export const EditGiteaProvider = ({ giteaId }: Props) => {
 			giteaUrl: "https://gitea.com",
 			clientId: "",
 			clientSecret: "",
+			internalUrl: "",
 		},
 	});
 
@@ -126,6 +129,7 @@ export const EditGiteaProvider = ({ giteaId }: Props) => {
 				giteaUrl: gitea.giteaUrl || "https://gitea.com",
 				clientId: gitea.clientId || "",
 				clientSecret: gitea.clientSecret || "",
+				internalUrl: gitea.internalUrl || "",
 			});
 		}
 	}, [gitea, form]);
@@ -138,6 +142,7 @@ export const EditGiteaProvider = ({ giteaId }: Props) => {
 			giteaUrl: values.giteaUrl,
 			clientId: values.clientId,
 			clientSecret: values.clientSecret,
+			internalUrl: values.internalUrl || null,
 		})
 			.then(async () => {
 				await utils.gitProvider.getAll.invalidate();
@@ -264,6 +269,29 @@ export const EditGiteaProvider = ({ giteaId }: Props) => {
 											{...field}
 										/>
 									</FormControl>
+									<FormMessage />
+								</FormItem>
+							)}
+						/>
+						<FormField
+							control={form.control}
+							name="internalUrl"
+							render={({ field }) => (
+								<FormItem>
+									<FormLabel>
+										{t("settings.gitProviders.gitea.edit.internalUrlLabel")}
+									</FormLabel>
+									<FormControl>
+										<Input
+											placeholder={t(
+												"settings.gitProviders.gitea.edit.internalUrlPlaceholder",
+											)}
+											{...field}
+										/>
+									</FormControl>
+									<FormDescription>
+										{t("settings.gitProviders.gitea.edit.internalUrlDescription")}
+									</FormDescription>
 									<FormMessage />
 								</FormItem>
 							)}

@@ -80,10 +80,9 @@ export const ShowExternalRedisCredentials = ({ redisId }: Props) => {
 				);
 				await refetch();
 			})
-			.catch(() => {
+			.catch((error: Error) => {
 				toast.error(
-					// database.redis.externalCredentials.toastError
-					t("database.redis.externalCredentials.toastError"),
+					error?.message || t("database.redis.externalCredentials.toastError"),
 				);
 			});
 	};

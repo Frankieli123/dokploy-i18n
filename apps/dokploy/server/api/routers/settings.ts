@@ -1,6 +1,8 @@
 import {
+	CLEANUP_CRON_JOB,
 	canAccessToTraefikFiles,
 	checkGPUStatus,
+	checkPortInUse,
 	cleanStoppedContainers,
 	cleanUpDockerBuilder,
 	cleanUpSystemPrune,
@@ -19,7 +21,6 @@ import {
 	paths,
 	prepareEnvironmentVariables,
 	processLogs,
-	pullLatestRelease,
 	readConfig,
 	readConfigInPath,
 	readDirectory,
@@ -63,6 +64,7 @@ import {
 	projects,
 	server,
 } from "@/server/db/schema";
+import { cleanAllDeploymentQueue } from "@/server/queues/queueSetup";
 import { removeJob, schedule } from "@/server/utils/backup";
 import packageInfo from "../../../package.json";
 import { appRouter } from "../root";
@@ -78,7 +80,7 @@ export const settingsRouter = createTRPCRouter({
 		if (IS_CLOUD) {
 			return true;
 		}
-		await reloadDockerResource("dokploy");
+		await reloadDockerResource("dokploy", undefined, packageInfo.version);
 		return true;
 	}),
 	getUpdateTagsUrl: protectedProcedure.query(async ({ ctx }) => {
@@ -151,6 +153,12 @@ export const settingsRouter = createTRPCRouter({
 
 		return true;
 	}),
+	cleanAllDeploymentQueue: adminProcedure.mutation(async () => {
+		if (IS_CLOUD) {
+			return true;
+		}
+		return cleanAllDeploymentQueue();
+	}),
 	reloadTraefik: adminProcedure
 		.input(apiServerSchema)
 		.mutation(async ({ input }) => {
@@ -174,6 +182,15 @@ export const settingsRouter = createTRPCRouter({
 			let newPorts = ports;
 			// If receive true, add 8080 to ports
 			if (input.enableDashboard) {
+				const portCheck = await checkPortInUse(8080, input.serverId);
+				if (portCheck.isInUse) {
+					throw new TRPCError({
+						code: "CONFLICT",
+						message: portCheck.conflictingContainer
+							? `Port 8080 is already in use by ${portCheck.conflictingContainer}`
+							: "Port 8080 is already in use",
+					});
+				}
 				newPorts.push({
 					targetPort: 8080,
 					publishedPort: 8080,
@@ -183,10 +200,12 @@ export const settingsRouter = createTRPCRouter({
 				newPorts = ports.filter((port) => port.targetPort !== 8080);
 			}
 
-			await writeTraefikSetup({
+			void writeTraefikSetup({
 				env: preparedEnv,
 				additionalPorts: newPorts,
 				serverId: input.serverId,
+			}).catch((err) => {
+				console.error("toggleDashboard background writeTraefikSetup:", err);
 			});
 			return true;
 		}),
@@ -316,12 +335,12 @@ export const settingsRouter = createTRPCRouter({
 					}
 					if (IS_CLOUD) {
 						await schedule({
-							cronSchedule: "0 0 * * *",
+							cronSchedule: CLEANUP_CRON_JOB,
 							serverId: input.serverId,
 							type: "server",
 						});
 					} else {
-						scheduleJob(server.serverId, "0 0 * * *", async () => {
+						scheduleJob(server.serverId, CLEANUP_CRON_JOB, async () => {
 							console.log(
 								`Docker Cleanup ${new Date().toLocaleString()}] Running...`,
 							);
@@ -334,7 +353,7 @@ export const settingsRouter = createTRPCRouter({
 				} else {
 					if (IS_CLOUD) {
 						await removeJob({
-							cronSchedule: "0 0 * * *",
+							cronSchedule: CLEANUP_CRON_JOB,
 							serverId: input.serverId,
 							type: "server",
 						});
@@ -349,7 +368,7 @@ export const settingsRouter = createTRPCRouter({
 				});
 
 				if (userUpdated?.enableDockerCleanup) {
-					scheduleJob("docker-cleanup", "0 0 * * *", async () => {
+					scheduleJob("docker-cleanup", CLEANUP_CRON_JOB, async () => {
 						console.log(
 							`Docker Cleanup ${new Date().toLocaleString()}] Running...`,
 						);
@@ -435,7 +454,14 @@ export const settingsRouter = createTRPCRouter({
 			return true;
 		}
 
-		await pullLatestRelease();
+		const data = await getUpdateData();
+		const targetTag = data.updateAvailable
+			? data.latestVersion
+			: getDokployImageTag();
+
+		if (!targetTag) {
+			return true;
+		}
 
 		// This causes restart of dokploy, thus it will not finish executing properly, so don't await it
 		// Status after restart is checked via frontend /api/health endpoint
@@ -444,7 +470,7 @@ export const settingsRouter = createTRPCRouter({
 			"update",
 			"--force",
 			"--image",
-			getDokployImage(),
+			getDokployImage(targetTag),
 			"dokploy",
 		]);
 
@@ -526,10 +552,10 @@ export const settingsRouter = createTRPCRouter({
 		}),
 	getIp: protectedProcedure.query(async ({ ctx }) => {
 		if (IS_CLOUD) {
-			return true;
+			return "";
 		}
 		const user = await findUserById(ctx.user.ownerId);
-		return user.serverIp;
+		return user.serverIp || "";
 	}),
 
 	getOpenApiDocument: protectedProcedure.query(
@@ -777,16 +803,13 @@ export const settingsRouter = createTRPCRouter({
 		return haveServers.length > 0 || haveProjects.length > 0;
 	}),
 	health: publicProcedure.query(async () => {
-		if (IS_CLOUD) {
-			try {
-				await db.execute(sql`SELECT 1`);
-				return { status: "ok" };
-			} catch (error) {
-				console.error("Database connection error:", error);
-				throw error;
-			}
+		try {
+			await db.execute(sql`SELECT 1`);
+			return { status: "ok" };
+		} catch (error) {
+			console.error("Database connection error:", error);
+			throw error;
 		}
-		return { status: "not_cloud" };
 	}),
 	setupGPU: adminProcedure
 		.input(
@@ -866,6 +889,20 @@ export const settingsRouter = createTRPCRouter({
 					"dokploy-traefik",
 					input?.serverId,
 				);
+				for (const port of input.additionalPorts) {
+					const portCheck = await checkPortInUse(
+						port.publishedPort,
+						input.serverId,
+					);
+					if (portCheck.isInUse) {
+						throw new TRPCError({
+							code: "CONFLICT",
+							message: portCheck.conflictingContainer
+								? `Port ${port.publishedPort} is already in use by ${portCheck.conflictingContainer}`
+								: `Port ${port.publishedPort} is already in use`,
+						});
+					}
+				}
 				const preparedEnv = prepareEnvironmentVariables(env);
 
 				await writeTraefikSetup({

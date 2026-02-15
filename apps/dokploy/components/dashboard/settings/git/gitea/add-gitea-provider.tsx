@@ -20,6 +20,7 @@ import {
 import {
 	Form,
 	FormControl,
+	FormDescription,
 	FormField,
 	FormItem,
 	FormLabel,
@@ -51,6 +52,7 @@ const createSchema = (t: (key: string) => string) =>
 			message: t("settings.gitProviders.validation.redirectUriRequired"),
 		}),
 		organizationName: z.string().optional(),
+		internalUrl: z.string().optional(),
 	});
 
 type Schema = z.infer<ReturnType<typeof createSchema>>;
@@ -71,6 +73,7 @@ export const AddGiteaProvider = () => {
 		defaultValues: {
 			clientId: "",
 			clientSecret: "",
+			internalUrl: "",
 			redirectUri: webhookUrl,
 			name: "",
 			giteaUrl: "https://gitea.com",
@@ -84,6 +87,7 @@ export const AddGiteaProvider = () => {
 		form.reset({
 			clientId: "",
 			clientSecret: "",
+			internalUrl: "",
 			redirectUri: webhookUrl,
 			name: "",
 			giteaUrl: "https://gitea.com",
@@ -99,6 +103,7 @@ export const AddGiteaProvider = () => {
 				name: data.name,
 				redirectUri: data.redirectUri,
 				giteaUrl: data.giteaUrl,
+				internalUrl: data.internalUrl || undefined,
 				organizationName: data.organizationName,
 			})) as unknown as GiteaProviderResponse;
 
@@ -250,6 +255,32 @@ export const AddGiteaProvider = () => {
 													{...field}
 												/>
 											</FormControl>
+											<FormMessage />
+										</FormItem>
+									)}
+								/>
+
+								<FormField
+									control={form.control}
+									name="internalUrl"
+									render={({ field }) => (
+										<FormItem>
+											<FormLabel>
+												{t("settings.gitProviders.gitea.add.internalUrlLabel")}
+											</FormLabel>
+											<FormControl>
+												<Input
+													placeholder={t(
+														"settings.gitProviders.gitea.add.internalUrlPlaceholder",
+													)}
+													{...field}
+												/>
+											</FormControl>
+											<FormDescription>
+												{t(
+													"settings.gitProviders.gitea.add.internalUrlDescription",
+												)}
+											</FormDescription>
 											<FormMessage />
 										</FormItem>
 									)}

@@ -24,6 +24,7 @@ import {
 	FormLabel,
 	FormMessage,
 } from "@/components/ui/form";
+import { useHealthCheckAfterMutation } from "@/hooks/use-health-check-after-mutation";
 import { api } from "@/utils/api";
 
 const schema = z.object({
@@ -48,6 +49,12 @@ export const EditTraefikEnv = ({ children, serverId }: Props) => {
 	const { mutateAsync, isLoading, error, isError } =
 		api.settings.writeTraefikEnv.useMutation();
 
+	const { execute: executeWithHealthCheck, isExecuting: isHealthCheckExecuting } =
+		useHealthCheckAfterMutation({
+			initialDelay: 5000,
+			successMessage: t("settings.server.webServer.traefik.env.update.success"),
+		});
+
 	const form = useForm<Schema>({
 		defaultValues: {
 			env: data || "",
@@ -65,18 +72,14 @@ export const EditTraefikEnv = ({ children, serverId }: Props) => {
 	}, [form, form.reset, data]);
 
 	const onSubmit = async (data: Schema) => {
-		await mutateAsync({
-			env: data.env,
-			serverId,
-		})
-			.then(async () => {
-				toast.success(
-					t("settings.server.webServer.traefik.env.update.success"),
-				);
-			})
-			.catch(() => {
-				toast.error(t("settings.server.webServer.traefik.env.update.error"));
-			});
+		await executeWithHealthCheck(() =>
+			mutateAsync({
+				env: data.env,
+				serverId,
+			}),
+		).catch(() => {
+			toast.error(t("settings.server.webServer.traefik.env.update.error"));
+		});
 	};
 
 	// Add keyboard shortcut for Ctrl+S/Cmd+S
@@ -162,8 +165,8 @@ TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_HTTP_CHALLENGE_DNS_PROVIDER=cloudflare
 
 					<DialogFooter>
 						<Button
-							isLoading={isLoading}
-							disabled={canEdit || isLoading}
+							isLoading={isLoading || isHealthCheckExecuting}
+							disabled={canEdit || isLoading || isHealthCheckExecuting}
 							form="hook-form-update-server-traefik-config"
 							type="submit"
 						>

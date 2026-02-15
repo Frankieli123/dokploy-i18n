@@ -1,4 +1,5 @@
 import {
+	CLEANUP_CRON_JOB,
 	cleanUpDockerBuilder,
 	cleanUpSystemPrune,
 	cleanUpUnusedImages,
@@ -129,7 +130,7 @@ export const initializeJobs = async () => {
 		scheduleJob({
 			serverId,
 			type: "server",
-			cronSchedule: "0 0 * * *",
+			cronSchedule: CLEANUP_CRON_JOB,
 		});
 	}
 

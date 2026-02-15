@@ -17,6 +17,7 @@ import {
 	FormLabel,
 	FormMessage,
 } from "@/components/ui/form";
+import { Switch } from "@/components/ui/switch";
 import { api } from "@/utils/api";
 import { validateAndFormatYAML } from "../application/advanced/traefik/update-traefik-config";
 
@@ -50,6 +51,7 @@ export const ShowTraefikFile = ({ path, serverId }: Props) => {
 		},
 	);
 	const [canEdit, setCanEdit] = useState(true);
+	const [skipYamlValidation, setSkipYamlValidation] = useState(false);
 
 	const { mutateAsync, isLoading, error, isError } =
 		api.settings.updateTraefikFile.useMutation();
@@ -70,7 +72,7 @@ export const ShowTraefikFile = ({ path, serverId }: Props) => {
 
 	const onSubmit = async (data: UpdateServerMiddlewareConfig) => {
 		const { valid, error } = validateAndFormatYAML(data.traefikConfig);
-		if (!valid) {
+		if (!valid && !skipYamlValidation) {
 			form.setError("traefikConfig", {
 				type: "manual",
 				message: error || t("traefik.config.error.invalidYaml"),
@@ -158,6 +160,17 @@ routers:
 							/>
 						)}
 					</div>
+					{!canEdit && (
+						<div className="flex items-center justify-between rounded-lg border p-3 mt-3">
+							<FormLabel className="mb-0">
+								{t("traefik.config.skipValidation")}
+							</FormLabel>
+							<Switch
+								checked={skipYamlValidation}
+								onCheckedChange={setSkipYamlValidation}
+							/>
+						</div>
+					)}
 					<div className="flex justify-end">
 						<Button
 							isLoading={isLoading}

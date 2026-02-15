@@ -21,7 +21,8 @@ export const refreshGitlabToken = async (gitlabProviderId: string) => {
 		return;
 	}
 
-	const response = await fetch(`${gitlabProvider.gitlabUrl}/oauth/token`, {
+	const baseUrl = gitlabProvider.internalUrl || gitlabProvider.gitlabUrl;
+	const response = await fetch(`${baseUrl}/oauth/token`, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/x-www-form-urlencoded",
@@ -211,8 +212,9 @@ export const getGitlabBranches = async (input: {
 	const perPage = 100; // GitLab's max per page is 100
 
 	while (true) {
+		const apiBaseUrl = gitlabProvider.internalUrl || gitlabProvider.gitlabUrl;
 		const branchesResponse = await fetch(
-			`${gitlabProvider.gitlabUrl}/api/v4/projects/${input.id}/repository/branches?page=${page}&per_page=${perPage}`,
+			`${apiBaseUrl}/api/v4/projects/${input.id}/repository/branches?page=${page}&per_page=${perPage}`,
 			{
 				headers: {
 					Authorization: `Bearer ${gitlabProvider.accessToken}`,
@@ -289,8 +291,9 @@ export const validateGitlabProvider = async (gitlabProvider: Gitlab) => {
 		const perPage = 100; // GitLab's max per page is 100
 
 		while (true) {
+			const apiBaseUrl = gitlabProvider.internalUrl || gitlabProvider.gitlabUrl;
 			const response = await fetch(
-				`${gitlabProvider.gitlabUrl}/api/v4/projects?membership=true&page=${page}&per_page=${perPage}`,
+				`${apiBaseUrl}/api/v4/projects?membership=true&page=${page}&per_page=${perPage}`,
 				{
 					headers: {
 						Authorization: `Bearer ${gitlabProvider.accessToken}`,

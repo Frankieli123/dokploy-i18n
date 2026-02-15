@@ -987,148 +987,400 @@ export function useChat(options: UseChatOptions = {}) {
 						}, FLUSH_MS);
 					};
 
-					const appendAssistantLine = (line: string) => {
-						const trimmed = typeof line === "string" ? line.trim() : "";
-						if (!trimmed) return;
+					const normalizeAgentToolCallId = (params: {
+						executionId?: unknown;
+						stepId?: unknown;
+						messageId?: string;
+						toolName?: string;
+					}) => {
+						const executionId =
+							typeof params.executionId === "string"
+								? params.executionId.trim()
+								: "";
+						if (executionId.length > 0) return executionId;
+						const stepId =
+							typeof params.stepId === "string" ? params.stepId.trim() : "";
+						if (stepId.length > 0) return stepId;
+						const messageId =
+							typeof params.messageId === "string" ? params.messageId.trim() : "";
+						if (messageId.length > 0) return `agent-${messageId}`;
+						const toolName =
+							typeof params.toolName === "string" ? params.toolName.trim() : "tool";
+						return `agent-${toolName}-${Date.now()}`;
+					};
+
+					const parsePreviewToData = (preview: unknown): unknown => {
+						if (typeof preview !== "string") return undefined;
+						const trimmed = preview.trim();
+						if (trimmed.length === 0) return undefined;
+						try {
+							return JSON.parse(trimmed);
+						} catch {
+							return trimmed;
+						}
+					};
+
+					const upsertAgentToolCall = (params: {
+						toolCallId: string;
+						toolName: string;
+						executionId?: string;
+						status: NonNullable<ToolCall["status"]>;
+						argumentsText?: string;
+						result?: ToolCall["result"];
+					}) => {
+						const marker = `\n\n<<tool:${params.toolCallId}>>\n\n`;
 						setPendingMessages((prev) =>
-							prev.map((m) =>
-								m.messageId === assistantTempId
-									? {
-											...m,
-											content: (() => {
-												const existing = m.content ?? "";
-												if (existing.length > 0 && !existing.endsWith("\n")) {
-													return `${existing}\n${trimmed}\n`;
-												}
-												return `${existing}${trimmed}\n`;
-											})(),
-											status: "sending" as const,
-										}
-									: m,
-							),
+							prev.map((m) => {
+								if (m.messageId !== assistantTempId) return m;
+								const existingContent = m.content ?? "";
+								const content = existingContent.includes(marker)
+									? existingContent
+									: `${existingContent}${marker}`;
+								const toolCalls = [...(m.toolCalls || [])];
+								const existingIndex = toolCalls.findIndex(
+									(tc) => tc.id === params.toolCallId,
+								);
+								const base = existingIndex >= 0 ? toolCalls[existingIndex] : undefined;
+								const nextToolCall: ToolCall = {
+									id: params.toolCallId,
+									type: "function",
+									executionId: params.executionId,
+									status: params.status,
+									result: params.result,
+									function: {
+										name:
+											params.toolName ||
+											base?.function.name ||
+											"tool",
+										arguments:
+											params.argumentsText ??
+											base?.function.arguments ??
+											"{}",
+									},
+								};
+								if (existingIndex >= 0) {
+									toolCalls[existingIndex] = {
+										...base,
+										...nextToolCall,
+										function: {
+											name:
+												nextToolCall.function.name ||
+												base?.function.name ||
+												"tool",
+											arguments:
+												nextToolCall.function.arguments ||
+												base?.function.arguments ||
+												"{}",
+										},
+										result: nextToolCall.result ?? base?.result,
+									};
+								} else {
+									toolCalls.push(nextToolCall);
+								}
+								return { ...m, content, toolCalls, status: "sending" as const };
+							}),
 						);
 					};
 
-					for await (const evt of readSseStream(response.body)) {
-						if (controller.signal.aborted) break;
+					const streamStartTime = Date.now();
+					let lastProgressTime = streamStartTime;
+					const INITIAL_IDLE_NO_PROGRESS_MS = 45 * 1000;
+					const STALL_NO_PROGRESS_MS = 120 * 1000;
+					const MAX_STREAM_MS = 15 * 60 * 1000;
+					let hasVisibleProgress = false;
+					const isProgressEvent = (eventName: string) =>
+						eventName === "done" ||
+						eventName === "error" ||
+						eventName === "stream-error" ||
+						eventName === "agent.run.start" ||
+						eventName === "agent.plan" ||
+						eventName === "agent.run.finish" ||
+						eventName === "agent.run.summary" ||
+						eventName === "agent.output.delta" ||
+						eventName === "agent.output.reasoning" ||
+						eventName === "agent.step.start" ||
+						eventName === "agent.step.result" ||
+						eventName === "agent.step.wait_approval";
 
-						if (evt.event === "done") {
-							flushDeltaNow();
-							stopReason = "done";
-							break;
+					const safetyInterval = setInterval(() => {
+						const now = Date.now();
+						if (now - streamStartTime > MAX_STREAM_MS) {
+							abortedBySafetyTimer = true;
+							controller.abort();
+							return;
 						}
-						if (evt.event === "error" || evt.event === "stream-error") {
-							flushDeltaNow();
-							const payload = JSON.parse(evt.data) as {
-								message?: string;
-								error?: string;
-							};
-							throw new Error(
-								payload.message ||
-									payload.error ||
-									"settings.ai.errors.streamingError",
-							);
+						const idleTimeoutMs = hasVisibleProgress
+							? STALL_NO_PROGRESS_MS
+							: INITIAL_IDLE_NO_PROGRESS_MS;
+						if (now - lastProgressTime <= idleTimeoutMs) {
+							return;
 						}
+						abortedBySafetyTimer = true;
+						controller.abort();
+					}, 1000);
 
-						const payload = (() => {
-							try {
-								const outer = JSON.parse(evt.data) as unknown;
-								if (!isRecord(outer)) return null;
-								const inner = outer.payload;
-								return isRecord(inner) ? inner : null;
-							} catch {
-								return null;
+					try {
+						for await (const evt of readSseStream(response.body)) {
+							if (controller.signal.aborted) break;
+							if (evt.event === "ping") continue;
+							if (isProgressEvent(evt.event)) {
+								lastProgressTime = Date.now();
+								hasVisibleProgress = true;
 							}
-						})();
 
-						if (evt.event === "agent.output.delta") {
-							const delta =
-								payload && typeof payload.delta === "string"
-									? payload.delta
-									: "";
-							if (delta.length === 0) continue;
-							deltaBufferRef.current += delta;
-							scheduleFlushDelta();
-							continue;
-						}
+							if (evt.event === "done") {
+								flushDeltaNow();
+								stopReason = "done";
+								break;
+							}
+							if (evt.event === "error" || evt.event === "stream-error") {
+								flushDeltaNow();
+								const payload = JSON.parse(evt.data) as {
+									message?: string;
+									error?: string;
+								};
+								throw new Error(
+									payload.message ||
+										payload.error ||
+										"settings.ai.errors.streamingError",
+								);
+							}
 
-						if (evt.event === "agent.output.reasoning") {
-							const text =
-								payload && typeof payload.text === "string" ? payload.text : "";
-							if (text.length === 0) continue;
-							setPendingMessages((prev) =>
-								prev.map((m) =>
-									m.messageId === assistantTempId
-										? { ...m, reasoning: text, status: "sending" as const }
-										: m,
-								),
-							);
-							continue;
-						}
+							const { payload, messageId: eventMessageId } = (() => {
+								try {
+									const outer = JSON.parse(evt.data) as unknown;
+									if (!isRecord(outer)) return { payload: null, messageId: "" };
+									const inner = outer.payload;
+									const messageId =
+										typeof outer.messageId === "string" ? outer.messageId : "";
+									return {
+										payload: isRecord(inner) ? inner : null,
+										messageId,
+									};
+								} catch {
+									return { payload: null, messageId: "" };
+								}
+							})();
 
-						if (evt.event === "agent.step.result") {
-							flushDeltaNow();
-							const toolName =
-								payload && typeof payload.toolName === "string"
-									? payload.toolName
-									: "tool";
-							const success =
-								payload && typeof payload.success === "boolean"
-									? payload.success
-									: false;
-							const summary =
-								payload && typeof payload.summary === "string"
-									? payload.summary
-									: "";
-							appendAssistantLine(
-								`[${toolName}] ${success ? "OK" : "FAILED"}${summary ? `: ${summary}` : ""}`,
-							);
-							continue;
-						}
+							if (evt.event === "agent.output.delta") {
+								const delta =
+									payload && typeof payload.delta === "string"
+										? payload.delta
+										: "";
+								if (delta.length === 0) continue;
+								deltaBufferRef.current += delta;
+								scheduleFlushDelta();
+								continue;
+							}
 
-						if (evt.event === "agent.step.wait_approval") {
-							flushDeltaNow();
-							const toolName =
-								payload && typeof payload.toolName === "string"
-									? payload.toolName
-									: "";
-							const executionId =
-								payload && typeof payload.executionId === "string"
-									? payload.executionId
-									: "";
-							const runId =
-								payload && typeof payload.runId === "string"
-									? payload.runId
-									: "";
-							const parametersPreview =
-								payload && typeof payload.parametersPreview === "string"
-									? payload.parametersPreview
-									: undefined;
-							appendAssistantLine(
-								toolName
-									? `Waiting for approval: ${toolName}`
-									: "Waiting for approval",
-							);
-							if (executionId.trim().length > 0) {
-								setPendingApproval({
-									executionId: executionId.trim(),
+							if (evt.event === "agent.output.reasoning") {
+								const text =
+									payload && typeof payload.text === "string" ? payload.text : "";
+								if (text.length === 0) continue;
+								setPendingMessages((prev) =>
+									prev.map((m) =>
+										m.messageId === assistantTempId
+											? { ...m, reasoning: text, status: "sending" as const }
+											: m,
+									),
+								);
+								continue;
+							}
+
+							if (evt.event === "agent.step.start") {
+								flushDeltaNow();
+								const toolName =
+									payload && typeof payload.toolName === "string"
+										? payload.toolName
+										: "tool";
+								const toolCallId = normalizeAgentToolCallId({
+									executionId: payload?.executionId,
+									stepId: payload?.stepId,
+									messageId: eventMessageId,
 									toolName,
-									runId: runId.trim().length > 0 ? runId.trim() : undefined,
-									parametersPreview,
 								});
+								const executionId =
+									typeof payload?.executionId === "string"
+										? payload.executionId.trim()
+										: "";
+								upsertAgentToolCall({
+									toolCallId,
+									toolName,
+									executionId: executionId.length > 0 ? executionId : undefined,
+									status: "executing",
+									argumentsText:
+										typeof payload?.parametersPreview === "string" &&
+										payload.parametersPreview.trim().length > 0
+											? payload.parametersPreview
+											: "{}",
+								});
+								continue;
 							}
-							continue;
-						}
-					}
 
-					flushDeltaNow();
-					if (flushDeltaTimer) {
-						clearTimeout(flushDeltaTimer);
-						flushDeltaTimer = null;
+							if (evt.event === "agent.step.result") {
+								flushDeltaNow();
+								const toolName =
+									payload && typeof payload.toolName === "string"
+										? payload.toolName
+										: "tool";
+								const success =
+									payload && typeof payload.success === "boolean"
+										? payload.success
+										: false;
+								const summary =
+									payload && typeof payload.summary === "string"
+										? payload.summary
+										: "";
+								const toolCallId = normalizeAgentToolCallId({
+									executionId: payload?.executionId,
+									stepId: payload?.stepId,
+									messageId: eventMessageId,
+									toolName,
+								});
+								const executionId =
+									typeof payload?.executionId === "string"
+										? payload.executionId.trim()
+										: "";
+								upsertAgentToolCall({
+									toolCallId,
+									toolName,
+									executionId: executionId.length > 0 ? executionId : undefined,
+									status: success ? "completed" : "failed",
+									result: {
+										success,
+										message: summary || undefined,
+										data: parsePreviewToData(payload?.dataPreview),
+										error: success ? undefined : summary || undefined,
+									},
+								});
+								continue;
+							}
+
+							if (evt.event === "agent.run.summary") {
+								flushDeltaNow();
+								const summary =
+									payload && typeof payload.summary === "string"
+										? payload.summary.trim()
+										: "";
+								if (summary.length > 0) {
+									setPendingMessages((prev) =>
+										prev.map((m) =>
+											m.messageId !== assistantTempId
+												? m
+												: (() => {
+														const existing = m.content ?? "";
+														const normalizedSummary = summary.trim();
+														if (normalizedSummary.length === 0) {
+															return m;
+														}
+														if (existing.trim().length === 0) {
+															return {
+																...m,
+																content: normalizedSummary,
+																status: "sending" as const,
+															};
+														}
+														if (existing.includes(normalizedSummary)) {
+															return m;
+														}
+														const separator = existing.endsWith("\n")
+															? "\n"
+															: "\n\n";
+														return {
+															...m,
+															content: `${existing}${separator}${normalizedSummary}`,
+															status: "sending" as const,
+														};
+													})(),
+										),
+									);
+								}
+								continue;
+							}
+
+							if (
+								evt.event === "agent.plan" ||
+								evt.event === "agent.run.start" ||
+								evt.event === "agent.run.finish"
+							) {
+								continue;
+							}
+
+							if (evt.event === "agent.step.wait_approval") {
+								flushDeltaNow();
+								const toolName =
+									payload && typeof payload.toolName === "string"
+										? payload.toolName
+										: "";
+								const executionId =
+									payload && typeof payload.executionId === "string"
+										? payload.executionId
+										: "";
+								const runId =
+									payload && typeof payload.runId === "string"
+										? payload.runId
+										: "";
+								const parametersPreview =
+									payload && typeof payload.parametersPreview === "string"
+										? payload.parametersPreview
+										: undefined;
+								const toolCallId = normalizeAgentToolCallId({
+									executionId,
+									stepId: payload?.stepId,
+									messageId: eventMessageId,
+									toolName,
+								});
+								upsertAgentToolCall({
+									toolCallId,
+									toolName: toolName || "tool",
+									executionId: executionId.trim().length > 0 ? executionId.trim() : undefined,
+									status: "pending",
+									argumentsText:
+										typeof parametersPreview === "string" &&
+										parametersPreview.trim().length > 0
+											? parametersPreview
+											: "{}",
+									result: {
+										success: false,
+										message: "Waiting for approval",
+									},
+								});
+								if (executionId.trim().length > 0) {
+									setPendingApproval({
+										executionId: executionId.trim(),
+										toolName,
+										runId: runId.trim().length > 0 ? runId.trim() : undefined,
+										parametersPreview,
+									});
+								}
+								stopReason = "waiting_approval";
+								break;
+							}
+						}
+					} finally {
+						flushDeltaNow();
+						clearInterval(safetyInterval);
+						if (flushDeltaTimer) {
+							clearTimeout(flushDeltaTimer);
+							flushDeltaTimer = null;
+						}
 					}
 				} catch (error) {
 					setAbortController(null);
 					if (isAbortLikeError(error)) {
+						const timeoutError = "settings.ai.errors.streamingError";
+						if (abortedBySafetyTimer) {
+							setPendingMessages((prev) =>
+								prev.map((m) =>
+									m.messageId === assistantTempId
+										? { ...m, status: "error" as const, error: timeoutError }
+										: m,
+								),
+							);
+							setIsLoading(false);
+							options.onError?.(new Error(timeoutError));
+							return;
+						}
 						setPendingMessages((prev) =>
 							prev.map((m) =>
 								m.messageId === userTempId || m.messageId === assistantTempId
@@ -1160,12 +1412,23 @@ export function useChat(options: UseChatOptions = {}) {
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === assistantTempId
-								? { ...m, status: "sent" as const }
+								? abortedBySafetyTimer
+									? {
+											...m,
+											status: "error" as const,
+											error: "settings.ai.errors.streamingError",
+										}
+									: { ...m, status: "sent" as const }
 								: m,
 						),
 					);
 					setIsLoading(false);
 					setAbortController(null);
+					if (abortedBySafetyTimer) {
+						options.onError?.(
+							new Error("settings.ai.errors.streamingError"),
+						);
+					}
 					return;
 				}
 
@@ -1546,7 +1809,7 @@ export function useChat(options: UseChatOptions = {}) {
 				if (controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
 					const errorMsg = abortedBySafetyTimer
-						? "settings.ai.errors.streamingEndedWithoutDone"
+						? "settings.ai.errors.streamingError"
 						: "settings.ai.errors.streamingAborted";
 					finalizeExecutingToolCalls(errorMsg);
 					if (abortedBySafetyTimer) {
@@ -1576,7 +1839,7 @@ export function useChat(options: UseChatOptions = {}) {
 				if (!controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
 					finalizeExecutingToolCalls(
-						"settings.ai.errors.streamingEndedWithoutDone",
+						"settings.ai.errors.streamingError",
 					);
 					setPendingMessages((prev) =>
 						prev.map((m) =>
@@ -1592,7 +1855,7 @@ export function useChat(options: UseChatOptions = {}) {
 				setAbortController(null);
 				if (isAbortLikeError(error)) {
 					const errorMsg = abortedBySafetyTimer
-						? "settings.ai.errors.streamingEndedWithoutDone"
+						? "settings.ai.errors.streamingError"
 						: "settings.ai.errors.streamingAborted";
 					finalizeExecutingToolCalls(errorMsg);
 					if (abortedBySafetyTimer) {
@@ -1702,6 +1965,22 @@ export function useChat(options: UseChatOptions = {}) {
 						return { ...m, toolCalls };
 					}),
 				);
+				setToolCallMeta((prev) => {
+					const next: typeof prev = { ...prev };
+					for (const [toolCallId, meta] of Object.entries(prev)) {
+						if (meta.status !== "executing") continue;
+						next[toolCallId] = {
+							...meta,
+							status: "failed",
+							result: meta.result ?? {
+								success: false,
+								message: errorMsg,
+								error: errorMsg,
+							},
+						};
+					}
+					return next;
+				});
 			};
 
 			let abortedBySafetyTimer = false;
@@ -1781,15 +2060,22 @@ export function useChat(options: UseChatOptions = {}) {
 					flushDeltaTimer = setTimeout(flushDeltaNow, delay);
 				};
 
+				const IDLE_NO_TOOLS_MS = 30 * 1000;
+				const IDLE_WITH_TOOLS_MS = 10 * 60 * 1000;
+				const MAX_DURATION_MS = 15 * 60 * 1000;
+
 				const safetyInterval = setInterval(() => {
 					const now = Date.now();
 					const idleMs = now - lastEventTime;
-					const maxIdleMs = uiVisibleRef.current ? 45000 : 120000;
-					if (idleMs > maxIdleMs && !controller.signal.aborted) {
-						abortedBySafetyTimer = true;
-						controller.abort();
+					const idleLimit =
+						activeToolCallIds.size > 0 ? IDLE_WITH_TOOLS_MS : IDLE_NO_TOOLS_MS;
+					if (idleMs <= idleLimit && now - streamStartTime <= MAX_DURATION_MS) {
+						return;
 					}
-				}, 2000);
+					abortedBySafetyTimer = true;
+					clearInterval(safetyInterval);
+					controller.abort();
+				}, 1000);
 
 				try {
 					for await (const evt of readSseStream(response.body)) {
@@ -1841,30 +2127,64 @@ export function useChat(options: UseChatOptions = {}) {
 							})();
 							toolCallArgsById.set(payload.toolCallId, argsText);
 							activeToolCallIds.add(payload.toolCallId);
+							const marker = `\n\n<<tool:${payload.toolCallId}>>\n\n`;
 
 							setPendingMessages((prev) =>
 								prev.map((m) => {
 									if (m.messageId !== assistantTempId) return m;
+									const existingContent = m.content ?? "";
+									const content = existingContent.includes(marker)
+										? existingContent
+										: `${existingContent}${marker}`;
 									const toolCalls = [...(m.toolCalls || [])];
 									const existingIndex = toolCalls.findIndex(
 										(tc) => tc.id === payload.toolCallId,
 									);
-									const base: ToolCall = {
+									const existingToolCall =
+										existingIndex >= 0 ? toolCalls[existingIndex] : undefined;
+									const nextToolCall: ToolCall = {
 										id: payload.toolCallId,
 										type: "function",
 										status: "executing",
+										executionId: existingToolCall?.executionId,
+										result: existingToolCall?.result,
 										function: {
 											name: payload.toolName,
 											arguments: argsText,
 										},
 									};
 
-									const merged = { ...base, ...(toolCalls[existingIndex] || {}) };
-									if (existingIndex >= 0) toolCalls[existingIndex] = merged;
-									else toolCalls.push(merged);
-									return { ...m, toolCalls };
+									if (existingIndex >= 0) {
+										toolCalls[existingIndex] = {
+											...existingToolCall,
+											...nextToolCall,
+											function: {
+												name:
+													nextToolCall.function.name ||
+													existingToolCall?.function.name ||
+													"tool",
+												arguments:
+													nextToolCall.function.arguments ||
+													existingToolCall?.function.arguments ||
+													"{}",
+											},
+										};
+									} else {
+										toolCalls.push(nextToolCall);
+									}
+									return { ...m, content, toolCalls, status: "sending" as const };
 								}),
 							);
+							setToolCallMeta((prev) => {
+								if (prev[payload.toolCallId]?.status) return prev;
+								return {
+									...prev,
+									[payload.toolCallId]: {
+										...(prev[payload.toolCallId] ?? {}),
+										status: "executing",
+									},
+								};
+							});
 						}
 
 						if (evt.event === "tool-result") {
@@ -1875,6 +2195,15 @@ export function useChat(options: UseChatOptions = {}) {
 								result: unknown;
 							};
 							activeToolCallIds.delete(payload.toolCallId);
+							try {
+								const args = toolCallArgsById.get(payload.toolCallId);
+								toolCallArgsById.delete(payload.toolCallId);
+								maybeInvalidateProjectQueries(
+									payload.toolName,
+									payload.result,
+									args,
+								);
+							} catch {}
 
 							setPendingMessages((prev) =>
 								prev.map((m) => {
@@ -2025,7 +2354,7 @@ export function useChat(options: UseChatOptions = {}) {
 				if (controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
 					const errorMsg = abortedBySafetyTimer
-						? "settings.ai.errors.streamingEndedWithoutDone"
+						? "settings.ai.errors.streamingError"
 						: "settings.ai.errors.streamingAborted";
 					finalizeExecutingToolCalls(errorMsg);
 					if (abortedBySafetyTimer) {
@@ -2053,7 +2382,7 @@ export function useChat(options: UseChatOptions = {}) {
 				if (!controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
 					finalizeExecutingToolCalls(
-						"settings.ai.errors.streamingEndedWithoutDone",
+						"settings.ai.errors.streamingError",
 					);
 					setPendingMessages((prev) =>
 						prev.map((m) =>
@@ -2069,7 +2398,7 @@ export function useChat(options: UseChatOptions = {}) {
 				setAbortController(null);
 				if (isAbortLikeError(error)) {
 					const errorMsg = abortedBySafetyTimer
-						? "settings.ai.errors.streamingEndedWithoutDone"
+						? "settings.ai.errors.streamingError"
 						: "settings.ai.errors.streamingAborted";
 					finalizeExecutingToolCalls(errorMsg);
 					if (abortedBySafetyTimer) {
@@ -2122,7 +2451,13 @@ export function useChat(options: UseChatOptions = {}) {
 				setIsLoading(false);
 			}
 		},
-		[conversationId, isLoading, options, refetchMessages],
+		[
+			conversationId,
+			isLoading,
+			options,
+			refetchMessages,
+			maybeInvalidateProjectQueries,
+		],
 	);
 
 	const reset = useCallback(() => {

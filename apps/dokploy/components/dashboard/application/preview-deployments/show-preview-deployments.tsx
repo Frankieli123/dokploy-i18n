@@ -4,6 +4,7 @@ import {
 	GitPullRequest,
 	Loader2,
 	PenSquare,
+	RefreshCcw,
 	RocketIcon,
 	Trash2,
 } from "lucide-react";
@@ -39,6 +40,8 @@ export const ShowPreviewDeployments = ({ applicationId }: Props) => {
 
 	const { mutateAsync: deletePreviewDeployment, isLoading } =
 		api.previewDeployment.delete.useMutation();
+	const { mutateAsync: redeployPreview, isLoading: isRedeploying } =
+		api.previewDeployment.redeploy.useMutation();
 
 	const {
 		data: previewDeployments,
@@ -48,6 +51,8 @@ export const ShowPreviewDeployments = ({ applicationId }: Props) => {
 		{ applicationId },
 		{
 			enabled: !!applicationId,
+			refetchInterval: (items) =>
+				items?.some((item) => item.previewStatus === "running") ? 2000 : false,
 		},
 	);
 
@@ -61,6 +66,19 @@ export const ShowPreviewDeployments = ({ applicationId }: Props) => {
 			})
 			.catch((error) => {
 				toast.error(error.message);
+			});
+	};
+
+	const handleRedeployPreview = async (previewDeploymentId: string) => {
+		redeployPreview({
+			previewDeploymentId,
+		})
+			.then(() => {
+				refetchPreviewDeployments();
+				toast.success(t("application.rebuild.success"));
+			})
+			.catch(() => {
+				toast.error(t("application.rebuild.error"));
 			});
 	};
 
@@ -161,6 +179,24 @@ export const ShowPreviewDeployments = ({ applicationId }: Props) => {
 														>
 															<GithubIcon className="size-4" />
 															{t("preview.button.pullRequest")}
+														</Button>
+														<Button
+															variant="outline"
+															size="sm"
+															className="gap-2"
+															disabled={
+																status === "running" || isRedeploying
+															}
+															onClick={() =>
+																handleRedeployPreview(
+																	deployment.previewDeploymentId,
+																)
+															}
+														>
+															<RefreshCcw
+																className={`size-4 ${isRedeploying ? "animate-spin" : ""}`}
+															/>
+															{t("button.rebuild")}
 														</Button>
 														<ShowModalLogs
 															appName={deployment.appName}

@@ -76,8 +76,8 @@ export const ShowExternalMysqlCredentials = ({ mysqlId }: Props) => {
 				toast.success(t("database.externalCredentials.toastSuccess"));
 				await refetch();
 			})
-			.catch(() => {
-				toast.error(t("database.externalCredentials.toastError"));
+			.catch((error: Error) => {
+				toast.error(error?.message || t("database.externalCredentials.toastError"));
 			});
 	};
 

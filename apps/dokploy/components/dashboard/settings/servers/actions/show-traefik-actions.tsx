@@ -10,6 +10,7 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useHealthCheckAfterMutation } from "@/hooks/use-health-check-after-mutation";
 import { api } from "@/utils/api";
 import { EditTraefikEnv } from "../../web-server/edit-traefik-env";
 import { ManageTraefikPorts } from "../../web-server/manage-traefik-ports";
@@ -31,14 +32,33 @@ export const ShowTraefikActions = ({ serverId }: Props) => {
 			serverId,
 		});
 
+	const {
+		execute: executeWithHealthCheck,
+		isExecuting: isHealthCheckExecuting,
+	} = useHealthCheckAfterMutation({
+		initialDelay: 5000,
+		successMessage: t("settings.server.webServer.traefik.dashboardUpdated"),
+		onSuccess: () => {
+			refetchDashboard();
+		},
+	});
+
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger
 				asChild
-				disabled={reloadTraefikIsLoading || toggleDashboardIsLoading}
+				disabled={
+					reloadTraefikIsLoading ||
+					toggleDashboardIsLoading ||
+					isHealthCheckExecuting
+				}
 			>
 				<Button
-					isLoading={reloadTraefikIsLoading || toggleDashboardIsLoading}
+					isLoading={
+						reloadTraefikIsLoading ||
+						toggleDashboardIsLoading ||
+						isHealthCheckExecuting
+					}
 					variant="outline"
 				>
 					{t("settings.server.webServer.traefik.label")}
@@ -89,19 +109,17 @@ export const ShowTraefikActions = ({ serverId }: Props) => {
 
 					<DropdownMenuItem
 						onClick={async () => {
-							await toggleDashboard({
-								enableDashboard: !haveTraefikDashboardPortEnabled,
-								serverId: serverId,
-							})
-								.then(async () => {
-									toast.success(
-										haveTraefikDashboardPortEnabled
-											? t("settings.server.webServer.traefik.dashboardDisabled")
-											: t("settings.server.webServer.traefik.dashboardEnabled"),
-									);
-									refetchDashboard();
-								})
-								.catch(() => {});
+							await executeWithHealthCheck(() =>
+								toggleDashboard({
+									enableDashboard: !haveTraefikDashboardPortEnabled,
+									serverId: serverId,
+								}),
+							).catch((error) => {
+								toast.error(
+									(error as Error)?.message ||
+										"Failed to update Traefik dashboard",
+								);
+							});
 						}}
 						className="w-full cursor-pointer space-x-3"
 					>

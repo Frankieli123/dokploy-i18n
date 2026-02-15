@@ -20,6 +20,7 @@ import {
 import {
 	Form,
 	FormControl,
+	FormDescription,
 	FormField,
 	FormItem,
 	FormLabel,
@@ -48,6 +49,7 @@ const createSchema = (t: (key: string) => string) =>
 			message: t("settings.gitProviders.validation.redirectUriRequired"),
 		}),
 		groupName: z.string().optional(),
+		internalUrl: z.string().optional(),
 	});
 
 type Schema = z.infer<ReturnType<typeof createSchema>>;
@@ -67,6 +69,7 @@ export const AddGitlabProvider = () => {
 			applicationId: "",
 			applicationSecret: "",
 			groupName: "",
+			internalUrl: "",
 			redirectUri: webhookUrl,
 			name: "",
 			gitlabUrl: "https://gitlab.com",
@@ -81,6 +84,7 @@ export const AddGitlabProvider = () => {
 			applicationId: "",
 			applicationSecret: "",
 			groupName: "",
+			internalUrl: "",
 			redirectUri: webhookUrl,
 			name: "",
 			gitlabUrl: "https://gitlab.com",
@@ -96,6 +100,7 @@ export const AddGitlabProvider = () => {
 			name: data.name || "",
 			redirectUri: data.redirectUri || "",
 			gitlabUrl: data.gitlabUrl || "https://gitlab.com",
+			internalUrl: data.internalUrl || undefined,
 		})
 			.then(async () => {
 				await utils.gitProvider.getAll.invalidate();
@@ -215,6 +220,34 @@ export const AddGitlabProvider = () => {
 													{...field}
 												/>
 											</FormControl>
+											<FormMessage />
+										</FormItem>
+									)}
+								/>
+
+								<FormField
+									control={form.control}
+									name="internalUrl"
+									render={({ field }) => (
+										<FormItem>
+											<FormLabel>
+												{t(
+													"settings.gitProviders.gitlab.add.internalUrlLabel",
+												)}
+											</FormLabel>
+											<FormControl>
+												<Input
+													placeholder={t(
+														"settings.gitProviders.gitlab.add.internalUrlPlaceholder",
+													)}
+													{...field}
+												/>
+											</FormControl>
+											<FormDescription>
+												{t(
+													"settings.gitProviders.gitlab.add.internalUrlDescription",
+												)}
+											</FormDescription>
 											<FormMessage />
 										</FormItem>
 									)}
