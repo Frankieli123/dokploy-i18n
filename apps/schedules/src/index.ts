@@ -43,7 +43,9 @@ app.post("/update-backup", zValidator("json", jobQueueSchema), async (c) => {
 	const job = await getJobRepeatable(data);
 	if (job) {
 		let result = false;
-		if (data.type === "backup") {
+		if (!job.pattern) {
+			logger.warn({ job }, "Repeatable job has no pattern; skip removing old job");
+		} else if (data.type === "backup") {
 			result = await removeJob({
 				backupId: data.backupId,
 				type: "backup",

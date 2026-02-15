@@ -1,11 +1,26 @@
-import { Queue, type RepeatableJob } from "bullmq";
-import IORedis from "ioredis";
+import { Queue, type ConnectionOptions, type RepeatableJob } from "bullmq";
 import { logger } from "./logger.js";
 import type { QueueJob } from "./schema.js";
 
-export const connection = new IORedis(process.env.REDIS_URL!, {
+const redisUrl = process.env.REDIS_URL;
+
+if (!redisUrl) {
+	throw new Error("REDIS_URL is required");
+}
+
+const parsedRedisUrl = new URL(redisUrl);
+
+export const connection: ConnectionOptions = {
+	host: parsedRedisUrl.hostname,
+	port: parsedRedisUrl.port ? Number(parsedRedisUrl.port) : 6379,
+	username: parsedRedisUrl.username || undefined,
+	password: parsedRedisUrl.password || undefined,
+	db: parsedRedisUrl.pathname
+		? (Number(parsedRedisUrl.pathname.slice(1)) || 0)
+		: 0,
 	maxRetriesPerRequest: null,
-});
+	...(parsedRedisUrl.protocol === "rediss:" && { tls: {} }),
+};
 export const jobQueue = new Queue("backupQueue", {
 	connection,
 	defaultJobOptions: {
