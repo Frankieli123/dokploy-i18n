@@ -247,7 +247,7 @@ export const restoreVolume = async (
 	echo "Downloading backup from S3..."
 	mkdir -p ${shEscape(volumeBackupPath)}
 	${downloadCommand}
-	echo "Download completed 鉁?
+	echo "Download completed ✅"
 	TARGET_PATH=${shEscape(normalizedVolumeName)}
 	if [ -d "$TARGET_PATH" ] || [ "\${TARGET_PATH%/}" != "$TARGET_PATH" ]; then
 		echo "Restoring to directory: $TARGET_PATH"
@@ -267,7 +267,7 @@ export const restoreVolume = async (
 			ubuntu \
 			bash -c "tar xvf /backup/${backupFileName} -C /target --overwrite"
 	fi
-	echo "Bind restore completed 鉁?
+	echo "Bind restore completed ✅"
 	`;
 
 	if (isBind) {

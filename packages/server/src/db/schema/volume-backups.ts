@@ -105,7 +105,9 @@ export const volumeBackupsRelations = relations(
 	}),
 );
 
-export const createVolumeBackupSchema = createInsertSchema(volumeBackups).omit({
+export const createVolumeBackupSchema = createInsertSchema(volumeBackups, {
+	prefix: z.string().min(1),
+}).omit({
 	volumeBackupId: true,
 });
 

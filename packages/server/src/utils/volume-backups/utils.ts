@@ -13,7 +13,11 @@ import {
 import { scheduledJobs, scheduleJob } from "node-schedule";
 import { getS3Credentials, normalizeS3Path } from "../backups/utils";
 import { backupVolume } from "./backup";
-import { getBackupBaseName } from "./naming";
+import {
+	ALL_MOUNTS_VOLUME_NAME,
+	getBackupBaseName,
+	normalizeAllMountsVolumeName,
+} from "./naming";
 
 export const scheduleVolumeBackup = async (volumeBackupId: string) => {
 	const volumeBackup = await findVolumeBackupById(volumeBackupId);
@@ -39,8 +43,13 @@ const cleanupOldVolumeBackups = async (
 		const rcloneFlags = getS3Credentials(destination);
 		const normalizedPrefix = normalizeS3Path(prefix);
 		const backupFilesPath = `:s3:${destination.bucket}/${normalizedPrefix}`;
-		const backupBaseName = getBackupBaseName(volumeName);
-		const listCommand = `rclone lsf ${rcloneFlags.join(" ")} --include \"${backupBaseName}-*.tar\" :s3:${destination.bucket}/${normalizedPrefix}`;
+		const normalizedVolumeName = normalizeAllMountsVolumeName(volumeName);
+		const backupBaseName = getBackupBaseName(normalizedVolumeName);
+		const includePatterns =
+			normalizedVolumeName === ALL_MOUNTS_VOLUME_NAME
+				? `--include "${backupBaseName}-*.tar" --include "${ALL_MOUNTS_VOLUME_NAME}-*.tar"`
+				: `--include "${backupBaseName}-*.tar"`;
+		const listCommand = `rclone lsf ${rcloneFlags.join(" ")} ${includePatterns} :s3:${destination.bucket}/${normalizedPrefix}`;
 		const sortAndPick = `sort -r | tail -n +$((${keepLatestCount}+1)) | xargs -I{}`;
 		const deleteCommand = `rclone delete ${rcloneFlags.join(" ")} ${backupFilesPath}{}`;
 		const fullCommand = `${listCommand} | ${sortAndPick} ${deleteCommand}`;

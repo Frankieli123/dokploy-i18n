@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 export const ALL_MOUNTS_VOLUME_NAME = "dokploy_all_mounts";
+export const ALL_MOUNTS_BACKUP_BASE_NAME = "all_mounts";
 
 export const normalizeAllMountsVolumeName = (value: string): string => {
 	const trimmed = value.trim();
@@ -38,6 +39,10 @@ export const isBindPath = (value: string) => {
 };
 
 export const getBackupBaseName = (source: string) => {
+	if (isAllMountsVolumeName(source)) {
+		return ALL_MOUNTS_BACKUP_BASE_NAME;
+	}
+
 	if (!isBindPath(source)) return source;
 
 	const normalized = source.replace(/\\/g, "/");

@@ -50,6 +50,11 @@ const ALL_MOUNTS_VOLUME_NAME_INTERNAL = "dokploy_all_mounts";
 const toUiVolumeName = (value?: string | null) =>
 	value === ALL_MOUNTS_VOLUME_NAME_INTERNAL ? ALL_MOUNTS_VOLUME_NAME : value || "";
 
+const isAllMountsValue = (value?: string | null) =>
+	["all", ALL_MOUNTS_VOLUME_NAME_INTERNAL].includes(
+		(value || "").trim().toLowerCase(),
+	);
+
 const createFormSchema = (t: (key: string) => string) =>
 	z
 		.object({
@@ -60,7 +65,7 @@ const createFormSchema = (t: (key: string) => string) =>
 		volumeName: z
 			.string()
 				.min(1, t("volumeBackups.validation.volumeNameRequired")),
-		prefix: z.string(),
+		prefix: z.string().min(1, t("backups.handle.validation.prefixRequired")),
 		keepLatestCount: z.coerce
 			.number()
 			.int()
@@ -128,6 +133,7 @@ export const HandleVolumeBackups = ({
 	const [isOpen, setIsOpen] = useState(false);
 	const [cacheType, setCacheType] = useState<CacheType>("cache");
 	const [keepLatestCountInput, setKeepLatestCountInput] = useState("");
+	const [isAllMountsLocked, setIsAllMountsLocked] = useState(false);
 
 	const utils = api.useUtils();
 	const formSchema = createFormSchema(t);
@@ -137,7 +143,7 @@ export const HandleVolumeBackups = ({
 			name: "",
 			cronExpression: "",
 			volumeName: "",
-			prefix: "",
+			prefix: "/",
 			keepLatestCount: undefined,
 			turnOff: false,
 			enabled: true,
@@ -177,14 +183,14 @@ export const HandleVolumeBackups = ({
 
 	const serviceName = form.watch("serviceName");
 	const volumeName = form.watch("volumeName");
-	const isAllMounts =
-		(serviceTypeForm === "compose" || serviceTypeForm === "application") &&
-		["all", ALL_MOUNTS_VOLUME_NAME_INTERNAL].includes(
-			(volumeName || "").trim().toLowerCase(),
-		);
+	const supportsAllMounts =
+		serviceTypeForm === "compose" || serviceTypeForm === "application";
+	const isAllMounts = supportsAllMounts && isAllMountsLocked;
 
 	const toggleAllMounts = () => {
-		form.setValue("volumeName", isAllMounts ? "" : ALL_MOUNTS_VOLUME_NAME, {
+		const nextLocked = !isAllMountsLocked;
+		setIsAllMountsLocked(nextLocked);
+		form.setValue("volumeName", nextLocked ? ALL_MOUNTS_VOLUME_NAME : "", {
 			shouldDirty: true,
 			shouldTouch: true,
 			shouldValidate: true,
@@ -203,11 +209,12 @@ export const HandleVolumeBackups = ({
 
 	useEffect(() => {
 		if (volumeBackupId && volumeBackup) {
+			const uiVolumeName = toUiVolumeName(volumeBackup.volumeName);
 			form.reset({
 				name: volumeBackup.name,
 				cronExpression: volumeBackup.cronExpression,
-				volumeName: toUiVolumeName(volumeBackup.volumeName),
-				prefix: volumeBackup.prefix,
+				volumeName: uiVolumeName,
+				prefix: volumeBackup.prefix || "/",
 				keepLatestCount: volumeBackup.keepLatestCount || undefined,
 				turnOff: volumeBackup.turnOff,
 				enabled: volumeBackup.enabled || false,
@@ -215,14 +222,17 @@ export const HandleVolumeBackups = ({
 				destinationId: volumeBackup.destinationId,
 				serviceType: volumeBackup.serviceType,
 			});
+			setIsAllMountsLocked(isAllMountsValue(uiVolumeName));
 			setKeepLatestCountInput(
 				volumeBackup.keepLatestCount !== null &&
 					volumeBackup.keepLatestCount !== undefined
 					? String(volumeBackup.keepLatestCount)
 					: "",
 			);
+		} else if (!volumeBackupId && !isAllMountsValue(volumeName)) {
+			setIsAllMountsLocked(false);
 		}
-	}, [form, volumeBackup, volumeBackupId]);
+	}, [form, volumeBackup, volumeBackupId, volumeName]);
 
 	const { mutateAsync, isLoading } = volumeBackupId
 		? api.volumeBackups.update.useMutation()
@@ -515,9 +525,17 @@ export const HandleVolumeBackups = ({
 													{t("volumeBackups.handle.field.volumeSelect.label")}
 												</FormLabel>
 												<div className="flex items-center gap-2">
-													<div className="flex-1">
+													<div
+														className={cn(
+															"flex-1",
+															isAllMounts && "pointer-events-none opacity-60",
+														)}
+													>
 														<Select
-															onValueChange={field.onChange}
+															onValueChange={(value) => {
+																if (isAllMounts) return;
+																field.onChange(value);
+															}}
 															value={field.value || ""}
 															disabled={isAllMounts}
 														>
@@ -585,9 +603,17 @@ export const HandleVolumeBackups = ({
 											{t("volumeBackups.handle.field.volumeSelect.label")}
 										</FormLabel>
 										<div className="flex items-center gap-2">
-											<div className="flex-1">
+											<div
+												className={cn(
+													"flex-1",
+													isAllMounts && "pointer-events-none opacity-60",
+												)}
+											>
 												<Select
-													onValueChange={field.onChange}
+													onValueChange={(value) => {
+														if (isAllMounts) return;
+														field.onChange(value);
+													}}
 													value={field.value || ""}
 													disabled={isAllMounts}
 												>
@@ -656,7 +682,17 @@ export const HandleVolumeBackups = ({
 												"volumeBackups.handle.field.volumeName.placeholder",
 											)}
 											{...field}
+											value={
+												isAllMounts
+													? t("filter.all")
+													: (field.value ?? "")
+											}
+											onChange={(event) => {
+												if (isAllMounts) return;
+												field.onChange(event);
+											}}
 											disabled={isAllMounts}
+											readOnly={isAllMounts}
 										/>
 									</FormControl>
 									<FormDescription>
@@ -673,18 +709,16 @@ export const HandleVolumeBackups = ({
 							render={({ field }) => (
 								<FormItem>
 									<FormLabel>
-										{t("volumeBackups.handle.field.prefix.label")}
+										{t("backups.field.prefixStorage")}
 									</FormLabel>
 									<FormControl>
 										<Input
-											placeholder={t(
-												"volumeBackups.handle.field.prefix.placeholder",
-											)}
+											placeholder="/"
 											{...field}
 										/>
 									</FormControl>
 									<FormDescription>
-										{t("volumeBackups.handle.field.prefix.description")}
+										{t("backups.handle.field.prefixDescription")}
 									</FormDescription>
 									<FormMessage />
 								</FormItem>

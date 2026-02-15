@@ -143,9 +143,13 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 					setIsDrawerOpen(true);
 				}
 
-				if (log === "Restore completed successfully!") {
+				if (
+					log.includes("Volume restore completed successfully") ||
+					log.includes("All mounts restore completed")
+				) {
 					setIsDeploying(false);
 				}
+
 				const parsedLogs = parseLogs(log);
 				setFilteredLogs((prev) => [...prev, ...parsedLogs]);
 			},

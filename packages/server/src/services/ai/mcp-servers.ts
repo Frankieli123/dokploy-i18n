@@ -54,7 +54,67 @@ function normalizeMcpHeaders(value: unknown): Record<string, string> {
 }
 
 function normalizeMcpServerUrl(value: unknown): string {
-	return String(value ?? "").trim().replace(/\/+$/, "");
+	return String(value ?? "")
+		.trim()
+		.replace(/\/+$/, "");
+}
+
+function inferMcpTransportFromUrl(
+	serverUrl: string,
+): "streamable" | "sse" | null {
+	try {
+		const parsed = new URL(serverUrl);
+		const transportHint = (
+			parsed.searchParams.get("mcp_transport") ??
+			parsed.searchParams.get("transport") ??
+			""
+		)
+			.trim()
+			.toLowerCase();
+
+		if (transportHint === "sse") return "sse";
+		if (transportHint === "streamable" || transportHint === "streamable_http") {
+			return "streamable";
+		}
+
+		const pathname = parsed.pathname.toLowerCase();
+		if (/(^|\/)sse(\/|$)/.test(pathname)) return "sse";
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+function shouldFallbackToSse(error: unknown): boolean {
+	const code = Number((error as { code?: unknown })?.code);
+	if (Number.isFinite(code) && code === 405) return true;
+
+	const message = error instanceof Error ? error.message : String(error ?? "");
+	if (/error posting to endpoint/i.test(message)) {
+		if (/\b405\b|method not allowed/i.test(message)) return true;
+	}
+	return false;
+}
+
+function formatTransportError(error: unknown): string {
+	if (!error) return "Unknown error";
+	if (error instanceof Error) return error.message;
+	return String(error);
+}
+
+async function closeMcpTransport(transport: {
+	terminateSession?: () => Promise<void> | void;
+	close?: () => Promise<void> | void;
+}) {
+	try {
+		if (typeof transport.terminateSession === "function") {
+			await transport.terminateSession();
+			return;
+		}
+		if (typeof transport.close === "function") {
+			await transport.close();
+		}
+	} catch {}
 }
 
 async function withMcpClient<T>(params: {
@@ -64,10 +124,14 @@ async function withMcpClient<T>(params: {
 }): Promise<T> {
 	let Client: typeof import("@modelcontextprotocol/sdk/client/index.js").Client;
 	let StreamableHTTPClientTransport: typeof import("@modelcontextprotocol/sdk/client/streamableHttp.js").StreamableHTTPClientTransport;
+	let SSEClientTransport: typeof import("@modelcontextprotocol/sdk/client/sse.js").SSEClientTransport;
 	try {
 		({ Client } = await import("@modelcontextprotocol/sdk/client/index.js"));
 		({ StreamableHTTPClientTransport } = await import(
 			"@modelcontextprotocol/sdk/client/streamableHttp.js"
+		));
+		({ SSEClientTransport } = await import(
+			"@modelcontextprotocol/sdk/client/sse.js"
 		));
 	} catch (error) {
 		throw new TRPCError({
@@ -78,22 +142,53 @@ async function withMcpClient<T>(params: {
 	}
 
 	const url = new URL(params.serverUrl);
-	const transport = new StreamableHTTPClientTransport(url, {
-		requestInit: {
-			headers: params.headers,
-		},
-	});
-	const client = new Client({ name: "dokploy", version: "1.0.0" });
-	await client.connect(transport);
+	const requestInit = { headers: params.headers };
+
+	const runWithTransport = async (
+		transportType: "streamable" | "sse",
+	): Promise<T> => {
+		const transport =
+			transportType === "sse"
+				? new SSEClientTransport(url, { requestInit })
+				: new StreamableHTTPClientTransport(url, { requestInit });
+		const mcpTransport = transport as Parameters<McpClient["connect"]>[0] & {
+			terminateSession?: () => Promise<void> | void;
+			close?: () => Promise<void> | void;
+		};
+		const client = new Client({ name: "dokploy", version: "1.0.0" });
+
+		try {
+			await client.connect(mcpTransport);
+			return await params.fn(client);
+		} finally {
+			try {
+				await client.close();
+			} catch {}
+			await closeMcpTransport(mcpTransport);
+		}
+	};
+
+	const hintedTransport = inferMcpTransportFromUrl(params.serverUrl);
+	if (hintedTransport === "sse") {
+		return await runWithTransport("sse");
+	}
+	if (hintedTransport === "streamable") {
+		return await runWithTransport("streamable");
+	}
+
 	try {
-		return await params.fn(client);
-	} finally {
+		return await runWithTransport("streamable");
+	} catch (streamableError) {
+		if (!shouldFallbackToSse(streamableError)) throw streamableError;
 		try {
-			await client.close();
-		} catch {}
-		try {
-			await transport.terminateSession();
-		} catch {}
+			return await runWithTransport("sse");
+		} catch (sseError) {
+			throw new Error(
+				`MCP transport negotiation failed. Streamable HTTP: ${formatTransportError(
+					streamableError,
+				)}; SSE fallback: ${formatTransportError(sseError)}`,
+			);
+		}
 	}
 }
 
@@ -305,7 +400,10 @@ export const listAiMcpTools = async (params: {
 }): Promise<{ serverUrl: string; tools: AiMcpToolInfo[] }> => {
 	const id = String(params.mcpServerId ?? "").trim();
 	if (!id) {
-		throw new TRPCError({ code: "BAD_REQUEST", message: "MCP server id is required" });
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "MCP server id is required",
+		});
 	}
 
 	const server = await db.query.aiMcpServers.findFirst({
@@ -315,7 +413,10 @@ export const listAiMcpTools = async (params: {
 		throw new TRPCError({ code: "NOT_FOUND", message: "MCP server not found" });
 	}
 	if (!server.isEnabled) {
-		throw new TRPCError({ code: "FORBIDDEN", message: "MCP server is disabled" });
+		throw new TRPCError({
+			code: "FORBIDDEN",
+			message: "MCP server is disabled",
+		});
 	}
 
 	const serverUrl = normalizeMcpServerUrl(server.serverUrl);
@@ -328,13 +429,16 @@ export const listAiMcpTools = async (params: {
 	});
 
 	const toolsRaw = Array.isArray((res as any)?.tools) ? (res as any).tools : [];
-	const tools: AiMcpToolInfo[] = toolsRaw.map((t: any) => ({
-		name: typeof t?.name === "string" ? t.name : "",
-		description: typeof t?.description === "string" ? t.description : undefined,
-		inputSchema: t?.inputSchema,
-		outputSchema: t?.outputSchema,
-		annotations: t?.annotations,
-	})).filter((t: AiMcpToolInfo) => t.name.trim().length > 0);
+	const tools: AiMcpToolInfo[] = toolsRaw
+		.map((t: any) => ({
+			name: typeof t?.name === "string" ? t.name : "",
+			description:
+				typeof t?.description === "string" ? t.description : undefined,
+			inputSchema: t?.inputSchema,
+			outputSchema: t?.outputSchema,
+			annotations: t?.annotations,
+		}))
+		.filter((t: AiMcpToolInfo) => t.name.trim().length > 0);
 
 	return { serverUrl, tools };
 };
@@ -347,11 +451,17 @@ export const callAiMcpTool = async (params: {
 }): Promise<AiMcpToolCallResult> => {
 	const id = String(params.mcpServerId ?? "").trim();
 	if (!id) {
-		throw new TRPCError({ code: "BAD_REQUEST", message: "MCP server id is required" });
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "MCP server id is required",
+		});
 	}
 	const toolName = String(params.toolName ?? "").trim();
 	if (!toolName) {
-		throw new TRPCError({ code: "BAD_REQUEST", message: "MCP tool name is required" });
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "MCP tool name is required",
+		});
 	}
 
 	const server = await db.query.aiMcpServers.findFirst({
@@ -361,13 +471,18 @@ export const callAiMcpTool = async (params: {
 		throw new TRPCError({ code: "NOT_FOUND", message: "MCP server not found" });
 	}
 	if (!server.isEnabled) {
-		throw new TRPCError({ code: "FORBIDDEN", message: "MCP server is disabled" });
+		throw new TRPCError({
+			code: "FORBIDDEN",
+			message: "MCP server is disabled",
+		});
 	}
 
 	const serverUrl = normalizeMcpServerUrl(server.serverUrl);
 	const headers = normalizeMcpHeaders(server.headers);
 	const args =
-		params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments)
+		params.arguments &&
+		typeof params.arguments === "object" &&
+		!Array.isArray(params.arguments)
 			? params.arguments
 			: {};
 
