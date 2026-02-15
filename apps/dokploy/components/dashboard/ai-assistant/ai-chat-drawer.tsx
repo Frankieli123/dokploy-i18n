@@ -69,7 +69,7 @@ export function AIChatDrawer({
 	serverId: _serverId,
 }: AIChatDrawerProps) {
 	const router = useRouter();
-	const { t } = useTranslation("common");
+	const { t } = useTranslation(["common", "settings", "auth"]);
 	const utils = api.useUtils();
 	const [isOpen, setIsOpen] = useState(false);
 	const SERVER_CONTEXT_STORAGE_KEY = "dokploy.ai.serverContext.v2";

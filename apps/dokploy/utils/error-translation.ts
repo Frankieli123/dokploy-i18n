@@ -1,27 +1,26 @@
 import type { TFunction } from "next-i18next";
 
-/**
- * 翻译错误消息
- * 如果错误消息是翻译键（以 settings. 或 common. 开头），则尝试翻译
- * 否则返回原始消息
- */
+const TRANSLATABLE_PREFIXES = ["settings.", "common.", "auth."] as const;
+
 export function translateErrorMessage(
 	errorMessage: string,
 	t: TFunction,
 ): string {
-	// 检查是否是翻译键格式
-	if (
-		errorMessage.startsWith("settings.") ||
-		errorMessage.startsWith("common.") ||
-		errorMessage.startsWith("auth.")
-	) {
-		const translated = t(errorMessage);
-		// 如果翻译结果与键相同，说明翻译键不存在，返回原始消息
-		if (translated === errorMessage) {
-			return errorMessage;
-		}
-		return translated;
+	const key = typeof errorMessage === "string" ? errorMessage.trim() : "";
+	if (!key) return "";
+	if (!TRANSLATABLE_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+		return errorMessage;
 	}
-	return errorMessage;
-}
 
+	const namespace = key.split(".", 1)[0];
+	const translatedWithNamespace = t(key, {
+		ns: namespace,
+		defaultValue: key,
+	});
+	if (translatedWithNamespace !== key) {
+		return translatedWithNamespace;
+	}
+
+	const translated = t(key, { defaultValue: key });
+	return translated === key ? errorMessage : translated;
+}

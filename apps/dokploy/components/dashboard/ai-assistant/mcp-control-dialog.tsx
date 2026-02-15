@@ -366,11 +366,6 @@ export function McpControlDialog() {
 							</Button>
 						)}
 					</div>
-					{view === "list" && (
-						<div className="mt-1 text-xs text-muted-foreground">
-							{t("ai.chat.mcp.panel.hint")}
-						</div>
-					)}
 				</DialogHeader>
 
 				<ScrollArea

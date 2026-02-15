@@ -27,7 +27,7 @@ import {
 	Wrench,
 } from "lucide-react";
 import { useTranslation } from "next-i18next";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ToolCall } from "./use-chat";
@@ -159,12 +159,6 @@ export function ToolCallBlock({
 }: ToolCallBlockProps) {
 	const { t } = useTranslation("common");
 	const [expanded, setExpanded] = useState(false);
-
-	useEffect(() => {
-		if (status === "executing") {
-			setExpanded(true);
-		}
-	}, [status]);
 
 	const Icon = getToolIcon(toolCall.function.name);
 

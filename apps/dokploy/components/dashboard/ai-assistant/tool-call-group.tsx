@@ -10,7 +10,7 @@ import {
 	ShieldAlert,
 } from "lucide-react";
 import { useTranslation } from "next-i18next";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ToolCallBlock } from "./tool-call-block";
@@ -61,6 +61,14 @@ export function ToolGroup({
 		return typeof v === "string" && v.length > 0 ? v : "";
 	};
 
+	const getEffectiveStatus = (tc: ToolCall) => {
+		if (tc.status) return tc.status;
+		if (tc.result && typeof tc.result.success === "boolean") {
+			return tc.result.success ? "completed" : "failed";
+		}
+		return getEffectiveExecutionId(tc).length > 0 ? "executing" : "completed";
+	};
+
 	const summary = useMemo(() => {
 		let executing = 0;
 		let pending = 0;
@@ -69,10 +77,7 @@ export function ToolGroup({
 		let unknownToolFailures = 0;
 
 		for (const tc of toolCalls) {
-			const effectiveExecutionId = getEffectiveExecutionId(tc);
-			const status =
-				tc.status ??
-				(effectiveExecutionId.length > 0 ? "executing" : "completed");
+			const status = getEffectiveStatus(tc);
 			if (status === "executing") executing++;
 			else if (status === "pending") pending++;
 			else if (status === "failed" || status === "rejected") {
@@ -91,9 +96,7 @@ export function ToolGroup({
 		return toolCalls
 			.map((tc, idx) => {
 				const effectiveExecutionId = getEffectiveExecutionId(tc);
-				const status =
-					tc.status ??
-					(effectiveExecutionId.length > 0 ? "executing" : "completed");
+				const status = getEffectiveStatus(tc);
 				const canApprove =
 					status === "pending" &&
 					effectiveExecutionId.length > 0 &&
@@ -113,9 +116,7 @@ export function ToolGroup({
 		if (!onApproveToolCall || !onRejectToolCall) return null;
 		for (const tc of orderedToolCalls) {
 			const effectiveExecutionId = getEffectiveExecutionId(tc);
-			const status =
-				tc.status ??
-				(effectiveExecutionId.length > 0 ? "executing" : "completed");
+			const status = getEffectiveStatus(tc);
 			if (status !== "pending") continue;
 			if (effectiveExecutionId.length === 0) continue;
 			return { toolCallId: tc.id };
@@ -130,11 +131,6 @@ export function ToolGroup({
 		hasFailed &&
 		summary.unknownToolFailures > 0 &&
 		summary.unknownToolFailures === summary.failed;
-
-	useEffect(() => {
-		if (!isPending && !isExecuting) return;
-		setIsOpen(true);
-	}, [isPending, isExecuting]);
 
 	// Determine overall status color/icon for the header
 	let HeaderIcon = Layers;
@@ -233,9 +229,7 @@ export function ToolGroup({
 				<div className="border-t border-border/10 bg-muted/5 max-w-full min-w-0 max-h-[40vh] overflow-y-auto overflow-x-hidden p-1">
 					{orderedToolCalls.map((tc) => {
 						const effectiveExecutionId = getEffectiveExecutionId(tc);
-						const status =
-							tc.status ??
-							(effectiveExecutionId.length > 0 ? "pending" : "completed");
+						const status = getEffectiveStatus(tc);
 						const canApprove =
 							status === "pending" &&
 							effectiveExecutionId.length > 0 &&

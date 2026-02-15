@@ -158,7 +158,11 @@ function getEffectiveToolStatus(
 	toolCall: ToolCall,
 	executionId: string,
 ): NonNullable<Parameters<typeof ToolCallBlock>[0]["status"]> {
-	return toolCall.status ?? (executionId.length > 0 ? "executing" : "completed");
+	if (toolCall.status) return toolCall.status;
+	if (toolCall.result && typeof toolCall.result.success === "boolean") {
+		return toolCall.result.success ? "completed" : "failed";
+	}
+	return executionId.length > 0 ? "executing" : "completed";
 }
 
 interface MessageBubbleProps {
@@ -178,7 +182,7 @@ export function MessageBubble({
 	onRetry,
 	areToolApprovalsDisabled,
 }: MessageBubbleProps) {
-	const { t } = useTranslation("common");
+	const { t } = useTranslation(["common", "settings", "auth"]);
 	const [isReasoningExpanded, setIsReasoningExpanded] = useState(false);
 
 	if (message.role === "system") {

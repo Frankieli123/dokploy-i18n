@@ -167,6 +167,114 @@ export interface PendingApproval {
 	parametersPreview?: string;
 }
 
+function areAttachmentsEqual(
+	left: Message["attachments"],
+	right: Message["attachments"],
+) {
+	return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+export function mergeServerAndPendingMessages(
+	server: Message[],
+	pending: Message[],
+) {
+	const pendingById = new Map(pending.map((m) => [m.messageId, m]));
+	const mergedServer = server.map((serverMessage) => {
+		const pendingMessage = pendingById.get(serverMessage.messageId);
+		return pendingMessage ? { ...serverMessage, ...pendingMessage } : serverMessage;
+	});
+	const mergedServerIds = new Set(mergedServer.map((m) => m.messageId));
+
+	const pendingOnly = pending.filter((pendingMessage) => {
+		if (mergedServerIds.has(pendingMessage.messageId)) return false;
+		if (pendingMessage.status === "sending") return true;
+		return !mergedServer.some(
+			(serverMessage) =>
+				serverMessage.role === pendingMessage.role &&
+				serverMessage.content === pendingMessage.content &&
+				areAttachmentsEqual(
+					serverMessage.attachments,
+					pendingMessage.attachments,
+				),
+		);
+	});
+
+	const merged = [...mergedServer, ...pendingOnly];
+	return merged
+		.map((message, index) => ({ message, index }))
+		.sort((left, right) => {
+			const leftTime = Date.parse(left.message.createdAt ?? "");
+			const rightTime = Date.parse(right.message.createdAt ?? "");
+			if (
+				Number.isFinite(leftTime) &&
+				Number.isFinite(rightTime) &&
+				leftTime !== rightTime
+			) {
+				return leftTime - rightTime;
+			}
+			return left.index - right.index;
+		})
+		.map(({ message }) => message);
+}
+
+type RetryContext = {
+	content: string;
+	attachments: NonNullable<Message["attachments"]>;
+	removeMessageIds: Set<string>;
+};
+
+export function resolveRetryContext(
+	messages: Message[],
+	messageId: string,
+): RetryContext | null {
+	const targetIndex = messages.findIndex((m) => m.messageId === messageId);
+	if (targetIndex < 0) return null;
+	const targetMessage = messages[targetIndex];
+	if (!targetMessage) return null;
+
+	let sourceUserMessage: Message | undefined;
+	if (targetMessage.role === "user") {
+		sourceUserMessage = targetMessage;
+	} else {
+		for (let i = targetIndex - 1; i >= 0; i--) {
+			const candidate = messages[i];
+			if (!candidate || candidate.role !== "user") continue;
+			const candidateContent = candidate.content ?? "";
+			const candidateAttachments = Array.isArray(candidate.attachments)
+				? candidate.attachments
+				: [];
+			if (candidateContent.trim().length > 0 || candidateAttachments.length > 0) {
+				sourceUserMessage = candidate;
+				break;
+			}
+		}
+	}
+
+	if (!sourceUserMessage) return null;
+	const content = sourceUserMessage.content ?? "";
+	const attachments = Array.isArray(sourceUserMessage.attachments)
+		? sourceUserMessage.attachments
+		: [];
+	if (!content.trim() && attachments.length === 0) return null;
+
+	const removeMessageIds = new Set<string>([
+		messageId,
+		sourceUserMessage.messageId,
+	]);
+	if (targetMessage.role === "user") {
+		const nextMessage = messages[targetIndex + 1];
+		if (
+			nextMessage &&
+			nextMessage.role === "assistant" &&
+			(nextMessage.status === "sending" || nextMessage.status === "error")
+		) {
+			removeMessageIds.add(nextMessage.messageId);
+		}
+	}
+
+	return { content, attachments, removeMessageIds };
+}
+
 export function useChat(options: UseChatOptions = {}) {
 	const utils = api.useUtils();
 	const [conversationId, setConversationId] = useState<string | undefined>(
@@ -495,27 +603,7 @@ export function useChat(options: UseChatOptions = {}) {
 
 		const serverRaw = ((serverMessages || []) as Message[]).map(applyMeta);
 		const pendingWithMeta = pendingMessages.map(applyMeta);
-		const pendingById = new Map(pendingWithMeta.map((m) => [m.messageId, m]));
-
-		const server = serverRaw.map((sm) => {
-			const pending = pendingById.get(sm.messageId);
-			return pending ? { ...sm, ...pending } : sm;
-		});
-		const serverIds = new Set(server.map((m) => m.messageId));
-
-		const pendingOnly = pendingWithMeta.filter((pm) => {
-			if (serverIds.has(pm.messageId)) return false;
-			if (pm.status === "sending") return true;
-			return !server.some(
-				(sm) =>
-					sm.role === pm.role &&
-					sm.content === pm.content &&
-					JSON.stringify(sm.attachments ?? null) ===
-						JSON.stringify(pm.attachments ?? null),
-			);
-		});
-
-		return [...server, ...pendingOnly];
+		return mergeServerAndPendingMessages(serverRaw, pendingWithMeta);
 	}, [conversationId, serverMessages, pendingMessages, toolCallMeta]);
 
 	const approveToolCall = useCallback(
@@ -2478,19 +2566,21 @@ export function useChat(options: UseChatOptions = {}) {
 
 	const retryMessage = useCallback(
 		async (messageId: string, aiId: string, isAgentMode = false) => {
-			const message = pendingMessages.find((m) => m.messageId === messageId);
-			if (!message) return;
-			const content = message.content ?? "";
-			const attachments = message.attachments ?? undefined;
-			if (!content.trim() && (!attachments || attachments.length === 0)) return;
+			const retryContext = resolveRetryContext(messages, messageId);
+			if (!retryContext) return;
 
 			setPendingMessages((prev) =>
-				prev.filter((m) => m.messageId !== messageId),
+				prev.filter((m) => !retryContext.removeMessageIds.has(m.messageId)),
 			);
 
-			await send(content, aiId, isAgentMode, attachments ?? []);
+			await send(
+				retryContext.content,
+				aiId,
+				isAgentMode,
+				retryContext.attachments,
+			);
 		},
-		[pendingMessages, send],
+		[messages, send],
 	);
 
 	const openConversation = useCallback(
