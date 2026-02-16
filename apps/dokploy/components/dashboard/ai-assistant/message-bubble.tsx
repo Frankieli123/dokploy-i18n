@@ -111,7 +111,7 @@ const assistantMarkdownComponents: Components = {
 		</pre>
 	),
 	blockquote: ({ children }) => (
-		<blockquote className="border-l-2 border-border/60 pl-3 italic text-muted-foreground mb-2 last:mb-0">
+		<blockquote className="border-l-2 border-border/60 pl-3 text-xs text-muted-foreground leading-relaxed mb-2 last:mb-0">
 			{children}
 		</blockquote>
 	),
@@ -260,10 +260,19 @@ function getEffectiveToolStatus(
 	executionId: string,
 	messageStatus: Message["status"] | undefined,
 ): NonNullable<Parameters<typeof ToolCallBlock>[0]["status"]> {
-	if (toolCall.status) return toolCall.status;
-	if (toolCall.result && typeof toolCall.result.success === "boolean") {
-		return toolCall.result.success ? "completed" : "failed";
+	if (toolCall.status === "pending") return "pending";
+	if (toolCall.status === "rejected") return "rejected";
+
+	const resultSuccess = toolCall.result?.success;
+	if (typeof resultSuccess === "boolean") {
+		return resultSuccess ? "completed" : "failed";
 	}
+
+	if (toolCall.status === "executing") {
+		if (messageStatus === "sending") return "executing";
+		return executionId.length > 0 ? "executing" : "completed";
+	}
+	if (toolCall.status) return toolCall.status;
 	if (messageStatus === "sending") {
 		return executionId.length > 0 ? "executing" : "completed";
 	}
@@ -598,10 +607,14 @@ export function MessageBubble({
 					>
 						{isError
 							? t("ai.chat.failedToSend")
-							: new Date(message.createdAt).toLocaleTimeString([], {
-									hour: "2-digit",
-									minute: "2-digit",
-								})}
+							: isSending
+								? isUser
+									? t("ai.chat.sending")
+									: t("ai.chat.thinking")
+								: new Date(message.createdAt).toLocaleTimeString([], {
+										hour: "2-digit",
+										minute: "2-digit",
+									})}
 					</span>
 					{isError && onRetry && (
 						<Button

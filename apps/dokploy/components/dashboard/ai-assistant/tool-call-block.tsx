@@ -161,6 +161,21 @@ export function ToolCallBlock({
 	const [expanded, setExpanded] = useState(false);
 
 	const Icon = getToolIcon(toolCall.function.name);
+	const displayToolName = (() => {
+		const raw = String(toolCall.function.name ?? "").trim();
+		if (!raw.toLowerCase().startsWith("mcp/")) return raw;
+		const parts = raw.split("/");
+		if (parts.length < 3) return raw;
+		const serverId = String(parts[1] ?? "");
+		const toolName = parts.slice(2).join("/");
+		const serverName =
+			isRecord(result?.data) && typeof result.data.serverName === "string"
+				? result.data.serverName.trim()
+				: "";
+		const serverLabel = serverName || (serverId ? serverId.slice(0, 8) : "");
+		if (!serverLabel || !toolName) return raw;
+		return `mcp/${serverLabel}/${toolName}`;
+	})();
 
 	const parsedArgs = (() => {
 		try {
@@ -350,7 +365,7 @@ export function ToolCallBlock({
 						</div>
 						<div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
 							<span className="font-semibold text-foreground text-[11px] min-w-0 truncate">
-								{toolCall.function.name}
+								{displayToolName}
 							</span>
 							<span
 								className={cn(

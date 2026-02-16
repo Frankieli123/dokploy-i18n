@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { callAiMcpTool, listAiMcpTools, listAiMcpServersByOrganizationId } from "../../ai/mcp-servers";
+import {
+	callAiMcpTool,
+	listAiMcpServersByOrganizationId,
+	listAiMcpTools,
+	listAiMcpToolsCached,
+	validateAiMcpToolArguments,
+} from "../../ai/mcp-servers";
 import { toolRegistry } from "../registry";
 import type { Tool } from "../types";
 
@@ -143,6 +149,34 @@ const mcpToolCall: Tool<
 				},
 			};
 		}
+
+		try {
+			const toolList = await listAiMcpToolsCached({
+				organizationId: ctx.organizationId,
+				mcpServerId: params.mcpServerId,
+			});
+			if (!toolList.error) {
+				const info = toolList.tools.find(
+					(t) => String(t.name ?? "").trim() === toolName,
+				);
+				const validation = validateAiMcpToolArguments({
+					inputSchema: info?.inputSchema,
+					arguments: (args ?? {}) as unknown,
+				});
+				if (!validation.ok) {
+					return {
+						success: false,
+						message: `Invalid parameters for MCP tool "${toolName}"`,
+						error: validation.errorText.replace(/\s*\n\s*/g, "; ").trim(),
+						data: {
+							mcpServerId: params.mcpServerId,
+							toolName,
+							issues: validation.issues,
+						},
+					};
+				}
+			}
+		} catch {}
 
 		const result = await callAiMcpTool({
 			organizationId: ctx.organizationId,

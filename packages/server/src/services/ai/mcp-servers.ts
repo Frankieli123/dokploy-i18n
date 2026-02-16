@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import { db } from "@dokploy/server/db";
 import { aiMcpServers } from "@dokploy/server/db/schema";
 import { TRPCError } from "@trpc/server";
@@ -27,6 +29,175 @@ export type AiMcpToolCallResult = {
 	isError?: boolean;
 	raw?: unknown;
 };
+
+type AiMcpToolListCacheEntry = {
+	serverUrl: string;
+	tools: AiMcpToolInfo[];
+	fetchedAt: number;
+	expiresAt: number;
+	error?: string;
+};
+
+const MCP_TOOL_LIST_TTL_MS = 5 * 60 * 1000;
+const MCP_TOOL_LIST_ERROR_TTL_MS = 15 * 1000;
+const MCP_TOOL_LIST_CACHE_MAX_ENTRIES = 200;
+const mcpToolListCache = new Map<string, AiMcpToolListCacheEntry>();
+const mcpToolListInFlight = new Map<string, Promise<AiMcpToolListCacheEntry>>();
+
+function getMcpToolListCacheKey(params: {
+	organizationId: string;
+	mcpServerId: string;
+}): string {
+	const orgId = String(params.organizationId ?? "").trim();
+	const serverId = String(params.mcpServerId ?? "").trim();
+	return `${orgId}:${serverId}`;
+}
+
+function touchMcpToolListCacheEntry(
+	key: string,
+	entry: AiMcpToolListCacheEntry,
+) {
+	mcpToolListCache.delete(key);
+	mcpToolListCache.set(key, entry);
+}
+
+function enforceMcpToolListCacheLimit() {
+	while (mcpToolListCache.size > MCP_TOOL_LIST_CACHE_MAX_ENTRIES) {
+		const oldestKey = mcpToolListCache.keys().next().value as string | undefined;
+		if (!oldestKey) break;
+		mcpToolListCache.delete(oldestKey);
+	}
+}
+
+export type AiMcpInputValidationIssue = {
+	path: string;
+	message: string;
+	keyword?: string;
+};
+
+const ajv = new Ajv({ allErrors: true, strict: false, validateSchema: false });
+type AjvValidatorCacheEntry = { validate: ValidateFunction; expiresAt: number };
+const MCP_INPUT_VALIDATOR_TTL_MS = 10 * 60 * 1000;
+const MCP_INPUT_VALIDATOR_CACHE_MAX_ENTRIES = 500;
+const mcpInputValidatorCache = new Map<string, AjvValidatorCacheEntry>();
+
+function hashSchemaKey(schema: unknown): string | null {
+	try {
+		const json = JSON.stringify(schema);
+		return createHash("sha256").update(json).digest("hex");
+	} catch {
+		return null;
+	}
+}
+
+function getAjvValidator(schema: unknown): ValidateFunction | null {
+	if (!schema || typeof schema !== "object" || Array.isArray(schema)) return null;
+
+	const key = hashSchemaKey(schema);
+	if (!key) return null;
+
+	const now = Date.now();
+	const cached = mcpInputValidatorCache.get(key);
+	if (cached && cached.expiresAt > now) {
+		mcpInputValidatorCache.delete(key);
+		mcpInputValidatorCache.set(key, cached);
+		return cached.validate;
+	}
+	if (cached) mcpInputValidatorCache.delete(key);
+
+	try {
+		const validate = ajv.compile(schema as any);
+		mcpInputValidatorCache.set(key, {
+			validate,
+			expiresAt: now + MCP_INPUT_VALIDATOR_TTL_MS,
+		});
+		while (mcpInputValidatorCache.size > MCP_INPUT_VALIDATOR_CACHE_MAX_ENTRIES) {
+			const oldestKey = mcpInputValidatorCache.keys().next()
+				.value as string | undefined;
+			if (!oldestKey) break;
+			mcpInputValidatorCache.delete(oldestKey);
+		}
+		return validate;
+	} catch {
+		return null;
+	}
+}
+
+function decodeJsonPointerSegment(seg: string): string {
+	return seg.replaceAll("~1", "/").replaceAll("~0", "~");
+}
+
+function jsonPointerToPath(pointer: string): string {
+	if (!pointer) return "";
+	const parts = pointer
+		.split("/")
+		.slice(1)
+		.map((p) => decodeJsonPointerSegment(p));
+
+	let out = "";
+	for (const part of parts) {
+		if (!part) continue;
+		if (/^\d+$/.test(part)) {
+			out += `[${part}]`;
+			continue;
+		}
+		out += out.length > 0 ? `.${part}` : part;
+	}
+	return out;
+}
+
+function ajvErrorToIssue(err: ErrorObject): AiMcpInputValidationIssue {
+	const keyword = typeof err.keyword === "string" ? err.keyword : undefined;
+	const instancePath =
+		typeof err.instancePath === "string" ? err.instancePath : "";
+	const base = jsonPointerToPath(instancePath);
+
+	const message = typeof err.message === "string" ? err.message : "Invalid value";
+	if (keyword === "required") {
+		const missing = (err.params as { missingProperty?: unknown } | undefined)
+			?.missingProperty;
+		const missingKey = typeof missing === "string" ? missing : "";
+		const fullPath =
+			missingKey.length > 0 ? (base ? `${base}.${missingKey}` : missingKey) : base;
+		return { path: fullPath || "<root>", message, keyword };
+	}
+	if (keyword === "additionalProperties") {
+		const extra = (err.params as { additionalProperty?: unknown } | undefined)
+			?.additionalProperty;
+		const extraKey = typeof extra === "string" ? extra : "";
+		const fullPath =
+			extraKey.length > 0 ? (base ? `${base}.${extraKey}` : extraKey) : base;
+		return { path: fullPath || "<root>", message, keyword };
+	}
+
+	return { path: base || "<root>", message, keyword };
+}
+
+export function validateAiMcpToolArguments(params: {
+	inputSchema?: unknown;
+	arguments?: unknown;
+}):
+	| { ok: true }
+	| { ok: false; issues: AiMcpInputValidationIssue[]; errorText: string } {
+	const schema = params.inputSchema;
+	if (!schema || typeof schema !== "object" || Array.isArray(schema)) return { ok: true };
+
+	const validate = getAjvValidator(schema);
+	if (!validate) return { ok: true };
+
+	const ok = validate(params.arguments);
+	if (ok) return { ok: true };
+
+	const issues = (validate.errors ?? [])
+		.slice(0, 12)
+		.map(ajvErrorToIssue)
+		.filter((x) => x.message.trim().length > 0);
+	const errorText =
+		issues.length > 0
+			? issues.map((x) => `${x.path}: ${x.message}`).join("\n")
+			: "Invalid parameters";
+	return { ok: false, issues, errorText };
+}
 
 function getProviderErrorText(err: unknown): string {
 	const msg = err instanceof Error ? err.message : String(err);
@@ -441,6 +612,105 @@ export const listAiMcpTools = async (params: {
 		.filter((t: AiMcpToolInfo) => t.name.trim().length > 0);
 
 	return { serverUrl, tools };
+};
+
+export const listAiMcpToolsCached = async (params: {
+	organizationId: string;
+	mcpServerId: string;
+	forceRefresh?: boolean;
+}): Promise<{
+	serverUrl: string;
+	tools: AiMcpToolInfo[];
+	cached: boolean;
+	error?: string;
+}> => {
+	const id = String(params.mcpServerId ?? "").trim();
+	if (!id) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "MCP server id is required",
+		});
+	}
+
+	const orgId = String(params.organizationId ?? "").trim();
+	if (!orgId) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Organization id is required",
+		});
+	}
+
+	const cacheKey = getMcpToolListCacheKey({
+		organizationId: orgId,
+		mcpServerId: id,
+	});
+	const now = Date.now();
+	const cached = params.forceRefresh ? undefined : mcpToolListCache.get(cacheKey);
+	if (cached && cached.expiresAt > now) {
+		touchMcpToolListCacheEntry(cacheKey, cached);
+		return {
+			serverUrl: cached.serverUrl,
+			tools: cached.tools,
+			cached: true,
+			error: cached.error,
+		};
+	}
+	if (cached) mcpToolListCache.delete(cacheKey);
+
+	const inFlight = mcpToolListInFlight.get(cacheKey);
+	if (inFlight) {
+		const entry = await inFlight;
+		if (entry.expiresAt > Date.now()) {
+			touchMcpToolListCacheEntry(cacheKey, entry);
+		}
+		return {
+			serverUrl: entry.serverUrl,
+			tools: entry.tools,
+			cached: true,
+			error: entry.error,
+		};
+	}
+
+	const promise = (async (): Promise<AiMcpToolListCacheEntry> => {
+		const fetchedAt = Date.now();
+		try {
+			const res = await listAiMcpTools({
+				organizationId: orgId,
+				mcpServerId: id,
+			});
+			const entry: AiMcpToolListCacheEntry = {
+				serverUrl: res.serverUrl,
+				tools: res.tools,
+				fetchedAt,
+				expiresAt: fetchedAt + MCP_TOOL_LIST_TTL_MS,
+			};
+			mcpToolListCache.set(cacheKey, entry);
+			enforceMcpToolListCacheLimit();
+			return entry;
+		} catch (error) {
+			const entry: AiMcpToolListCacheEntry = {
+				serverUrl: "",
+				tools: [],
+				fetchedAt,
+				expiresAt: fetchedAt + MCP_TOOL_LIST_ERROR_TTL_MS,
+				error: getProviderErrorText(error) || "MCP tool list failed",
+			};
+			mcpToolListCache.set(cacheKey, entry);
+			enforceMcpToolListCacheLimit();
+			return entry;
+		} finally {
+			mcpToolListInFlight.delete(cacheKey);
+		}
+	})();
+
+	mcpToolListInFlight.set(cacheKey, promise);
+	const entry = await promise;
+	return {
+		serverUrl: entry.serverUrl,
+		tools: entry.tools,
+		cached: false,
+		error: entry.error,
+	};
 };
 
 export const callAiMcpTool = async (params: {

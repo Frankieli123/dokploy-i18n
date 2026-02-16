@@ -13,6 +13,26 @@ import {
 	type ToolResult,
 	toolRegistry,
 } from "../../ai-tools";
+import {
+	callAiMcpTool,
+	listAiMcpToolsCached,
+	validateAiMcpToolArguments,
+} from "../mcp-servers";
+
+const MCP_VIRTUAL_TOOL_PREFIX = "mcp/";
+
+function parseMcpVirtualToolName(
+	toolName: string,
+): { mcpServerId: string; mcpToolName: string } | null {
+	const normalized = String(toolName ?? "").trim();
+	if (!normalized.toLowerCase().startsWith(MCP_VIRTUAL_TOOL_PREFIX)) return null;
+	const parts = normalized.split("/");
+	if (parts.length < 3) return null;
+	const mcpServerId = String(parts[1] ?? "").trim();
+	const mcpToolName = parts.slice(2).join("/").trim();
+	if (!mcpServerId || !mcpToolName) return null;
+	return { mcpServerId, mcpToolName };
+}
 
 export type AgentOrchestratorState =
 	| "IDLE"
@@ -561,13 +581,82 @@ export async function orchestrateRun(
 				startedAt: exec.startedAt || nowIso(),
 			});
 
-			let result: ToolResult;
-			try {
-				result = (await toolRegistry.execute(
-					exec.toolName,
-					exec.parameters || {},
-					ctx,
-				)) as ToolResult;
+				let result: ToolResult = {
+					success: false,
+					message: "Tool execution failed",
+					error: "TOOL_EXECUTION_FAILED",
+				};
+				try {
+					const mcp = parseMcpVirtualToolName(exec.toolName);
+					if (mcp) {
+					const args =
+						exec.parameters &&
+						typeof exec.parameters === "object" &&
+						!Array.isArray(exec.parameters)
+							? (exec.parameters as Record<string, unknown>)
+							: {};
+					let validated = true;
+					try {
+						const toolList = await listAiMcpToolsCached({
+							organizationId: ctx.organizationId,
+							mcpServerId: mcp.mcpServerId,
+						});
+						if (!toolList.error) {
+							const info = toolList.tools.find(
+								(t) => String(t.name ?? "").trim() === mcp.mcpToolName,
+							);
+							const validation = validateAiMcpToolArguments({
+								inputSchema: info?.inputSchema,
+								arguments: args,
+							});
+							if (!validation.ok) {
+								validated = false;
+								result = {
+									success: false,
+									message: `Invalid parameters for MCP tool "${mcp.mcpToolName}"`,
+									error: validation.errorText
+										.replace(/\s*\n\s*/g, "; ")
+										.trim(),
+									data: {
+										mcpServerId: mcp.mcpServerId,
+										toolName: mcp.mcpToolName,
+										issues: validation.issues,
+									},
+								};
+							}
+						}
+					} catch {}
+
+					if (validated) {
+						const res = await callAiMcpTool({
+							organizationId: ctx.organizationId,
+							mcpServerId: mcp.mcpServerId,
+							toolName: mcp.mcpToolName,
+							arguments: args,
+						});
+						const success = res.isError !== true;
+						result = {
+							success,
+							message: success
+								? `MCP tool "${mcp.mcpToolName}" executed`
+								: `MCP tool "${mcp.mcpToolName}" returned an error`,
+							error: success ? undefined : "MCP_TOOL_ERROR",
+							data: {
+								mcpServerId: mcp.mcpServerId,
+								toolName: mcp.mcpToolName,
+								content: res.content,
+								structuredContent: res.structuredContent,
+								isError: res.isError,
+							},
+						};
+					}
+				} else {
+					result = (await toolRegistry.execute(
+						exec.toolName,
+						exec.parameters || {},
+						ctx,
+					)) as ToolResult;
+				}
 			} catch (error) {
 				const errorMessage =
 					error instanceof Error ? error.message : String(error);

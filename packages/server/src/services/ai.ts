@@ -4,6 +4,7 @@ import {
 	aiEmbeddingProviders,
 	aiAgentPlaybooks,
 	aiConversations,
+	aiMcpServers,
 	aiMessages,
 	aiRuns,
 	aiToolExecutions,
@@ -24,6 +25,12 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { IS_CLOUD } from "../constants";
 import { findOrganizationById } from "./admin";
+import {
+	callAiMcpTool,
+	listAiMcpServersByOrganizationId,
+	listAiMcpToolsCached,
+	validateAiMcpToolArguments,
+} from "./ai/mcp-servers";
 import { getTrpcBridge } from "./ai/trpc-bridge";
 import {
 	PLAYBOOK_DEFAULT_TOP_K,
@@ -37,6 +44,7 @@ import {
 	initializeTools,
 	type Tool,
 	type ToolContext,
+	type ToolResult,
 	toolRegistry,
 } from "./ai-tools";
 import { selectRelevantTools } from "./ai-tools/selector";
@@ -63,6 +71,149 @@ const RISK_RANK = {
 
 const TOOL_BUDGET_STANDARD_STEPS = 60;
 const TOOL_BUDGET_MAX_STEPS = 200;
+
+const MCP_VIRTUAL_TOOL_PREFIX = "mcp/";
+const MCP_SERVER_NAME_TTL_MS = 5 * 60 * 1000;
+const mcpServerNameCache = new Map<
+	string,
+	{ name: string; expiresAt: number }
+>();
+
+function buildMcpVirtualToolName(mcpServerId: string, toolName: string) {
+	const id = String(mcpServerId ?? "").trim();
+	const name = String(toolName ?? "").trim();
+	return `${MCP_VIRTUAL_TOOL_PREFIX}${id}/${name}`;
+}
+
+function parseMcpVirtualToolName(
+	toolName: string,
+): { mcpServerId: string; mcpToolName: string } | null {
+	const normalized = String(toolName ?? "").trim();
+	if (!normalized.toLowerCase().startsWith(MCP_VIRTUAL_TOOL_PREFIX)) return null;
+	const parts = normalized.split("/");
+	if (parts.length < 3) return null;
+	const mcpServerId = String(parts[1] ?? "").trim();
+	const mcpToolName = parts.slice(2).join("/").trim();
+	if (!mcpServerId || !mcpToolName) return null;
+	return { mcpServerId, mcpToolName };
+}
+
+async function getMcpServerNameCached(params: {
+	organizationId: string;
+	mcpServerId: string;
+}): Promise<string> {
+	const orgId = String(params.organizationId ?? "").trim();
+	const serverId = String(params.mcpServerId ?? "").trim();
+	if (!orgId || !serverId) return "";
+
+	const key = `${orgId}:${serverId}`;
+	const now = Date.now();
+	const cached = mcpServerNameCache.get(key);
+	if (cached && cached.expiresAt > now) return cached.name;
+
+	let name = "";
+	try {
+		const server = await db.query.aiMcpServers.findFirst({
+			where: eq(aiMcpServers.mcpServerId, serverId),
+			columns: {
+				organizationId: true,
+				name: true,
+			},
+		});
+		if (server && server.organizationId === orgId) {
+			name = String(server.name ?? "").trim();
+		}
+	} catch {}
+
+	mcpServerNameCache.set(key, { name, expiresAt: now + MCP_SERVER_NAME_TTL_MS });
+	return name;
+}
+
+async function executeToolByNameMaybeMcp(
+	toolName: string,
+	parameters: unknown,
+	ctx: ToolContext,
+): Promise<ToolResult> {
+	const mcp = parseMcpVirtualToolName(toolName);
+	if (!mcp) {
+		return await toolRegistry.execute(toolName, parameters, ctx);
+	}
+
+	const serverName = await getMcpServerNameCached({
+		organizationId: ctx.organizationId,
+		mcpServerId: mcp.mcpServerId,
+	});
+	const args =
+		isRecord(parameters) && !Array.isArray(parameters)
+			? (parameters as Record<string, unknown>)
+			: {};
+
+	try {
+		try {
+			const toolList = await listAiMcpToolsCached({
+				organizationId: ctx.organizationId,
+				mcpServerId: mcp.mcpServerId,
+			});
+			if (!toolList.error) {
+				const info = toolList.tools.find(
+					(t) => String(t.name ?? "").trim() === mcp.mcpToolName,
+				);
+				const validation = validateAiMcpToolArguments({
+					inputSchema: info?.inputSchema,
+					arguments: args,
+				});
+				if (!validation.ok) {
+					return {
+						success: false,
+						message: `Invalid parameters for MCP tool "${mcp.mcpToolName}"`,
+						error: validation.errorText.replace(/\s*\n\s*/g, "; ").trim(),
+						data: {
+							mcpServerId: mcp.mcpServerId,
+							serverName: serverName || mcp.mcpServerId,
+							toolName: mcp.mcpToolName,
+							issues: validation.issues,
+						},
+					};
+				}
+			}
+		} catch {}
+
+		const res = await callAiMcpTool({
+			organizationId: ctx.organizationId,
+			mcpServerId: mcp.mcpServerId,
+			toolName: mcp.mcpToolName,
+			arguments: args,
+		});
+		const success = res.isError !== true;
+		return {
+			success,
+			message: success
+				? `MCP tool "${mcp.mcpToolName}" executed`
+				: `MCP tool "${mcp.mcpToolName}" returned an error`,
+			error: success ? undefined : "MCP_TOOL_ERROR",
+			data: {
+				mcpServerId: mcp.mcpServerId,
+				serverName: serverName || mcp.mcpServerId,
+				toolName: mcp.mcpToolName,
+				content: res.content,
+				structuredContent: res.structuredContent,
+				isError: res.isError,
+			},
+		};
+	} catch (error) {
+		const errorMessage = error instanceof Error ? error.message : String(error);
+		return {
+			success: false,
+			message: `MCP tool "${mcp.mcpToolName}" failed`,
+			error: errorMessage,
+			data: {
+				mcpServerId: mcp.mcpServerId,
+				serverName: serverName || mcp.mcpServerId,
+				toolName: mcp.mcpToolName,
+			},
+		};
+	}
+}
 
 function normalizeRiskLevel(value: unknown): string {
 	return typeof value === "string" ? value.toLowerCase() : "high";
@@ -1793,6 +1944,264 @@ function buildChatTools(params: {
 			return cachedUserMessageText ?? "";
 		};
 
+	type McpVirtualTool = {
+		name: string;
+		description: string;
+		category: string;
+		riskLevel: Tool["riskLevel"];
+		requiresApproval: boolean;
+		tags: string[];
+		aliases: string[];
+		mcpServerId: string;
+		serverName: string;
+		mcpToolName: string;
+		inputSchema?: unknown;
+		outputSchema?: unknown;
+	};
+
+	let cachedMcpVirtualTools: McpVirtualTool[] | null | undefined;
+	const getMcpVirtualTools = async (): Promise<McpVirtualTool[]> => {
+		if (cachedMcpVirtualTools !== undefined) return cachedMcpVirtualTools ?? [];
+
+		const servers = await listAiMcpServersByOrganizationId({
+			organizationId: params.toolContext.organizationId,
+			limit: 100,
+			offset: 0,
+		});
+		const enabled = servers.filter((s) => s.isEnabled);
+		if (enabled.length === 0) {
+			cachedMcpVirtualTools = [];
+			return [];
+		}
+
+		const out: McpVirtualTool[] = [];
+		for (const server of enabled) {
+			const toolList = await listAiMcpToolsCached({
+				organizationId: params.toolContext.organizationId,
+				mcpServerId: server.mcpServerId,
+			});
+			if (toolList.error) continue;
+			for (const t of toolList.tools) {
+				const toolName = t.name.trim();
+				if (!toolName) continue;
+				const name = buildMcpVirtualToolName(server.mcpServerId, toolName);
+				const serverName = String(server.name ?? "").trim() || server.mcpServerId;
+				const description =
+					typeof t.description === "string" && t.description.trim().length > 0
+						? t.description.trim()
+						: `MCP tool "${toolName}" (${serverName})`;
+				out.push({
+					name,
+					description,
+					category: "mcp",
+					riskLevel: "high",
+					requiresApproval: true,
+					tags: ["mcp", serverName, toolName].filter((x) => x.trim().length > 0),
+					aliases: [],
+					mcpServerId: server.mcpServerId,
+					serverName,
+					mcpToolName: toolName,
+					inputSchema: t.inputSchema,
+					outputSchema: t.outputSchema,
+				});
+			}
+		}
+
+		cachedMcpVirtualTools = out;
+		return out;
+	};
+
+	const searchToolCatalogWithMcp = async (input: {
+		query: string;
+		limit?: number;
+		category?: string;
+		riskLevelMax?: "low" | "medium" | "high";
+		requiresApproval?: boolean;
+	}) => {
+		const mcpTools = await getMcpVirtualTools();
+		if (mcpTools.length === 0) return searchToolCatalog(input);
+
+		const tokens = tokenizeToolSearchQuery(input.query);
+		const tokensLower = tokens.map((t) => t.toLowerCase());
+		const riskLevelMaxRank =
+			typeof input.riskLevelMax === "string"
+				? getRiskRank(input.riskLevelMax)
+				: undefined;
+		const normalizedCategory =
+			typeof input.category === "string" && input.category.trim().length > 0
+				? input.category.trim()
+				: undefined;
+
+		const scored: Array<{
+			name: string;
+			description: string;
+			category: string;
+			riskLevel: Tool["riskLevel"];
+			requiresApproval: boolean;
+			aliases?: string[];
+			tags?: string[];
+			score: number;
+		}> = [];
+
+		for (const x of getToolSearchIndex()) {
+			const t = x.t;
+			if (normalizedCategory && t.category !== normalizedCategory) continue;
+			if (typeof input.requiresApproval === "boolean") {
+				if (t.requiresApproval !== input.requiresApproval) continue;
+			}
+			if (typeof riskLevelMaxRank === "number") {
+				if (getRiskRank(t.riskLevel) > riskLevelMaxRank) continue;
+			}
+
+			let score = 0;
+			for (const tTok of tokensLower) {
+				if (x.nameLower.includes(tTok)) score += 6;
+				if (x.extraTermsLower.some((term) => term.includes(tTok))) score += 5;
+				if (x.hayLower.includes(tTok)) score += 3;
+			}
+			if (t.riskLevel === "low") score += 1;
+			if (score <= 0) continue;
+
+			scored.push({
+				name: t.name,
+				description: t.description,
+				category: t.category,
+				riskLevel: t.riskLevel,
+				requiresApproval: t.requiresApproval,
+				aliases: t.aliases ?? [],
+				tags: t.tags && t.tags.length > 0 ? t.tags : deriveDefaultToolTags(t),
+				score,
+			});
+		}
+
+		for (const t of mcpTools) {
+			if (normalizedCategory && t.category !== normalizedCategory) continue;
+			if (typeof input.requiresApproval === "boolean") {
+				if (t.requiresApproval !== input.requiresApproval) continue;
+			}
+			if (typeof riskLevelMaxRank === "number") {
+				if (getRiskRank(t.riskLevel) > riskLevelMaxRank) continue;
+			}
+
+			const nameLower = t.name.toLowerCase();
+			const extraTermsLower = t.tags.map((x) => x.toLowerCase());
+			const hayLower = `${t.name} ${t.description} ${t.category} ${t.tags.join(" ")}`.toLowerCase();
+
+			let score = 0;
+			for (const tTok of tokensLower) {
+				if (nameLower.includes(tTok)) score += 6;
+				if (extraTermsLower.some((term) => term.includes(tTok))) score += 5;
+				if (hayLower.includes(tTok)) score += 3;
+			}
+			if (score <= 0) continue;
+
+			scored.push({
+				name: t.name,
+				description: t.description,
+				category: t.category,
+				riskLevel: t.riskLevel,
+				requiresApproval: t.requiresApproval,
+				aliases: t.aliases,
+				tags: t.tags,
+				score,
+			});
+		}
+
+		if (scored.length === 0) return searchToolCatalog(input);
+
+		scored.sort(
+			(a, b) => b.score - a.score || a.name.localeCompare(b.name),
+		);
+
+		const limit = input.limit ?? 12;
+		const picked = scored.slice(0, limit);
+		const message = `Found ${picked.length} tool(s) matching "${input.query}"`;
+
+		const best = picked[0];
+		const bestTool = best ? toolRegistry.get(best.name) : undefined;
+		const nextCall = best
+			? bestTool
+				? {
+						toolName: bestTool.name,
+						params: buildExampleParams(bestTool.parameters),
+						confirmLiterals: extractConfirmLiterals(bestTool.parameters),
+					}
+				: {
+						toolName: best.name,
+						params: {},
+						confirmLiterals: [],
+					}
+			: undefined;
+
+		return {
+			success: true,
+			message,
+			meta: {
+				query: input.query,
+				nextCall,
+				appliedFilters: {
+					category: normalizedCategory,
+					riskLevelMax: input.riskLevelMax,
+					requiresApproval: input.requiresApproval,
+				},
+			},
+			data: picked.map((t) => ({
+				name: t.name,
+				description: t.description,
+				category: t.category,
+				riskLevel: t.riskLevel,
+				requiresApproval: t.requiresApproval,
+				aliases: t.aliases ?? [],
+				tags: t.tags ?? [],
+			})),
+		};
+	};
+
+	const suggestMcpTools = async (
+		query: string,
+		limit: number,
+	): Promise<
+		Array<{
+			name: string;
+			description: string;
+			category: string;
+			riskLevel: Tool["riskLevel"];
+			requiresApproval: boolean;
+		}>
+	> => {
+		const mcpTools = await getMcpVirtualTools();
+		if (mcpTools.length === 0) return [];
+
+		const tokens = tokenizeToolSearchQuery(query);
+		const tokensLower = tokens.map((t) => t.toLowerCase());
+
+		const scored: Array<{ t: McpVirtualTool; score: number }> = [];
+		for (const t of mcpTools) {
+			const nameLower = t.name.toLowerCase();
+			const hayLower = `${t.name} ${t.description} ${t.category} ${t.tags.join(" ")}`.toLowerCase();
+
+			let score = 0;
+			for (const tTok of tokensLower) {
+				if (nameLower.includes(tTok)) score += 6;
+				if (hayLower.includes(tTok)) score += 3;
+			}
+			if (score <= 0) continue;
+			scored.push({ t, score });
+		}
+
+		scored.sort(
+			(a, b) => b.score - a.score || a.t.name.localeCompare(b.t.name),
+		);
+
+		return scored.slice(0, limit).map((x) => ({
+			name: x.t.name,
+			description: x.t.description,
+			category: x.t.category,
+			riskLevel: x.t.riskLevel,
+			requiresApproval: x.t.requiresApproval,
+		}));
+	};
+
 		return {
 			tool_suggest: tool({
 			description:
@@ -1815,19 +2224,36 @@ function buildChatTools(params: {
 						minTools: 0,
 						maxTools: limit,
 					});
+					const base = selectedRaw.map((t) => ({
+						name: t.name,
+						description: t.description,
+						category: t.category,
+						riskLevel: t.riskLevel,
+						requiresApproval: t.requiresApproval,
+					}));
+					const remaining = Math.max(0, limit - base.length);
+					const extraMcp =
+						remaining > 0 ? await suggestMcpTools(input.query, remaining) : [];
+					const merged: Array<(typeof base)[number]> = [];
+					const seen = new Set<string>();
+					for (const x of base) {
+						if (seen.has(x.name)) continue;
+						seen.add(x.name);
+						merged.push(x);
+					}
+					for (const x of extraMcp) {
+						if (seen.has(x.name)) continue;
+						seen.add(x.name);
+						merged.push(x);
+						if (merged.length >= limit) break;
+					}
 					return {
 						success: true,
 						message:
-							selectedRaw.length > 0
-								? `Suggested ${selectedRaw.length} tool(s) for "${input.query}"`
+							merged.length > 0
+								? `Suggested ${merged.length} tool(s) for "${input.query}"`
 								: `No direct suggestions for "${input.query}". Use tool_search to explore the full catalog.`,
-						data: selectedRaw.map((t) => ({
-							name: t.name,
-							description: t.description,
-							category: t.category,
-							riskLevel: t.riskLevel,
-							requiresApproval: t.requiresApproval,
-					})),
+						data: merged,
 				};
 			},
 		}),
@@ -1867,7 +2293,7 @@ function buildChatTools(params: {
 					riskLevelMax?: "low" | "medium" | "high";
 					requiresApproval?: boolean;
 				}) => {
-					return searchToolCatalog(input);
+					return await searchToolCatalogWithMcp(input);
 				},
 			}),
 			tool_describe: tool({
@@ -1881,6 +2307,36 @@ function buildChatTools(params: {
 				}),
 				execute: async (input: { toolName: string }) => {
 					const toolName = input.toolName.trim();
+
+					const mcp = parseMcpVirtualToolName(toolName);
+					if (mcp) {
+						const catalog = await getMcpVirtualTools();
+						const match = catalog.find(
+							(t) =>
+								t.mcpServerId === mcp.mcpServerId &&
+								t.mcpToolName === mcp.mcpToolName,
+						);
+						if (!match) return buildUnknownToolSuggestionResult(toolName);
+						return {
+							success: true,
+							message: `MCP tool "${match.mcpToolName}" described`,
+							data: {
+								kind: "mcp_tool",
+								name: match.name,
+								description: match.description,
+								server: {
+									mcpServerId: match.mcpServerId,
+									name: match.serverName,
+								},
+								inputSchema: match.inputSchema,
+								outputSchema: match.outputSchema,
+								exampleToolCall: {
+									toolName: match.name,
+									params: {},
+								},
+							},
+						};
+					}
 
 					const t = toolRegistry.get(toolName);
 					if (!t) {
@@ -2009,7 +2465,151 @@ function buildChatTools(params: {
 						rawParams.limit = Math.max(1, Math.min(30, rawParams.limit));
 					}
 
-				let t = toolRegistry.get(input.toolName);
+					let t = toolRegistry.get(input.toolName);
+					if (!t) {
+						const mcp = parseMcpVirtualToolName(input.toolName);
+						if (mcp) {
+							const catalog = await getMcpVirtualTools();
+							const match = catalog.find(
+								(t) =>
+									t.mcpServerId === mcp.mcpServerId &&
+									t.mcpToolName === mcp.mcpToolName,
+							);
+
+							if (!match) {
+								const searched = await searchToolCatalogWithMcp({
+									query: input.toolName,
+									limit: 5,
+								});
+								return {
+									success: false,
+									message: `Tool "${input.toolName}" not found`,
+									error: `Unknown tool: ${input.toolName}`,
+									data: {
+										query: input.toolName,
+										suggestions: searched.data,
+										nextCall: searched.meta.nextCall,
+									},
+								};
+							}
+
+							const mcpValidation = validateAiMcpToolArguments({
+								inputSchema: match.inputSchema,
+								arguments: rawParams,
+							});
+							if (!mcpValidation.ok) {
+								return {
+									success: false,
+									message: `Invalid parameters for MCP tool "${match.name}"`,
+									error: mcpValidation.errorText.replace(/\s*\n\s*/g, "; ").trim(),
+									data: {
+										toolName: match.name,
+										server: {
+											mcpServerId: match.mcpServerId,
+											name: match.serverName,
+										},
+										issues: mcpValidation.issues,
+										hint: "Use tool_describe to view the MCP tool input schema, then retry tool_call with a params object matching that schema.",
+									},
+								};
+							}
+
+							const requiresApproval = params.toolApprovalsDisabled !== true;
+							const execution = await createToolExecution({
+								conversationId: params.conversationId,
+								runId: params.runId,
+								messageId: params.messageId,
+								toolName: match.name,
+								parameters: rawParams,
+								requiresApproval,
+							});
+
+							if (requiresApproval) {
+								return {
+									success: true,
+									status: "pending_approval",
+									executionId: execution.executionId,
+									toolName: match.name,
+									message: `This action requires approval. Tool: ${match.name}`,
+									data: {
+										executionId: execution.executionId,
+										toolName: match.name,
+										confirmLiterals: [],
+										exampleParams: {},
+									},
+								};
+							}
+
+							if (
+								typeof params.runId === "string" &&
+								params.runId.trim().length > 0
+							) {
+								await saveAgentEventMessage({
+									conversationId: params.conversationId,
+									payload: {
+										type: "agent.step.start",
+										runId: params.runId.trim(),
+										stepId: execution.executionId,
+										executionId: execution.executionId,
+										toolName: match.name,
+										parametersPreview: safeJsonForPrompt(rawParams, 4000),
+									},
+								});
+							}
+
+							try {
+								const res = await callAiMcpTool({
+									organizationId: params.toolContext.organizationId,
+									mcpServerId: match.mcpServerId,
+									toolName: match.mcpToolName,
+									arguments: rawParams,
+								});
+								const success = res.isError !== true;
+								const toolResult = normalizeToolResultForStorage({
+									success,
+									message: success
+										? `MCP tool "${match.mcpToolName}" executed`
+										: `MCP tool "${match.mcpToolName}" returned an error`,
+									data: {
+										mcpServerId: match.mcpServerId,
+										serverName: match.serverName,
+										toolName: match.mcpToolName,
+										content: res.content,
+										structuredContent: res.structuredContent,
+										isError: res.isError,
+									},
+								});
+
+								const completionUpdate: Record<string, unknown> = {
+									status: success ? "completed" : "failed",
+									result: toolResult,
+									completedAt: new Date().toISOString(),
+								};
+								if (!success) completionUpdate.error = "MCP_TOOL_ERROR";
+								await updateToolExecution(execution.executionId, completionUpdate);
+
+								return {
+									executionId: execution.executionId,
+									invokedTool: match.name,
+									...(toolResult as object),
+								};
+							} catch (error) {
+								const errorMessage =
+									error instanceof Error ? error.message : String(error);
+								await updateToolExecution(execution.executionId, {
+									status: "failed",
+									error: errorMessage,
+									completedAt: new Date().toISOString(),
+								});
+								return {
+									executionId: execution.executionId,
+									success: false,
+									message: "Tool execution failed",
+									error: errorMessage,
+								};
+							}
+						}
+					}
 					if (!t) {
 						// Convenience fallback: treat an unknown dotted name as a tRPC procedure call.
 						// Example: { toolName: "project.create", params: { name: "dk" } }
@@ -3623,23 +4223,13 @@ export const chat = async ({
 		model,
 	});
 
-	// Auto-generate title for new conversation (non-blocking)
+	// Set deterministic title for new conversation (non-blocking)
 	if (history.length <= 2 && conversation.title === "New Conversation") {
-		void (async () => {
-			try {
-				const titleText = await generatePromptText({
-					model,
-					prompt: `Generate a short conversation title (<=50 chars, no quotes) from this user message: "${message}". Return ONLY the title.`,
-					maxOutputTokens: 60,
-				});
-				const title = titleText.trim().slice(0, 50);
-				if (title) {
-					await updateConversation(conversationId, { title });
-				}
-			} catch (e) {
-				console.error("Failed to generate title:", e);
-			}
-		})();
+		const title = String(message ?? "")
+			.replace(/\s+/g, " ")
+			.trim()
+			.slice(0, 50);
+		if (title) void updateConversation(conversationId, { title }).catch(() => {});
 	}
 
 	const usage: ChatUsage | undefined =
@@ -4387,23 +4977,13 @@ export const chatStream = async (
 		model,
 	});
 
-	// Auto-generate title for new conversation (non-blocking)
+	// Set deterministic title for new conversation (non-blocking)
 	if (history.length <= 2 && conversation.title === "New Conversation") {
-		void (async () => {
-			try {
-				const titleText = await generatePromptText({
-					model,
-					prompt: `Generate a short conversation title (<=50 chars, no quotes) from this user message: "${message}". Return ONLY the title.`,
-					maxOutputTokens: 60,
-				});
-				const title = titleText.trim().slice(0, 50);
-				if (title) {
-					await updateConversation(conversationId, { title });
-				}
-			} catch (e) {
-				console.error("Failed to generate title:", e);
-			}
-		})();
+		const title = String(message ?? "")
+			.replace(/\s+/g, " ")
+			.trim()
+			.slice(0, 50);
+		if (title) void updateConversation(conversationId, { title }).catch(() => {});
 	}
 
 	if (
@@ -4785,6 +5365,7 @@ export const chatStream = async (
 - Be concise; ask at most 1-3 focused questions only if blocking.
 - Tools: if you know the exact tool + params, call tool_call directly; otherwise use tool_suggest/tool_search/tool_describe, then tool_call.
 - tRPC: procedures are NOT tools. To find procedures, use tool_call -> trpc_procedure_suggest (preferred) or trpc_procedure_search (params must include {query}). To call a procedure, use tool_call -> trpc_procedure_call OR call tool_call with toolName="<router>.<procedure>" and params=<procedure input> (it will be routed to trpc_procedure_call). Queries run without approval; mutations may require approval.
+- MCP: MCP servers expose tools dynamically. MCP tool names use the format "mcp/<mcpServerId>/<toolName>". Use tool_search (query: "mcp" or server/tool name) to discover them, tool_describe for schemas, then tool_call with params as the MCP tool arguments object.
  - Approvals (critical): if a tool requires approval AND tool approvals are manual, you MUST create a tool_call that returns status="pending_approval" (do not ask in natural language without a tool_call). Include ALL required params (including any confirm literal); do NOT send empty params as a placeholder. Tell the user to approve/reject in the UI (or type "批准/拒绝"). If tool approvals are disabled for this conversation, proceed without asking for approval.
 - Tool UX: do not narrate tool names or internal errors; focus on outcomes. If a tool fails due to invalid params/unknown tool, correct and retry (use tool_describe/tool_search as needed). Ask the user only when blocked.
 - Context: reuse recent tool results; do not re-run the same read-only checks/config reads unnecessarily.
@@ -5051,7 +5632,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			});
 			let rawResult: unknown;
 			try {
-				rawResult = await toolRegistry.execute(
+				rawResult = await executeToolByNameMaybeMcp(
 					exec.toolName,
 					exec.parameters || {},
 					ctx,
@@ -5779,6 +6360,18 @@ export const startAgentRun = async (params: {
 				normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
 		});
 	} catch {}
+
+	if (conversation.title === "New Conversation") {
+		const nextTitle = String(params.goal ?? "")
+			.replace(/\s+/g, " ")
+			.trim()
+			.slice(0, 50);
+		if (nextTitle.length > 0) {
+			try {
+				await updateConversation(params.conversationId, { title: nextTitle });
+			} catch {}
+		}
+	}
 	await updateRun(run.runId, { plan: { steps: [] } });
 
 	await saveAgentEventMessage({
@@ -6326,6 +6919,61 @@ export const executeApprovedTool = async (
 			code: "BAD_REQUEST",
 			message: `Tool execution is not approved. Current status: ${execution.status}`,
 		});
+	}
+
+	const mcp = parseMcpVirtualToolName(execution.toolName);
+	if (mcp) {
+		await updateToolExecution(executionId, {
+			status: "executing",
+			startedAt: new Date().toISOString(),
+		});
+
+		const rawResult = await executeToolByNameMaybeMcp(
+			execution.toolName,
+			execution.parameters || {},
+			ctx,
+		);
+		const result = normalizeToolResultForStorage(rawResult);
+		const outcome = result.success ? "completed" : "failed";
+
+		await updateToolExecution(executionId, {
+			status: outcome,
+			result,
+			error: result.success ? undefined : result.error || result.message,
+			completedAt: new Date().toISOString(),
+		});
+		await appendToolOutcomeAssistantMessage({
+			conversationId: execution.conversationId,
+			toolName: execution.toolName,
+			executionId,
+			outcome,
+			result: result.success
+				? { success: true, message: result.message }
+				: {
+						success: false,
+						message: result.message,
+						error: result.error || result.message,
+					},
+		});
+
+		if (
+			typeof execution.conversationId === "string" &&
+			execution.conversationId.trim().length > 0 &&
+			(!execution.runId || String(execution.runId).trim().length === 0)
+		) {
+			try {
+				await autoContinueAfterApprovedToolExecution({
+					conversationId: execution.conversationId,
+					organizationId: ctx.organizationId,
+					userId: ctx.userId,
+					toolName: execution.toolName,
+					executionId,
+					outcome,
+				});
+			} catch {}
+		}
+
+		return result;
 	}
 
 	initializeTools();
