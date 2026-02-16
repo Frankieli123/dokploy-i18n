@@ -2733,10 +2733,25 @@ export function useChat(options: UseChatOptions = {}) {
 				const streamStartTime = Date.now();
 				let lastEventTime = streamStartTime;
 				const deltaBufferRef = { current: "" as string };
-				const reasoningBufferRef = { current: "" as string };
+				let activeThinkId: string | null = null;
 				let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
 				const FLUSH_VISIBLE_MS = 60;
 				const FLUSH_HIDDEN_MS = 600;
+
+				const ensureThinkStarted = () => {
+					if (activeThinkId) return;
+					activeThinkId =
+						typeof crypto !== "undefined" && "randomUUID" in crypto
+							? (crypto.randomUUID() as string)
+							: `think-${Date.now()}`;
+					deltaBufferRef.current += `\n\n<<think:${activeThinkId}>>\n`;
+				};
+
+				const closeThinkIfOpen = () => {
+					if (!activeThinkId) return;
+					deltaBufferRef.current += `\n<<think_end:${activeThinkId}>>\n\n`;
+					activeThinkId = null;
+				};
 
 				const flushDeltaNow = () => {
 					if (flushDeltaTimer) {
@@ -2744,17 +2759,14 @@ export function useChat(options: UseChatOptions = {}) {
 						flushDeltaTimer = null;
 					}
 					const pendingText = deltaBufferRef.current;
-					const pendingReasoning = reasoningBufferRef.current;
-					if (!pendingText && !pendingReasoning) return;
+					if (!pendingText) return;
 					deltaBufferRef.current = "";
-					reasoningBufferRef.current = "";
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === assistantTempId
 								? {
 										...m,
 										content: (m.content ?? "") + pendingText,
-										reasoning: (m.reasoning ?? "") + pendingReasoning,
 										status: "sending" as const,
 									}
 								: m,
@@ -2804,6 +2816,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "delta") {
+							closeThinkIfOpen();
 							const payload = JSON.parse(evt.data) as { delta?: string };
 							const delta =
 								typeof payload.delta === "string" ? payload.delta : "";
@@ -2818,12 +2831,14 @@ export function useChat(options: UseChatOptions = {}) {
 							const delta =
 								typeof payload.delta === "string" ? payload.delta : "";
 							if (!delta) continue;
-							reasoningBufferRef.current += delta;
+							ensureThinkStarted();
+							deltaBufferRef.current += delta;
 							scheduleFlush();
 							continue;
 						}
 
 						if (evt.event === "tool-call") {
+							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								toolCallId: string;
@@ -3015,6 +3030,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "done") {
+							closeThinkIfOpen();
 							flushDeltaNow();
 							let realId = "";
 							try {
@@ -3055,6 +3071,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "error" || evt.event === "stream-error") {
+							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								message?: string;
@@ -3068,6 +3085,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 					}
 				} finally {
+					closeThinkIfOpen();
 					flushDeltaNow();
 					clearInterval(safetyInterval);
 				}

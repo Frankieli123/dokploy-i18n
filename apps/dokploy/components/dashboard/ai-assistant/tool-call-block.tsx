@@ -350,7 +350,7 @@ export function ToolCallBlock({
 		<>
 			<div
 				className={cn(
-					"w-full max-w-full min-w-0 overflow-hidden rounded-xl border p-3 my-1.5 text-xs transition-all",
+					"w-full max-w-full min-w-0 overflow-hidden rounded-xl border p-3 text-xs transition-all",
 					riskColor,
 					className,
 				)}

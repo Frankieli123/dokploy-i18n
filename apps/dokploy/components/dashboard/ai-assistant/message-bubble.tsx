@@ -19,7 +19,6 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { translateErrorMessage } from "@/utils/error-translation";
 import { ToolCallBlock } from "./tool-call-block";
-import { ToolGroup } from "./tool-call-group";
 import type { Message, ToolCall } from "./use-chat";
 
 const assistantHeadingClassName =
@@ -210,7 +209,7 @@ function ThinkingBlock({
 	const [expanded, setExpanded] = useState(false);
 
 	return (
-		<div className="rounded-lg border border-border/50 bg-background/30 px-2 py-1.5">
+		<div className="w-full max-w-full min-w-0 overflow-hidden rounded-xl border border-border/40 bg-muted/20 p-3">
 			<button
 				type="button"
 				onClick={() => setExpanded((v) => !v)}
@@ -392,18 +391,9 @@ export function MessageBubble({
 
 	const renderToolCalls = (calls: ToolCall[], keyPrefix: string) => {
 		if (calls.length === 0) return null;
-		if (calls.length > 1) {
-			return (
-				<ToolGroup
-					toolCalls={calls}
-					onApproveToolCall={approveHandler}
-					onRejectToolCall={rejectHandler}
-				/>
-			);
-		}
-		const only = calls[0];
-		if (!only) return null;
-		return renderToolCallCard(only, `${keyPrefix}-${only.id}`);
+		return calls.map((toolCall, idx) =>
+			renderToolCallCard(toolCall, `${keyPrefix}-${toolCall.id}-${idx}`),
+		);
 	};
 
 	const lastStreamingTextIdx = (() => {
