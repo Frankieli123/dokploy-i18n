@@ -156,7 +156,7 @@ export function ToolGroup({
 	}
 
 	return (
-		<div className="rounded-xl border border-border/40 bg-card/50 my-2 overflow-hidden shadow-sm w-full max-w-full min-w-0 transition-all">
+		<div className="rounded-xl border border-border/40 bg-card/50 my-1.5 overflow-hidden shadow-sm w-full max-w-full min-w-0 transition-all">
 			<div
 				className={cn(
 					"flex items-center justify-between px-3 py-2.5 cursor-pointer select-none hover:bg-muted/30 transition-colors min-w-0",
@@ -167,13 +167,15 @@ export function ToolGroup({
 				onClick={() => setIsOpen(!isOpen)}
 			>
 				<div className="flex items-center gap-2.5 min-w-0">
-					<HeaderIcon
-						className={cn(
-							"h-4 w-4 shrink-0",
-							headerColor,
-							isExecuting && "animate-spin",
-						)}
-					/>
+					<div className="p-1.5 rounded-lg bg-background/50 border border-border/20 shadow-sm shrink-0">
+						<HeaderIcon
+							className={cn(
+								"h-3 w-3",
+								headerColor,
+								isExecuting && "animate-spin",
+							)}
+						/>
+					</div>
 					<div className="flex flex-col min-w-0">
 							<span className="text-xs font-medium text-foreground truncate">
 								{statusText}
