@@ -1,6 +1,6 @@
 {
 	"name": "dokploy",
-	"version": "v0.27.0-i18n",
+	"version": "v0.27.0-i18n.1",
 	"private": true,
 	"license": "Apache-2.0",
 	"type": "module",
@@ -100,6 +100,7 @@
 		"adm-zip": "^0.5.16",
 		"ai": "^5.0.17",
 		"ai-sdk-ollama": "^0.5.1",
+		"ajv": "^8.18.0",
 		"bcrypt": "5.1.1",
 		"better-auth": "v1.2.8-beta.7",
 		"bl": "6.0.11",
