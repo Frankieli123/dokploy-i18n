@@ -8,6 +8,7 @@ import {
 	apiCreateConversation,
 	apiDeleteAiMcpServer,
 	apiFindConversation,
+	apiGetAgentEvents,
 	apiGetMessages,
 	apiGetRun,
 	apiListAiMcpServers,
@@ -46,6 +47,7 @@ import {
 	testAiMcpServer,
 	getConversationById,
 	getConversationIdForToolExecution,
+	getAgentEventMessages,
 	getMessages,
 	getRunById,
 	getToolExecutionById,
@@ -588,6 +590,26 @@ export const aiRouter = createTRPCRouter({
 					});
 				}
 				return run;
+			}),
+
+		events: protectedProcedure
+			.input(apiGetAgentEvents)
+			.query(async ({ ctx, input }) => {
+				const run = await getRunById(input.runId);
+				const conversation = await getConversationById(run.conversationId);
+				if (conversation.organizationId !== ctx.session.activeOrganizationId) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "settings.ai.errors.noAccessToRun",
+					});
+				}
+				return await getAgentEventMessages({
+					conversationId: run.conversationId,
+					runId: input.runId,
+					limit: input.limit,
+					before: input.before,
+					beforeMessageId: input.beforeMessageId,
+				});
 			}),
 
 		cancel: protectedProcedure

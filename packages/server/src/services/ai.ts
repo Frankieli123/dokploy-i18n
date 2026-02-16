@@ -19,7 +19,7 @@ import {
 	streamText,
 	tool,
 } from "ai";
-import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { IS_CLOUD } from "../constants";
@@ -1469,18 +1469,110 @@ export const getMessages = async (params: {
 	conversationId: string;
 	limit?: number;
 	before?: string;
+	beforeMessageId?: string;
 }) => {
-	const conditions = [eq(aiMessages.conversationId, params.conversationId)];
+	const conditions: Array<ReturnType<typeof eq> | undefined> = [
+		eq(aiMessages.conversationId, params.conversationId),
+	];
 	if (params.before) {
-		conditions.push(lt(aiMessages.createdAt, params.before));
+		const beforeMessageId =
+			typeof params.beforeMessageId === "string" ? params.beforeMessageId.trim() : "";
+		if (beforeMessageId.length > 0) {
+			conditions.push(
+				or(
+					lt(aiMessages.createdAt, params.before),
+					and(
+						eq(aiMessages.createdAt, params.before),
+						lt(aiMessages.messageId, beforeMessageId),
+					),
+				),
+			);
+		} else {
+			conditions.push(lt(aiMessages.createdAt, params.before));
+		}
 	}
 
 	const messages = await db.query.aiMessages.findMany({
 		where: and(...conditions),
-		orderBy: desc(aiMessages.createdAt),
+		orderBy: [desc(aiMessages.createdAt), desc(aiMessages.messageId)],
 		limit: params.limit || 50,
 	});
 	return messages.reverse();
+};
+
+export const getAgentEventMessages = async (params: {
+	conversationId: string;
+	runId: string;
+	limit?: number;
+	before?: string;
+	beforeMessageId?: string;
+}) => {
+	const maxLimit = 500;
+	const limit = Math.max(1, Math.min(params.limit ?? 200, maxLimit));
+	const batchSize = Math.min(500, Math.max(50, limit * 5));
+	const runId = params.runId.trim();
+	if (runId.length === 0) return { messages: [] as AiMessageRow[], nextCursor: null };
+
+	let before = typeof params.before === "string" ? params.before : undefined;
+	let beforeMessageId =
+		typeof params.beforeMessageId === "string" ? params.beforeMessageId.trim() : "";
+
+	const matchedDesc: AiMessageRow[] = [];
+	let nextCursor: { before: string; beforeMessageId: string } | null = null;
+
+	for (let page = 0; page < 10 && matchedDesc.length < limit; page++) {
+		const conditions: Array<ReturnType<typeof eq> | undefined> = [
+			eq(aiMessages.conversationId, params.conversationId),
+			eq(aiMessages.role, "system"),
+		];
+		if (before) {
+			if (beforeMessageId.length > 0) {
+				conditions.push(
+					or(
+						lt(aiMessages.createdAt, before),
+						and(eq(aiMessages.createdAt, before), lt(aiMessages.messageId, beforeMessageId)),
+					),
+				);
+			} else {
+				conditions.push(lt(aiMessages.createdAt, before));
+			}
+		}
+
+		const batch = await db.query.aiMessages.findMany({
+			where: and(...conditions),
+			orderBy: [desc(aiMessages.createdAt), desc(aiMessages.messageId)],
+			limit: batchSize,
+		});
+		if (batch.length === 0) break;
+
+		for (const msg of batch) {
+			if (matchedDesc.length >= limit) break;
+			const content = typeof msg.content === "string" ? msg.content : "";
+			if (!content) continue;
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(content);
+			} catch {
+				continue;
+			}
+			if (!isRecord(parsed)) continue;
+			const type = typeof parsed.type === "string" ? parsed.type : "";
+			if (!type.startsWith("agent.")) continue;
+			const messageRunId = typeof parsed.runId === "string" ? parsed.runId.trim() : "";
+			if (messageRunId !== runId) continue;
+			matchedDesc.push(msg);
+		}
+
+		const last = batch[batch.length - 1];
+		if (!last) break;
+		nextCursor = { before: last.createdAt, beforeMessageId: last.messageId };
+		before = last.createdAt;
+		beforeMessageId = last.messageId;
+
+		if (batch.length < batchSize) break;
+	}
+
+	return { messages: matchedDesc.reverse(), nextCursor };
 };
 
 export const saveMessage = async (params: {

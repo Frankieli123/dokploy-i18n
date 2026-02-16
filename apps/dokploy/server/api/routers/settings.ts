@@ -449,15 +449,17 @@ export const settingsRouter = createTRPCRouter({
 			const user = await findUserById(ctx.user.id);
 			return await getUpdateData(input?.tagsUrl ?? user.updateTagsUrl);
 		}),
-	updateServer: adminProcedure.mutation(async () => {
+	updateServer: adminProcedure.mutation(async ({ ctx }) => {
 		if (IS_CLOUD) {
 			return true;
 		}
 
-		const data = await getUpdateData();
-		const targetTag = data.updateAvailable
-			? data.latestVersion
-			: getDokployImageTag();
+		const user = await findUserById(ctx.user.id);
+		const data = await getUpdateData(user.updateTagsUrl);
+		const targetTag =
+			data.updateAvailable && data.latestVersion
+				? data.latestVersion
+				: getDokployImageTag();
 
 		if (!targetTag) {
 			return true;

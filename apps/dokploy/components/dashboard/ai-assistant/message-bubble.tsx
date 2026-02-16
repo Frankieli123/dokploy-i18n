@@ -31,12 +31,24 @@ const assistantMarkdownComponents: Components = {
 			{children}
 		</p>
 	),
-	h1: ({ children }) => <h1 className={assistantHeadingClassName}>{children}</h1>,
-	h2: ({ children }) => <h2 className={assistantHeadingClassName}>{children}</h2>,
-	h3: ({ children }) => <h3 className={assistantHeadingClassName}>{children}</h3>,
-	h4: ({ children }) => <h4 className={assistantHeadingClassName}>{children}</h4>,
-	h5: ({ children }) => <h5 className={assistantHeadingClassName}>{children}</h5>,
-	h6: ({ children }) => <h6 className={assistantHeadingClassName}>{children}</h6>,
+	h1: ({ children }) => (
+		<h1 className={assistantHeadingClassName}>{children}</h1>
+	),
+	h2: ({ children }) => (
+		<h2 className={assistantHeadingClassName}>{children}</h2>
+	),
+	h3: ({ children }) => (
+		<h3 className={assistantHeadingClassName}>{children}</h3>
+	),
+	h4: ({ children }) => (
+		<h4 className={assistantHeadingClassName}>{children}</h4>
+	),
+	h5: ({ children }) => (
+		<h5 className={assistantHeadingClassName}>{children}</h5>
+	),
+	h6: ({ children }) => (
+		<h6 className={assistantHeadingClassName}>{children}</h6>
+	),
 	ul: ({ children }) => (
 		<ul className="list-disc pl-5 space-y-1 mb-2 last:mb-0">{children}</ul>
 	),
@@ -63,9 +75,7 @@ const assistantMarkdownComponents: Components = {
 			typeof children === "string"
 				? children
 				: Array.isArray(children)
-					? children
-							.filter((c): c is string => typeof c === "string")
-							.join("")
+					? children.filter((c): c is string => typeof c === "string").join("")
 					: "";
 		const isProbablyBlock =
 			typeof className === "string" &&
@@ -109,16 +119,19 @@ const assistantMarkdownComponents: Components = {
 
 type WaterfallPart =
 	| { type: "text"; value: string }
-	| { type: "tool"; toolCallId: string };
+	| { type: "tool"; toolCallId: string }
+	| { type: "think"; thinkId: string; value: string; isOpen: boolean };
 
-function splitByToolMarkers(input: string): WaterfallPart[] {
+function splitByWaterfallMarkers(input: string): WaterfallPart[] {
 	const normalized = String(input ?? "")
 		.replace(/\r\n/g, "\n")
-		.replace(/<<tool:[^>]*$/, "");
+		.replace(/<<(?:tool|think|think_end):[^>]*$/, "");
 
 	const out: WaterfallPart[] = [];
-	const re = /<<tool:([^>]+)>>/g;
+	const re = /<<(tool|think|think_end):([^>]+)>>/g;
 	let lastIndex = 0;
+	let activeThinkId: string | null = null;
+	let thinkStartIndex = 0;
 
 	const pushText = (text: string) => {
 		const trimmedEdges = text.replace(/^\n+/, "").replace(/\n+$/, "");
@@ -126,26 +139,114 @@ function splitByToolMarkers(input: string): WaterfallPart[] {
 		out.push({ type: "text", value: trimmedEdges.replace(/\n{3,}/g, "\n\n") });
 	};
 
+	const pushThink = (thinkId: string, text: string, isOpen: boolean) => {
+		const trimmedEdges = text.replace(/^\n+/, "").replace(/\n+$/, "");
+		out.push({
+			type: "think",
+			thinkId,
+			value: trimmedEdges.replace(/\n{3,}/g, "\n\n"),
+			isOpen,
+		});
+	};
+
 	while (true) {
 		const match = re.exec(normalized);
 		if (!match) break;
+		const kind = match[1];
+		const id = match[2]?.trim() ?? "";
+		if (activeThinkId) {
+			if (kind === "think_end" && id === activeThinkId) {
+				pushThink(
+					activeThinkId,
+					normalized.slice(thinkStartIndex, match.index),
+					false,
+				);
+				activeThinkId = null;
+				lastIndex = re.lastIndex;
+			}
+			continue;
+		}
+
 		if (match.index > lastIndex) {
 			pushText(normalized.slice(lastIndex, match.index));
 		}
-		const toolCallId = match[1]?.trim();
-		if (toolCallId) out.push({ type: "tool", toolCallId });
+
+		if (kind === "tool") {
+			if (id) out.push({ type: "tool", toolCallId: id });
+			lastIndex = re.lastIndex;
+			continue;
+		}
+		if (kind === "think") {
+			if (id) {
+				activeThinkId = id;
+				thinkStartIndex = re.lastIndex;
+				lastIndex = re.lastIndex;
+			} else {
+				lastIndex = re.lastIndex;
+			}
+			continue;
+		}
+		// Unmatched think_end is treated as plain text (ignored marker).
 		lastIndex = re.lastIndex;
 	}
 
-	if (lastIndex < normalized.length) {
+	if (activeThinkId) {
+		pushThink(activeThinkId, normalized.slice(thinkStartIndex), true);
+	} else if (lastIndex < normalized.length) {
 		pushText(normalized.slice(lastIndex));
 	}
 
 	return out.length > 0 ? out : [{ type: "text", value: normalized }];
 }
 
+function ThinkingBlock({
+	text,
+	isStreaming,
+}: {
+	text: string;
+	isStreaming: boolean;
+}) {
+	const { t } = useTranslation("common");
+	const [expanded, setExpanded] = useState(false);
+
+	return (
+		<div className="rounded-lg border border-border/50 bg-background/30 px-2 py-1.5">
+			<button
+				type="button"
+				onClick={() => setExpanded((v) => !v)}
+				aria-expanded={expanded}
+				className="flex w-full items-center gap-1.5 text-xs text-muted-foreground/70 hover:text-foreground transition-colors select-none"
+			>
+				{expanded ? (
+					<ChevronDown className="h-3 w-3" />
+				) : (
+					<ChevronRight className="h-3 w-3" />
+				)}
+				<Brain className="h-3 w-3" />
+				<span className="font-medium">{t("ai.chat.reasoning")}</span>
+				{isStreaming && (
+					<Loader2 className="ml-auto h-3 w-3 animate-spin text-muted-foreground/70" />
+				)}
+			</button>
+			{expanded && (
+				<div className="mt-1 pl-2 border-l-2 border-border/50">
+					<p className="text-xs text-muted-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed">
+						{text}
+						{isStreaming && (
+							<span className="inline-block w-[2px] h-3 ml-1 bg-current align-middle animate-pulse" />
+						)}
+					</p>
+				</div>
+			)}
+		</div>
+	);
+}
+
 function getEffectiveExecutionId(toolCall: ToolCall): string {
-	if (typeof toolCall.executionId === "string" && toolCall.executionId.length > 0) {
+	if (
+		typeof toolCall.executionId === "string" &&
+		toolCall.executionId.length > 0
+	) {
 		return toolCall.executionId;
 	}
 	const data = toolCall.result?.data;
@@ -157,12 +258,17 @@ function getEffectiveExecutionId(toolCall: ToolCall): string {
 function getEffectiveToolStatus(
 	toolCall: ToolCall,
 	executionId: string,
+	messageStatus: Message["status"] | undefined,
 ): NonNullable<Parameters<typeof ToolCallBlock>[0]["status"]> {
 	if (toolCall.status) return toolCall.status;
 	if (toolCall.result && typeof toolCall.result.success === "boolean") {
 		return toolCall.result.success ? "completed" : "failed";
 	}
-	return executionId.length > 0 ? "executing" : "completed";
+	if (messageStatus === "sending") {
+		return executionId.length > 0 ? "executing" : "completed";
+	}
+	if (messageStatus === "error") return "failed";
+	return "completed";
 }
 
 interface MessageBubbleProps {
@@ -183,7 +289,6 @@ export function MessageBubble({
 	areToolApprovalsDisabled,
 }: MessageBubbleProps) {
 	const { t } = useTranslation(["common", "settings", "auth"]);
-	const [isReasoningExpanded, setIsReasoningExpanded] = useState(false);
 
 	if (message.role === "system") {
 		return null;
@@ -201,11 +306,10 @@ export function MessageBubble({
 	const isUser = message.role === "user";
 	const isError = message.status === "error";
 	const isSending = message.status === "sending";
-	const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+	const attachments = Array.isArray(message.attachments)
+		? message.attachments
+		: [];
 	const hasAttachments = attachments.length > 0;
-	const reasoningText =
-		typeof message.reasoning === "string" ? message.reasoning : "";
-	const hasReasoning = !isUser && reasoningText.trim().length > 0;
 	const bubbleText = (() => {
 		if (isUser) return message.content ?? "";
 		return displayedContent;
@@ -213,26 +317,49 @@ export function MessageBubble({
 
 	const toolCalls = Array.isArray(message.toolCalls) ? message.toolCalls : [];
 	const hasToolCalls = toolCalls.length > 0;
+	const legacyReasoningText =
+		!isUser && typeof message.reasoning === "string" ? message.reasoning : "";
+	const hasInlineThinkingMarkers = !isUser && bubbleText.includes("<<think:");
+	const bubbleTextForWaterfall =
+		!isUser &&
+		!hasInlineThinkingMarkers &&
+		legacyReasoningText.trim().length > 0
+			? `${bubbleText}\n\n<<think:legacy-${message.messageId}>>\n${legacyReasoningText}\n<<think_end:legacy-${message.messageId}>>`
+			: bubbleText;
 	const waterfallParts = isUser
 		? ([{ type: "text", value: bubbleText }] satisfies WaterfallPart[])
-		: splitByToolMarkers(bubbleText);
-	const hasToolMarkers = !isUser && waterfallParts.some((p) => p.type === "tool");
+		: splitByWaterfallMarkers(bubbleTextForWaterfall);
+	const hasToolMarkers =
+		!isUser && waterfallParts.some((p) => p.type === "tool");
+	const hasThinkingParts =
+		!isUser &&
+		waterfallParts.some((p) => p.type === "think" && p.value.trim().length > 0);
+	const hasAnyThinkingBlocks =
+		!isUser && waterfallParts.some((p) => p.type === "think");
 	const toolCallById = new Map(toolCalls.map((tc) => [tc.id, tc] as const));
 	const markerToolCallIds = new Set(
 		waterfallParts
-			.filter((p): p is Extract<WaterfallPart, { type: "tool" }> => p.type === "tool")
+			.filter(
+				(p): p is Extract<WaterfallPart, { type: "tool" }> => p.type === "tool",
+			)
 			.map((p) => p.toolCallId),
 	);
 	const orphanToolCalls = hasToolMarkers
 		? toolCalls.filter((tc) => !markerToolCallIds.has(tc.id))
 		: toolCalls;
 
-	const approveHandler = areToolApprovalsDisabled ? undefined : onApproveToolCall;
+	const approveHandler = areToolApprovalsDisabled
+		? undefined
+		: onApproveToolCall;
 	const rejectHandler = areToolApprovalsDisabled ? undefined : onRejectToolCall;
 
 	const renderToolCallCard = (toolCall: ToolCall, key: string) => {
 		const effectiveExecutionId = getEffectiveExecutionId(toolCall);
-		const status = getEffectiveToolStatus(toolCall, effectiveExecutionId);
+		const status = getEffectiveToolStatus(
+			toolCall,
+			effectiveExecutionId,
+			message.status,
+		);
 		const canApprove =
 			status === "pending" &&
 			effectiveExecutionId.length > 0 &&
@@ -254,10 +381,7 @@ export function MessageBubble({
 		);
 	};
 
-	const renderToolCalls = (
-		calls: ToolCall[],
-		keyPrefix: string,
-	) => {
+	const renderToolCalls = (calls: ToolCall[], keyPrefix: string) => {
 		if (calls.length === 0) return null;
 		if (calls.length > 1) {
 			return (
@@ -288,8 +412,8 @@ export function MessageBubble({
 		!isSending &&
 		!isError &&
 		!hasToolCalls &&
-		!hasReasoning &&
-		(!bubbleText || bubbleText.length === 0) &&
+		!hasThinkingParts &&
+		(!bubbleTextForWaterfall || bubbleTextForWaterfall.length === 0) &&
 		!!isLast;
 
 	useEffect(() => {
@@ -339,11 +463,7 @@ export function MessageBubble({
 					<Bot className="h-4 w-4" />
 				)}
 			</div>
-			<div
-				className={cn(
-					"flex w-full min-w-0 flex-col gap-2",
-				)}
-			>
+			<div className={cn("flex w-full min-w-0 flex-col gap-2")}>
 				{hasAttachments && (
 					<div
 						className={cn(
@@ -355,46 +475,18 @@ export function MessageBubble({
 							if (!att || att.type !== "image") return null;
 							if (!att.data || !att.mediaType) return null;
 							const src = `data:${att.mediaType};base64,${att.data}`;
-							/* biome-ignore lint/performance/noImgElement: inline image previews */
 							return (
+								// biome-ignore lint/performance/noImgElement: inline image previews
 								<img
 									key={`${att.name ?? "image"}-${idx}`}
 									src={src}
 									alt={att.name ?? "attachment"}
-									className={cn("w-full rounded-lg border border-border/50 object-cover")}
+									className={cn(
+										"w-full rounded-lg border border-border/50 object-cover",
+									)}
 								/>
 							);
 						})}
-					</div>
-				)}
-
-				{hasReasoning && (
-					<div>
-						<button
-							type="button"
-							onClick={() => setIsReasoningExpanded((v) => !v)}
-							aria-expanded={isReasoningExpanded}
-							aria-controls={`reasoning-${message.messageId}`}
-							className="flex items-center gap-1 text-xs text-muted-foreground/70 hover:text-foreground transition-colors select-none"
-						>
-							{isReasoningExpanded ? (
-								<ChevronDown className="h-3 w-3" />
-							) : (
-								<ChevronRight className="h-3 w-3" />
-							)}
-							<Brain className="h-3 w-3" />
-							<span className="font-medium">{t("ai.chat.reasoning")}</span>
-						</button>
-						{isReasoningExpanded && (
-							<div
-								id={`reasoning-${message.messageId}`}
-								className="mt-1 pl-2 border-l-2 border-border/50"
-							>
-								<p className="text-xs text-muted-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed">
-									{reasoningText}
-								</p>
-							</div>
-						)}
 					</div>
 				)}
 
@@ -404,7 +496,9 @@ export function MessageBubble({
 					</div>
 				)}
 
-				<div className={cn(isUser && "rounded-xl border bg-muted/30 px-3 py-2.5")}>
+				<div
+					className={cn(isUser && "rounded-xl border bg-muted/30 px-3 py-2.5")}
+				>
 					{isUser ? (
 						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm">
 							{bubbleText}
@@ -422,6 +516,17 @@ export function MessageBubble({
 										? renderToolCallCard(toolCall, `tool-${toolCall.id}-${idx}`)
 										: null;
 								}
+								if (part.type === "think") {
+									const value = part.value;
+									if (value.trim().length === 0 && !part.isOpen) return null;
+									return (
+										<ThinkingBlock
+											key={`think-${part.thinkId}-${idx}`}
+											text={value}
+											isStreaming={isSending && part.isOpen}
+										/>
+									);
+								}
 
 								const text = part.value;
 								if (text.trim().length === 0) return null;
@@ -429,7 +534,6 @@ export function MessageBubble({
 								if (isSending) {
 									return (
 										<p
-											// biome-ignore lint/suspicious/noArrayIndexKey: marker split is deterministic per message
 											key={`text-${idx}`}
 											className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm"
 										>
@@ -443,7 +547,6 @@ export function MessageBubble({
 
 								return (
 									<ReactMarkdown
-										// biome-ignore lint/suspicious/noArrayIndexKey: marker split is deterministic per message
 										key={`text-${idx}`}
 										skipHtml
 										components={assistantMarkdownComponents}
@@ -453,13 +556,16 @@ export function MessageBubble({
 								);
 							})}
 
-							{isSending && lastStreamingTextIdx === -1 && !hasToolCalls && !hasReasoning && (
-								<div className="inline-flex items-center gap-1 h-4">
-									<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
-									<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
-									<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" />
-								</div>
-							)}
+							{isSending &&
+								lastStreamingTextIdx === -1 &&
+								!hasToolCalls &&
+								!hasAnyThinkingBlocks && (
+									<div className="inline-flex items-center gap-1 h-4">
+										<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
+										<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
+										<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" />
+									</div>
+								)}
 
 							{hasToolMarkers && orphanToolCalls.length > 0 && (
 								<div className="w-full max-w-full min-w-0 overflow-hidden space-y-1">

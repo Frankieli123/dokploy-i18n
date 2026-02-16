@@ -608,6 +608,14 @@ export const apiGetMessages = z.object({
 	conversationId: z.string().min(1),
 	limit: z.number().min(1).max(100).optional().default(50),
 	before: z.string().optional(),
+	beforeMessageId: z.string().optional(),
+});
+
+export const apiGetAgentEvents = z.object({
+	runId: z.string().min(1),
+	limit: z.number().min(1).max(500).optional().default(200),
+	before: z.string().optional(),
+	beforeMessageId: z.string().optional(),
 });
 
 // ============================================

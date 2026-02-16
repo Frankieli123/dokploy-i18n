@@ -19,6 +19,12 @@ import { myQueue } from "@/server/queues/queueSetup";
 import { deploy } from "@/server/utils/deploy";
 import { extractCommitMessage, extractHash } from "./[refreshToken]";
 
+export const config = {
+	api: {
+		bodyParser: false,
+	},
+};
+
 export const normalizeGithubName = (value: string) =>
 	value.trim().replace(/\.git$/i, "").toLowerCase();
 
@@ -81,8 +87,35 @@ export default async function handler(
 	req: NextApiRequest,
 	res: NextApiResponse,
 ) {
-	const signature = req.headers["x-hub-signature-256"];
-	const githubBody = req.body;
+	if (req.method !== "POST") {
+		res.setHeader("Allow", "POST");
+		res.status(405).json({ message: "Method not allowed" });
+		return;
+	}
+
+	const signatureHeader = req.headers["x-hub-signature-256"];
+	const signature = Array.isArray(signatureHeader)
+		? signatureHeader[0]
+		: signatureHeader;
+
+	if (!signature) {
+		res.status(400).json({ message: "Github signature not found" });
+		return;
+	}
+
+	const chunks: Buffer[] = [];
+	for await (const chunk of req) {
+		chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+	}
+	const rawBody = Buffer.concat(chunks).toString("utf8");
+
+	let githubBody: any;
+	try {
+		githubBody = rawBody ? JSON.parse(rawBody) : null;
+	} catch {
+		res.status(400).json({ message: "Invalid JSON payload" });
+		return;
+	}
 
 	if (!githubBody?.installation?.id) {
 		res.status(400).json({ message: "Github Installation not found" });
@@ -106,10 +139,7 @@ export default async function handler(
 		secret: githubResult.githubWebhookSecret,
 	});
 
-	const verified = await webhooks.verify(
-		JSON.stringify(githubBody),
-		signature as string,
-	);
+	const verified = await webhooks.verify(rawBody, signature);
 
 	if (!verified) {
 		res.status(401).json({ message: "Unauthorized" });
@@ -141,7 +171,7 @@ export default async function handler(
 			"[skip actions]",
 			"[actions skip]",
 		].find((keyword) =>
-			extractCommitMessage(req.headers, req.body).includes(keyword),
+			extractCommitMessage(req.headers, githubBody).includes(keyword),
 		)
 	) {
 		res.status(200).json({
@@ -278,8 +308,8 @@ export default async function handler(
 			const branchName = githubBody?.ref?.replace("refs/heads/", "");
 			const repository = githubBody?.repository?.name;
 
-			const deploymentTitle = extractCommitMessage(req.headers, req.body);
-			const deploymentHash = extractHash(req.headers, req.body);
+			const deploymentTitle = extractCommitMessage(req.headers, githubBody);
+			const deploymentHash = extractHash(req.headers, githubBody);
 			const owner =
 				githubBody?.repository?.owner?.login || githubBody?.repository?.owner?.name;
 			const normalizedCommits = githubBody?.commits?.flatMap(

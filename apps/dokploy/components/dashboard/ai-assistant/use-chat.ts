@@ -15,7 +15,10 @@ function isAbortLikeError(error: unknown): boolean {
 	const message = typeof maybe.message === "string" ? maybe.message : "";
 	const normalized = message.trim().toLowerCase();
 	if (normalized === "aborted") return true;
-	if (normalized.includes("bodystreambuffer") && normalized.includes("aborted")) {
+	if (
+		normalized.includes("bodystreambuffer") &&
+		normalized.includes("aborted")
+	) {
 		return true;
 	}
 	return false;
@@ -108,18 +111,33 @@ export interface ToolCall {
 	};
 }
 
-const TOOL_CALL_STATUS_RANK: Record<NonNullable<ToolCall["status"]>, number> = {
-	pending: 1,
-	approved: 2,
-	executing: 3,
-	completed: 4,
-	failed: 4,
-	rejected: 4,
-};
+function isTerminalToolCallStatus(
+	status: ToolCall["status"] | undefined,
+): boolean {
+	return status === "completed" || status === "failed" || status === "rejected";
+}
 
-function getToolCallStatusRank(status: ToolCall["status"] | undefined): number {
-	if (!status) return 0;
-	return TOOL_CALL_STATUS_RANK[status] ?? 0;
+function getExecutionIdForToolCall(toolCall: ToolCall): string {
+	if (
+		typeof toolCall.executionId === "string" &&
+		toolCall.executionId.trim().length > 0
+	) {
+		return toolCall.executionId.trim();
+	}
+	const data = toolCall.result?.data;
+	if (!isRecord(data)) return "";
+	const direct = data.executionId;
+	if (typeof direct === "string" && direct.trim().length > 0) {
+		return direct.trim();
+	}
+	const nested = data.data;
+	if (isRecord(nested)) {
+		const v = nested.executionId;
+		if (typeof v === "string" && v.trim().length > 0) {
+			return v.trim();
+		}
+	}
+	return "";
 }
 
 export interface Message {
@@ -174,6 +192,71 @@ function areAttachmentsEqual(
 	return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 }
 
+function getMessageRoleRank(role: Message["role"]): number {
+	if (role === "user") return 1;
+	if (role === "assistant") return 2;
+	if (role === "tool") return 3;
+	return 4;
+}
+
+function mergeMessageText(
+	serverText: string | null | undefined,
+	pendingText: string | null | undefined,
+): string | null {
+	const server = typeof serverText === "string" ? serverText : "";
+	const pending = typeof pendingText === "string" ? pendingText : "";
+	if (pending.trim().length === 0) return serverText ?? null;
+	if (server.trim().length === 0) return pendingText ?? null;
+	if (pending.startsWith(server)) return pendingText ?? null;
+	if (server.startsWith(pending)) return serverText ?? null;
+	return pending.length >= server.length
+		? (pendingText ?? null)
+		: (serverText ?? null);
+}
+
+function mergeMessageToolCalls(
+	serverCalls: Message["toolCalls"],
+	pendingCalls: Message["toolCalls"],
+): Message["toolCalls"] {
+	const serverList = Array.isArray(serverCalls) ? serverCalls : [];
+	const pendingList = Array.isArray(pendingCalls) ? pendingCalls : [];
+
+	if (serverList.length === 0 && pendingList.length === 0) {
+		return serverCalls ?? pendingCalls ?? null;
+	}
+	if (pendingList.length === 0) return serverCalls ?? null;
+	if (serverList.length === 0) return pendingCalls ?? null;
+
+	const byId = new Map<string, ToolCall>();
+	const order: string[] = [];
+
+	for (const tc of serverList) {
+		if (!tc?.id) continue;
+		if (!byId.has(tc.id)) order.push(tc.id);
+		byId.set(tc.id, tc);
+	}
+	for (const tc of pendingList) {
+		if (!tc?.id) continue;
+		const existing = byId.get(tc.id);
+		if (!existing) {
+			order.push(tc.id);
+			byId.set(tc.id, tc);
+			continue;
+		}
+		byId.set(tc.id, {
+			...existing,
+			...tc,
+			function: {
+				...existing.function,
+				...tc.function,
+			},
+			result: tc.result ?? existing.result,
+		});
+	}
+
+	return order.map((id) => byId.get(id)).filter(Boolean) as ToolCall[];
+}
+
 export function mergeServerAndPendingMessages(
 	server: Message[],
 	pending: Message[],
@@ -181,7 +264,39 @@ export function mergeServerAndPendingMessages(
 	const pendingById = new Map(pending.map((m) => [m.messageId, m]));
 	const mergedServer = server.map((serverMessage) => {
 		const pendingMessage = pendingById.get(serverMessage.messageId);
-		return pendingMessage ? { ...serverMessage, ...pendingMessage } : serverMessage;
+		if (!pendingMessage) return serverMessage;
+		if (pendingMessage.status !== "sending") return serverMessage;
+		const createdAt =
+			typeof serverMessage.createdAt === "string" &&
+			serverMessage.createdAt.trim().length > 0
+				? serverMessage.createdAt
+				: pendingMessage.createdAt;
+		const content = mergeMessageText(
+			serverMessage.content,
+			pendingMessage.content,
+		);
+		const reasoning = mergeMessageText(
+			serverMessage.reasoning,
+			pendingMessage.reasoning,
+		);
+		const toolCalls = mergeMessageToolCalls(
+			serverMessage.toolCalls,
+			pendingMessage.toolCalls,
+		);
+		const attachments =
+			Array.isArray(serverMessage.attachments) &&
+			serverMessage.attachments.length > 0
+				? serverMessage.attachments
+				: pendingMessage.attachments;
+		return {
+			...serverMessage,
+			...pendingMessage,
+			createdAt,
+			content,
+			reasoning,
+			toolCalls,
+			attachments,
+		};
 	});
 	const mergedServerIds = new Set(mergedServer.map((m) => m.messageId));
 
@@ -212,6 +327,12 @@ export function mergeServerAndPendingMessages(
 			) {
 				return leftTime - rightTime;
 			}
+			const leftRank = getMessageRoleRank(left.message.role);
+			const rightRank = getMessageRoleRank(right.message.role);
+			if (leftRank !== rightRank) return leftRank - rightRank;
+			if (left.message.messageId !== right.message.messageId) {
+				return left.message.messageId.localeCompare(right.message.messageId);
+			}
 			return left.index - right.index;
 		})
 		.map(({ message }) => message);
@@ -222,6 +343,430 @@ type RetryContext = {
 	attachments: NonNullable<Message["attachments"]>;
 	removeMessageIds: Set<string>;
 };
+
+type AgentReplayState = {
+	runId: string;
+	createdAt: string;
+	content: string;
+	toolCalls: ToolCall[];
+	toolCallIndexById: Map<string, number>;
+	hasSummary: boolean;
+	status: "running" | "completed" | "failed" | "cancelled";
+	lastOutputText?: string;
+	lastReasoningText?: string;
+};
+
+function parseAgentPayload(
+	content: string | null,
+): Record<string, unknown> | null {
+	if (typeof content !== "string" || content.trim().length === 0) return null;
+	try {
+		const parsed = JSON.parse(content);
+		return isRecord(parsed) ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
+function normalizeAgentToolCallId(params: {
+	executionId?: unknown;
+	stepId?: unknown;
+	messageId?: string;
+	toolName?: unknown;
+}) {
+	const executionId =
+		typeof params.executionId === "string" ? params.executionId.trim() : "";
+	if (executionId.length > 0) return executionId;
+	const stepId = typeof params.stepId === "string" ? params.stepId.trim() : "";
+	if (stepId.length > 0) return stepId;
+	const messageId =
+		typeof params.messageId === "string" ? params.messageId.trim() : "";
+	if (messageId.length > 0) return `agent-${messageId}`;
+	const toolName =
+		typeof params.toolName === "string" && params.toolName.trim().length > 0
+			? params.toolName.trim()
+			: "tool";
+	return `agent-${toolName}`;
+}
+
+function parsePreviewToData(preview: unknown): unknown {
+	if (typeof preview !== "string") return undefined;
+	const trimmed = preview.trim();
+	if (trimmed.length === 0) return undefined;
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return trimmed;
+	}
+}
+
+function upsertReplayToolCall(
+	state: AgentReplayState,
+	params: {
+		toolCallId: string;
+		toolName?: string;
+		executionId?: string;
+		status?: ToolCall["status"];
+		argumentsText?: string;
+		result?: ToolCall["result"];
+	},
+) {
+	const existingIndex = state.toolCallIndexById.get(params.toolCallId);
+	const nextToolCall: ToolCall = {
+		id: params.toolCallId,
+		type: "function",
+		executionId:
+			typeof params.executionId === "string" &&
+			params.executionId.trim().length > 0
+				? params.executionId.trim()
+				: undefined,
+		status: params.status,
+		result: params.result,
+		function: {
+			name:
+				typeof params.toolName === "string" && params.toolName.trim().length > 0
+					? params.toolName.trim()
+					: "tool",
+			arguments:
+				typeof params.argumentsText === "string" &&
+				params.argumentsText.trim().length > 0
+					? params.argumentsText
+					: "{}",
+		},
+	};
+
+	if (typeof existingIndex === "number") {
+		const existing = state.toolCalls[existingIndex];
+		if (!existing) return;
+		state.toolCalls[existingIndex] = {
+			...existing,
+			...nextToolCall,
+			function: {
+				name: nextToolCall.function.name || existing.function.name || "tool",
+				arguments:
+					nextToolCall.function.arguments ||
+					existing.function.arguments ||
+					"{}",
+			},
+			result: nextToolCall.result ?? existing.result,
+		};
+		return;
+	}
+
+	state.toolCallIndexById.set(params.toolCallId, state.toolCalls.length);
+	state.toolCalls.push(nextToolCall);
+}
+
+function buildServerDisplayMessages(serverMessages: Message[]): Message[] {
+	const sorted = serverMessages
+		.map((message, index) => ({ message, index }))
+		.sort((left, right) => {
+			const leftTime = Date.parse(left.message.createdAt ?? "");
+			const rightTime = Date.parse(right.message.createdAt ?? "");
+			if (
+				Number.isFinite(leftTime) &&
+				Number.isFinite(rightTime) &&
+				leftTime !== rightTime
+			) {
+				return leftTime - rightTime;
+			}
+			const leftRank = getMessageRoleRank(left.message.role);
+			const rightRank = getMessageRoleRank(right.message.role);
+			if (leftRank !== rightRank) return leftRank - rightRank;
+			if (left.message.messageId !== right.message.messageId) {
+				return left.message.messageId.localeCompare(right.message.messageId);
+			}
+			return left.index - right.index;
+		})
+		.map(({ message }) => message);
+
+	const baseMessages: Message[] = [];
+	const runStates = new Map<string, AgentReplayState>();
+	for (const message of sorted) {
+		if (message.role !== "system") {
+			baseMessages.push(message);
+			continue;
+		}
+		const payload = parseAgentPayload(message.content);
+		if (!payload) continue;
+		const type = typeof payload.type === "string" ? payload.type : "";
+		if (!type.startsWith("agent.")) continue;
+		const runId = typeof payload.runId === "string" ? payload.runId.trim() : "";
+		if (runId.length === 0) continue;
+
+		const existing =
+			runStates.get(runId) ??
+			(() => {
+				const initialState: AgentReplayState = {
+					runId,
+					createdAt: message.createdAt,
+					content: "",
+					toolCalls: [],
+					toolCallIndexById: new Map(),
+					hasSummary: false,
+					status: "running",
+					lastOutputText: "",
+					lastReasoningText: "",
+				};
+				runStates.set(runId, initialState);
+				return initialState;
+			})();
+
+		if (type === "agent.output.delta") {
+			const text = typeof payload.delta === "string" ? payload.delta : "";
+			const previous = existing.lastOutputText ?? "";
+			if (text.length > 0 && text !== previous) {
+				existing.lastOutputText = text;
+				const delta = text.startsWith(previous)
+					? text.slice(previous.length)
+					: text;
+				if (delta.length > 0) {
+					existing.content += delta;
+				}
+			}
+			continue;
+		}
+
+		if (type === "agent.output.reasoning") {
+			const text =
+				typeof payload.text === "string"
+					? payload.text
+					: typeof payload.delta === "string"
+						? payload.delta
+						: "";
+			const previous = existing.lastReasoningText ?? "";
+			if (text.length > 0 && text !== previous) {
+				existing.lastReasoningText = text;
+				const delta = text.startsWith(previous)
+					? text.slice(previous.length)
+					: text;
+				if (delta.trim().length > 0) {
+					const thinkId = `agent-${message.messageId}`;
+					const marker = `\n\n<<think:${thinkId}>>\n${delta}\n<<think_end:${thinkId}>>\n\n`;
+					if (!existing.content.includes(`<<think:${thinkId}>>`)) {
+						existing.content += marker;
+					}
+				}
+			}
+			continue;
+		}
+
+		if (type === "agent.step.start") {
+			const toolName =
+				typeof payload.toolName === "string" ? payload.toolName : "tool";
+			const toolCallId = normalizeAgentToolCallId({
+				executionId: payload.executionId,
+				stepId: payload.stepId,
+				messageId: message.messageId,
+				toolName,
+			});
+			const marker = `\n\n<<tool:${toolCallId}>>\n\n`;
+			if (!existing.content.includes(marker)) {
+				existing.content += marker;
+			}
+			upsertReplayToolCall(existing, {
+				toolCallId,
+				toolName,
+				executionId:
+					typeof payload.executionId === "string"
+						? payload.executionId
+						: undefined,
+				status: "executing",
+				argumentsText:
+					typeof payload.parametersPreview === "string" &&
+					payload.parametersPreview.trim().length > 0
+						? payload.parametersPreview
+						: "{}",
+			});
+			continue;
+		}
+
+		if (type === "agent.step.result") {
+			const toolName =
+				typeof payload.toolName === "string" ? payload.toolName : "tool";
+			const toolCallId = normalizeAgentToolCallId({
+				executionId: payload.executionId,
+				stepId: payload.stepId,
+				messageId: message.messageId,
+				toolName,
+			});
+			const success = payload.success === true;
+			const summary =
+				typeof payload.summary === "string" ? payload.summary : undefined;
+			upsertReplayToolCall(existing, {
+				toolCallId,
+				toolName,
+				executionId:
+					typeof payload.executionId === "string"
+						? payload.executionId
+						: undefined,
+				status: success ? "completed" : "failed",
+				result: {
+					success,
+					message: summary,
+					data: parsePreviewToData(payload.dataPreview),
+					error: success ? undefined : summary,
+				},
+			});
+			continue;
+		}
+
+		if (type === "agent.step.wait_approval") {
+			const toolName =
+				typeof payload.toolName === "string" ? payload.toolName : "tool";
+			const toolCallId = normalizeAgentToolCallId({
+				executionId: payload.executionId,
+				stepId: payload.stepId,
+				messageId: message.messageId,
+				toolName,
+			});
+			const marker = `\n\n<<tool:${toolCallId}>>\n\n`;
+			if (!existing.content.includes(marker)) {
+				existing.content += marker;
+			}
+			upsertReplayToolCall(existing, {
+				toolCallId,
+				toolName,
+				executionId:
+					typeof payload.executionId === "string"
+						? payload.executionId
+						: undefined,
+				status: "pending",
+				argumentsText:
+					typeof payload.parametersPreview === "string" &&
+					payload.parametersPreview.trim().length > 0
+						? payload.parametersPreview
+						: "{}",
+				result: { success: false, message: "Waiting for approval" },
+			});
+			continue;
+		}
+
+		if (type === "agent.run.summary") {
+			const summary =
+				typeof payload.summary === "string" ? payload.summary.trim() : "";
+			if (summary.length > 0) {
+				if (existing.content.trim().length === 0) existing.content = summary;
+				else if (!existing.content.includes(summary)) {
+					const separator = existing.content.endsWith("\n") ? "\n" : "\n\n";
+					existing.content += `${separator}${summary}`;
+				}
+			}
+			existing.hasSummary = true;
+			continue;
+		}
+
+		if (type === "agent.run.finish") {
+			const status = typeof payload.status === "string" ? payload.status : "";
+			if (
+				status === "completed" ||
+				status === "failed" ||
+				status === "cancelled"
+			) {
+				existing.status = status;
+			}
+			if (status === "completed") {
+				existing.hasSummary = true;
+			}
+			if (status === "failed" || status === "cancelled") {
+				const errorText =
+					typeof payload.error === "string" ? payload.error.trim() : "";
+				if (errorText.length > 0) {
+					const separator =
+						existing.content.length > 0
+							? existing.content.endsWith("\n")
+								? "\n"
+								: "\n\n"
+							: "";
+					existing.content += `${separator}${errorText}`;
+				}
+			}
+		}
+	}
+
+	const replayMessages = Array.from(runStates.values())
+		.filter((state) => !state.hasSummary)
+		.filter(
+			(state) =>
+				state.content.trim().length > 0 ||
+				state.toolCalls.length > 0 ||
+				state.status === "running",
+		)
+		.map((state): Message => {
+			const isFailed =
+				state.status === "failed" || state.status === "cancelled";
+			return {
+				messageId: `agent-run-${state.runId}`,
+				role: "assistant",
+				content: state.content,
+				toolCalls: isFailed
+					? state.toolCalls.map((tc) => {
+							if (
+								tc.status === "completed" ||
+								tc.status === "failed" ||
+								tc.status === "rejected"
+							) {
+								return tc;
+							}
+							return { ...tc, status: "failed" as const };
+						})
+					: state.toolCalls,
+				createdAt: state.createdAt,
+				status: isFailed ? "error" : "sending",
+			};
+		});
+
+	return [...baseMessages, ...replayMessages];
+}
+
+function hasActiveAgentRunInMessages(messages: Message[]): boolean {
+	const runHasSummary = new Map<string, boolean>();
+	for (const message of messages) {
+		if (message.role !== "system") continue;
+		const payload = parseAgentPayload(message.content);
+		if (!payload) continue;
+		const type = typeof payload.type === "string" ? payload.type : "";
+		if (!type.startsWith("agent.")) continue;
+		const runId = typeof payload.runId === "string" ? payload.runId.trim() : "";
+		if (runId.length === 0) continue;
+		if (!runHasSummary.has(runId)) runHasSummary.set(runId, false);
+		if (type === "agent.run.summary" || type === "agent.run.finish") {
+			runHasSummary.set(runId, true);
+		}
+	}
+	for (const hasSummary of runHasSummary.values()) {
+		if (!hasSummary) return true;
+	}
+	return false;
+}
+
+function getMostRecentActiveAgentRunId(messages: Message[]): string | null {
+	const finished = new Set<string>();
+	for (const message of messages) {
+		if (message.role !== "system") continue;
+		const payload = parseAgentPayload(message.content);
+		if (!payload) continue;
+		const type = typeof payload.type === "string" ? payload.type : "";
+		if (!type.startsWith("agent.")) continue;
+		const runId = typeof payload.runId === "string" ? payload.runId.trim() : "";
+		if (runId.length === 0) continue;
+		if (type === "agent.run.summary" || type === "agent.run.finish") {
+			finished.add(runId);
+		}
+	}
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (!message || message.role !== "system") continue;
+		const payload = parseAgentPayload(message.content);
+		if (!payload) continue;
+		const type = typeof payload.type === "string" ? payload.type : "";
+		if (!type.startsWith("agent.")) continue;
+		const runId = typeof payload.runId === "string" ? payload.runId.trim() : "";
+		if (runId.length === 0) continue;
+		if (!finished.has(runId)) return runId;
+	}
+	return null;
+}
 
 export function resolveRetryContext(
 	messages: Message[],
@@ -243,7 +788,10 @@ export function resolveRetryContext(
 			const candidateAttachments = Array.isArray(candidate.attachments)
 				? candidate.attachments
 				: [];
-			if (candidateContent.trim().length > 0 || candidateAttachments.length > 0) {
+			if (
+				candidateContent.trim().length > 0 ||
+				candidateAttachments.length > 0
+			) {
 				sourceUserMessage = candidate;
 				break;
 			}
@@ -413,12 +961,25 @@ export function useChat(options: UseChatOptions = {}) {
 
 	const { data: serverMessages, refetch: refetchMessages } =
 		api.ai.chat.messages.useQuery(
-			{ conversationId: conversationId || "" },
+			{ conversationId: conversationId || "", limit: 100 },
 			{
 				enabled: isEnabled && !!conversationId,
 				refetchOnWindowFocus: false,
 			},
 		);
+
+	const mostRecentActiveRunId = useMemo(() => {
+		return getMostRecentActiveAgentRunId((serverMessages || []) as Message[]);
+	}, [serverMessages]);
+
+	const agentEvents = api.ai.agent.events.useQuery(
+		{ runId: mostRecentActiveRunId || "", limit: 500 },
+		{
+			enabled: isEnabled && !!mostRecentActiveRunId,
+			refetchOnWindowFocus: false,
+			refetchInterval: isEnabled && mostRecentActiveRunId ? 2500 : false,
+		},
+	);
 
 	useEffect(() => {
 		if (!conversationId) return;
@@ -433,6 +994,23 @@ export function useChat(options: UseChatOptions = {}) {
 			}),
 		);
 	}, [conversationId, serverMessages]);
+
+	const shouldPollAgentEvents = useMemo(
+		() =>
+			isEnabled &&
+			!!conversationId &&
+			!isLoading &&
+			hasActiveAgentRunInMessages((serverMessages || []) as Message[]),
+		[conversationId, isEnabled, isLoading, serverMessages],
+	);
+
+	useEffect(() => {
+		if (!shouldPollAgentEvents) return;
+		const interval = setInterval(() => {
+			void refetchMessages();
+		}, 2500);
+		return () => clearInterval(interval);
+	}, [refetchMessages, shouldPollAgentEvents]);
 
 	const { data: conversationDetails } = api.ai.conversations.get.useQuery(
 		{ conversationId: conversationId || "" },
@@ -489,43 +1067,67 @@ export function useChat(options: UseChatOptions = {}) {
 		void setToolBudgetModeMutation
 			.mutateAsync({ conversationId, mode: toolBudgetMode })
 			.catch(() => {});
-	}, [conversationDetails?.metadata, conversationId, toolBudgetMode, setToolBudgetModeMutation]);
+	}, [
+		conversationDetails?.metadata,
+		conversationId,
+		toolBudgetMode,
+		setToolBudgetModeMutation,
+	]);
+
+	const combinedServerMessages = useMemo(() => {
+		const base = ((serverMessages || []) as Message[]).slice();
+		const extra = (agentEvents.data?.messages ?? []) as Message[];
+		if (!extra || extra.length === 0) return base;
+		const seen = new Set<string>();
+		const merged: Message[] = [];
+		for (const message of [...base, ...extra]) {
+			if (!message?.messageId) continue;
+			if (seen.has(message.messageId)) continue;
+			seen.add(message.messageId);
+			merged.push(message);
+		}
+		return merged;
+	}, [agentEvents.data, serverMessages]);
+
+	const serverDisplayMessages = useMemo(() => {
+		if (!conversationId) return [] as Message[];
+		return buildServerDisplayMessages(combinedServerMessages);
+	}, [combinedServerMessages, conversationId]);
 
 	const executionHydrationTargets = useMemo(() => {
-		const toolCalls = ((serverMessages || []) as Message[])
-			.flatMap((m) => m.toolCalls || [])
-			.filter(
-				(tc) => typeof tc.executionId === "string" && tc.executionId.length > 0,
-			);
+		const messageSources: Message[] = conversationId
+			? [...serverDisplayMessages, ...pendingMessages]
+			: pendingMessages;
+		const toolCalls = messageSources.flatMap((m) => m.toolCalls || []);
 
 		const toolCallIdsByExecutionId = new Map<string, string[]>();
 		const executionIds: string[] = [];
-		const seen = new Set<string>();
+		const seenExecutions = new Set<string>();
+		const seenToolCalls = new Set<string>();
 
 		for (const tc of toolCalls) {
-			const executionId = tc.executionId as string;
+			if (seenToolCalls.has(tc.id)) continue;
+			seenToolCalls.add(tc.id);
+			const executionId = getExecutionIdForToolCall(tc);
 			if (!executionId) continue;
 
 			const currentStatus = toolCallMeta[tc.id]?.status ?? tc.status;
-			const isTerminal =
-				currentStatus === "completed" ||
-				currentStatus === "failed" ||
-				currentStatus === "rejected";
+			const isTerminal = isTerminalToolCallStatus(currentStatus);
 			if (isTerminal) continue;
 
 			const existing = toolCallIdsByExecutionId.get(executionId) ?? [];
 			existing.push(tc.id);
 			toolCallIdsByExecutionId.set(executionId, existing);
 
-			if (!seen.has(executionId)) {
-				seen.add(executionId);
+			if (!seenExecutions.has(executionId)) {
+				seenExecutions.add(executionId);
 				executionIds.push(executionId);
 				if (executionIds.length >= 50) break;
 			}
 		}
 
 		return { executionIds, toolCallIdsByExecutionId };
-	}, [serverMessages, toolCallMeta]);
+	}, [conversationId, pendingMessages, serverDisplayMessages, toolCallMeta]);
 
 	const getExecutions = api.ai.agent.getExecutions.useQuery(
 		{ executionIds: executionHydrationTargets.executionIds },
@@ -560,10 +1162,11 @@ export function useChat(options: UseChatOptions = {}) {
 				for (const toolCallId of toolCallIds) {
 					const prevMeta = next[toolCallId];
 					const shouldUpdateResult = !prevMeta?.result && exec.result != null;
+					const prevStatus = prevMeta?.status;
 					const shouldUpdateStatus =
-						!prevMeta?.status ||
-						getToolCallStatusRank(exec.status) >=
-							getToolCallStatusRank(prevMeta.status);
+						!prevStatus ||
+						(!isTerminalToolCallStatus(prevStatus) &&
+							prevStatus !== exec.status);
 					const shouldUpdateExecutionId =
 						prevMeta?.executionId !== exec.executionId;
 					if (
@@ -573,7 +1176,7 @@ export function useChat(options: UseChatOptions = {}) {
 						shouldUpdateExecutionId
 					) {
 						next[toolCallId] = {
-							status: shouldUpdateStatus ? exec.status : prevMeta?.status,
+							status: shouldUpdateStatus ? exec.status : prevStatus,
 							executionId: exec.executionId,
 							result: shouldUpdateResult ? exec.result : prevMeta?.result,
 						};
@@ -601,10 +1204,10 @@ export function useChat(options: UseChatOptions = {}) {
 			return pendingMessages.map(applyMeta);
 		}
 
-		const serverRaw = ((serverMessages || []) as Message[]).map(applyMeta);
+		const serverWithMeta = serverDisplayMessages.map(applyMeta);
 		const pendingWithMeta = pendingMessages.map(applyMeta);
-		return mergeServerAndPendingMessages(serverRaw, pendingWithMeta);
-	}, [conversationId, serverMessages, pendingMessages, toolCallMeta]);
+		return mergeServerAndPendingMessages(serverWithMeta, pendingWithMeta);
+	}, [conversationId, pendingMessages, serverDisplayMessages, toolCallMeta]);
 
 	const approveToolCall = useCallback(
 		async (toolCallId: string) => {
@@ -1006,6 +1609,7 @@ export function useChat(options: UseChatOptions = {}) {
 			let abortedBySafetyTimer = false;
 
 			if (isAgentMode) {
+				let assistantMessageId = assistantTempId;
 				let stopReason: "done" | "waiting_approval" | "aborted" = "aborted";
 				try {
 					const controller = new AbortController();
@@ -1043,7 +1647,15 @@ export function useChat(options: UseChatOptions = {}) {
 						),
 					);
 
+					const updateAssistantMessage = (updater: (m: Message) => Message) => {
+						const targetId = assistantMessageId;
+						setPendingMessages((prev) =>
+							prev.map((m) => (m.messageId === targetId ? updater(m) : m)),
+						);
+					};
+
 					const deltaBufferRef = { current: "" as string };
+					let lastReasoningText = "";
 					let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
 					const FLUSH_MS = 80;
 
@@ -1055,17 +1667,11 @@ export function useChat(options: UseChatOptions = {}) {
 						const pending = deltaBufferRef.current;
 						if (!pending) return;
 						deltaBufferRef.current = "";
-						setPendingMessages((prev) =>
-							prev.map((m) =>
-								m.messageId === assistantTempId
-									? {
-											...m,
-											content: (m.content ?? "") + pending,
-											status: "sending" as const,
-										}
-									: m,
-								),
-							);
+						updateAssistantMessage((m) => ({
+							...m,
+							content: (m.content ?? "") + pending,
+							status: "sending" as const,
+						}));
 					};
 
 					const scheduleFlushDelta = () => {
@@ -1090,10 +1696,14 @@ export function useChat(options: UseChatOptions = {}) {
 							typeof params.stepId === "string" ? params.stepId.trim() : "";
 						if (stepId.length > 0) return stepId;
 						const messageId =
-							typeof params.messageId === "string" ? params.messageId.trim() : "";
+							typeof params.messageId === "string"
+								? params.messageId.trim()
+								: "";
 						if (messageId.length > 0) return `agent-${messageId}`;
 						const toolName =
-							typeof params.toolName === "string" ? params.toolName.trim() : "tool";
+							typeof params.toolName === "string"
+								? params.toolName.trim()
+								: "tool";
 						return `agent-${toolName}-${Date.now()}`;
 					};
 
@@ -1117,57 +1727,50 @@ export function useChat(options: UseChatOptions = {}) {
 						result?: ToolCall["result"];
 					}) => {
 						const marker = `\n\n<<tool:${params.toolCallId}>>\n\n`;
-						setPendingMessages((prev) =>
-							prev.map((m) => {
-								if (m.messageId !== assistantTempId) return m;
-								const existingContent = m.content ?? "";
-								const content = existingContent.includes(marker)
-									? existingContent
-									: `${existingContent}${marker}`;
-								const toolCalls = [...(m.toolCalls || [])];
-								const existingIndex = toolCalls.findIndex(
-									(tc) => tc.id === params.toolCallId,
-								);
-								const base = existingIndex >= 0 ? toolCalls[existingIndex] : undefined;
-								const nextToolCall: ToolCall = {
-									id: params.toolCallId,
-									type: "function",
-									executionId: params.executionId,
-									status: params.status,
-									result: params.result,
+						updateAssistantMessage((m) => {
+							const existingContent = m.content ?? "";
+							const content = existingContent.includes(marker)
+								? existingContent
+								: `${existingContent}${marker}`;
+							const toolCalls = [...(m.toolCalls || [])];
+							const existingIndex = toolCalls.findIndex(
+								(tc) => tc.id === params.toolCallId,
+							);
+							const base =
+								existingIndex >= 0 ? toolCalls[existingIndex] : undefined;
+							const nextToolCall: ToolCall = {
+								id: params.toolCallId,
+								type: "function",
+								executionId: params.executionId,
+								status: params.status,
+								result: params.result,
+								function: {
+									name: params.toolName || base?.function.name || "tool",
+									arguments:
+										params.argumentsText ?? base?.function.arguments ?? "{}",
+								},
+							};
+							if (existingIndex >= 0) {
+								toolCalls[existingIndex] = {
+									...base,
+									...nextToolCall,
 									function: {
 										name:
-											params.toolName ||
+											nextToolCall.function.name ||
 											base?.function.name ||
 											"tool",
 										arguments:
-											params.argumentsText ??
-											base?.function.arguments ??
+											nextToolCall.function.arguments ||
+											base?.function.arguments ||
 											"{}",
 									},
+									result: nextToolCall.result ?? base?.result,
 								};
-								if (existingIndex >= 0) {
-									toolCalls[existingIndex] = {
-										...base,
-										...nextToolCall,
-										function: {
-											name:
-												nextToolCall.function.name ||
-												base?.function.name ||
-												"tool",
-											arguments:
-												nextToolCall.function.arguments ||
-												base?.function.arguments ||
-												"{}",
-										},
-										result: nextToolCall.result ?? base?.result,
-									};
-								} else {
-									toolCalls.push(nextToolCall);
-								}
-								return { ...m, content, toolCalls, status: "sending" as const };
-							}),
-						);
+							} else {
+								toolCalls.push(nextToolCall);
+							}
+							return { ...m, content, toolCalls, status: "sending" as const };
+						});
 					};
 
 					const streamStartTime = Date.now();
@@ -1250,6 +1853,24 @@ export function useChat(options: UseChatOptions = {}) {
 								}
 							})();
 
+							const runId =
+								payload && typeof payload.runId === "string"
+									? payload.runId.trim()
+									: "";
+							if (runId.length > 0 && assistantMessageId.startsWith("temp-")) {
+								flushDeltaNow();
+								const nextId = `agent-run-${runId}`;
+								const previousId = assistantMessageId;
+								setPendingMessages((prev) =>
+									prev.map((m) =>
+										m.messageId === previousId
+											? { ...m, messageId: nextId }
+											: m,
+									),
+								);
+								assistantMessageId = nextId;
+							}
+
 							if (evt.event === "agent.output.delta") {
 								const delta =
 									payload && typeof payload.delta === "string"
@@ -1262,16 +1883,28 @@ export function useChat(options: UseChatOptions = {}) {
 							}
 
 							if (evt.event === "agent.output.reasoning") {
+								flushDeltaNow();
 								const text =
-									payload && typeof payload.text === "string" ? payload.text : "";
+									payload && typeof payload.text === "string"
+										? payload.text
+										: "";
 								if (text.length === 0) continue;
-								setPendingMessages((prev) =>
-									prev.map((m) =>
-										m.messageId === assistantTempId
-											? { ...m, reasoning: text, status: "sending" as const }
-											: m,
-									),
-								);
+								const previous = lastReasoningText;
+								lastReasoningText = text;
+								const delta = text.startsWith(previous)
+									? text.slice(previous.length)
+									: text;
+								if (delta.trim().length === 0) continue;
+								const thinkId =
+									eventMessageId.trim().length > 0
+										? `agent-${eventMessageId.trim()}`
+										: `agent-${Date.now()}`;
+								const marker = `\n\n<<think:${thinkId}>>\n${delta}\n<<think_end:${thinkId}>>\n\n`;
+								updateAssistantMessage((m) => ({
+									...m,
+									content: (m.content ?? "") + marker,
+									status: "sending" as const,
+								}));
 								continue;
 							}
 
@@ -1351,37 +1984,25 @@ export function useChat(options: UseChatOptions = {}) {
 										? payload.summary.trim()
 										: "";
 								if (summary.length > 0) {
-									setPendingMessages((prev) =>
-										prev.map((m) =>
-											m.messageId !== assistantTempId
-												? m
-												: (() => {
-														const existing = m.content ?? "";
-														const normalizedSummary = summary.trim();
-														if (normalizedSummary.length === 0) {
-															return m;
-														}
-														if (existing.trim().length === 0) {
-															return {
-																...m,
-																content: normalizedSummary,
-																status: "sending" as const,
-															};
-														}
-														if (existing.includes(normalizedSummary)) {
-															return m;
-														}
-														const separator = existing.endsWith("\n")
-															? "\n"
-															: "\n\n";
-														return {
-															...m,
-															content: `${existing}${separator}${normalizedSummary}`,
-															status: "sending" as const,
-														};
-													})(),
-										),
-									);
+									updateAssistantMessage((m) => {
+										const existing = m.content ?? "";
+										const normalizedSummary = summary.trim();
+										if (normalizedSummary.length === 0) return m;
+										if (existing.trim().length === 0) {
+											return {
+												...m,
+												content: normalizedSummary,
+												status: "sending" as const,
+											};
+										}
+										if (existing.includes(normalizedSummary)) return m;
+										const separator = existing.endsWith("\n") ? "\n" : "\n\n";
+										return {
+											...m,
+											content: `${existing}${separator}${normalizedSummary}`,
+											status: "sending" as const,
+										};
+									});
 								}
 								continue;
 							}
@@ -1421,7 +2042,10 @@ export function useChat(options: UseChatOptions = {}) {
 								upsertAgentToolCall({
 									toolCallId,
 									toolName: toolName || "tool",
-									executionId: executionId.trim().length > 0 ? executionId.trim() : undefined,
+									executionId:
+										executionId.trim().length > 0
+											? executionId.trim()
+											: undefined,
 									status: "pending",
 									argumentsText:
 										typeof parametersPreview === "string" &&
@@ -1458,9 +2082,10 @@ export function useChat(options: UseChatOptions = {}) {
 					if (isAbortLikeError(error)) {
 						const timeoutError = "settings.ai.errors.streamingError";
 						if (abortedBySafetyTimer) {
+							const assistantId = assistantMessageId;
 							setPendingMessages((prev) =>
 								prev.map((m) =>
-									m.messageId === assistantTempId
+									m.messageId === assistantId
 										? { ...m, status: "error" as const, error: timeoutError }
 										: m,
 								),
@@ -1469,9 +2094,10 @@ export function useChat(options: UseChatOptions = {}) {
 							options.onError?.(new Error(timeoutError));
 							return;
 						}
+						const assistantId = assistantMessageId;
 						setPendingMessages((prev) =>
 							prev.map((m) =>
-								m.messageId === userTempId || m.messageId === assistantTempId
+								m.messageId === userTempId || m.messageId === assistantId
 									? { ...m, status: "sent" as const }
 									: m,
 							),
@@ -1484,9 +2110,10 @@ export function useChat(options: UseChatOptions = {}) {
 						error instanceof Error
 							? error.message
 							: "settings.ai.errors.unknownError";
+					const assistantId = assistantMessageId;
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === userTempId || m.messageId === assistantTempId
+							m.messageId === userTempId || m.messageId === assistantId
 								? { ...m, status: "error" as const, error: errorMsg }
 								: m,
 						),
@@ -1497,9 +2124,10 @@ export function useChat(options: UseChatOptions = {}) {
 				}
 
 				if (stopReason !== "done") {
+					const assistantId = assistantMessageId;
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === assistantTempId
+							m.messageId === assistantId
 								? abortedBySafetyTimer
 									? {
 											...m,
@@ -1513,9 +2141,7 @@ export function useChat(options: UseChatOptions = {}) {
 					setIsLoading(false);
 					setAbortController(null);
 					if (abortedBySafetyTimer) {
-						options.onError?.(
-							new Error("settings.ai.errors.streamingError"),
-						);
+						options.onError?.(new Error("settings.ai.errors.streamingError"));
 					}
 					return;
 				}
@@ -1527,10 +2153,10 @@ export function useChat(options: UseChatOptions = {}) {
 						new Promise((resolve) => setTimeout(resolve, 10000)),
 					]);
 				} finally {
+					const assistantId = assistantMessageId;
 					setPendingMessages((prev) =>
 						prev.filter(
-							(m) =>
-								m.messageId !== userTempId && m.messageId !== assistantTempId,
+							(m) => m.messageId !== userTempId && m.messageId !== assistantId,
 						),
 					);
 					setIsLoading(false);
@@ -1574,16 +2200,30 @@ export function useChat(options: UseChatOptions = {}) {
 				);
 
 				let receivedDone = false;
-					const activeToolCallIds = new Set<string>();
-					const toolCallArgsById = new Map<string, string>();
-					const streamStartTime = Date.now();
-					let lastEventTime = streamStartTime;
-					const deltaBufferRef = { current: "" as string };
-					const reasoningBufferRef = { current: "" as string };
-					let reasoningText = "";
-					let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
-					const FLUSH_VISIBLE_MS = 60;
+				const activeToolCallIds = new Set<string>();
+				const toolCallArgsById = new Map<string, string>();
+				const streamStartTime = Date.now();
+				let lastEventTime = streamStartTime;
+				const deltaBufferRef = { current: "" as string };
+				let activeThinkId: string | null = null;
+				let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
+				const FLUSH_VISIBLE_MS = 60;
 				const FLUSH_HIDDEN_MS = 600;
+
+				const ensureThinkStarted = () => {
+					if (activeThinkId) return;
+					activeThinkId =
+						typeof crypto !== "undefined" && "randomUUID" in crypto
+							? (crypto.randomUUID() as string)
+							: `think-${Date.now()}`;
+					deltaBufferRef.current += `\n\n<<think:${activeThinkId}>>\n`;
+				};
+
+				const closeThinkIfOpen = () => {
+					if (!activeThinkId) return;
+					deltaBufferRef.current += `\n<<think_end:${activeThinkId}>>\n\n`;
+					activeThinkId = null;
+				};
 
 				const flushDeltaNow = () => {
 					if (flushDeltaTimer) {
@@ -1591,29 +2231,16 @@ export function useChat(options: UseChatOptions = {}) {
 						flushDeltaTimer = null;
 					}
 					const pendingText = deltaBufferRef.current;
-						if (pendingText) {
-							deltaBufferRef.current = "";
-							setPendingMessages((prev) =>
-								prev.map((m) =>
+					if (pendingText) {
+						deltaBufferRef.current = "";
+						setPendingMessages((prev) =>
+							prev.map((m) =>
 								m.messageId === assistantTempId
 									? {
 											...m,
 											content: (m.content ?? "") + pendingText,
 											status: "sending" as const,
 										}
-									: m,
-								),
-							);
-						}
-
-					const pendingReasoning = reasoningBufferRef.current;
-					if (pendingReasoning) {
-						reasoningBufferRef.current = "";
-						reasoningText += pendingReasoning;
-						setPendingMessages((prev) =>
-							prev.map((m) =>
-								m.messageId === assistantTempId
-									? { ...m, reasoning: reasoningText, status: "sending" as const }
 									: m,
 							),
 						);
@@ -1667,6 +2294,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "delta") {
+							closeThinkIfOpen();
 							const payload = JSON.parse(evt.data) as { delta?: unknown };
 							const delta =
 								typeof payload.delta === "string" ? payload.delta : "";
@@ -1676,15 +2304,17 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "reasoning-delta") {
+							ensureThinkStarted();
 							const payload = JSON.parse(evt.data) as { delta?: unknown };
 							const delta =
 								typeof payload.delta === "string" ? payload.delta : "";
 							if (delta.length === 0) continue;
-							reasoningBufferRef.current += delta;
+							deltaBufferRef.current += delta;
 							scheduleFlushDelta();
 						}
 
 						if (evt.event === "tool-call") {
+							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								toolCallId: string;
@@ -1733,6 +2363,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "tool-result") {
+							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								toolCallId: string;
@@ -1837,6 +2468,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "done") {
+							closeThinkIfOpen();
 							flushDeltaNow();
 							let realId = "";
 							try {
@@ -1877,6 +2509,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "error" || evt.event === "stream-error") {
+							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								message?: string;
@@ -1890,6 +2523,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 					}
 				} finally {
+					closeThinkIfOpen();
 					flushDeltaNow();
 					clearInterval(safetyInterval);
 				}
@@ -1926,9 +2560,7 @@ export function useChat(options: UseChatOptions = {}) {
 
 				if (!controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
-					finalizeExecutingToolCalls(
-						"settings.ai.errors.streamingError",
-					);
+					finalizeExecutingToolCalls("settings.ai.errors.streamingError");
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === userTempId || m.messageId === assistantTempId
@@ -2101,11 +2733,25 @@ export function useChat(options: UseChatOptions = {}) {
 				const streamStartTime = Date.now();
 				let lastEventTime = streamStartTime;
 				const deltaBufferRef = { current: "" as string };
-				const reasoningBufferRef = { current: "" as string };
-				let reasoningText = "";
+				let activeThinkId: string | null = null;
 				let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
 				const FLUSH_VISIBLE_MS = 60;
 				const FLUSH_HIDDEN_MS = 600;
+
+				const ensureThinkStarted = () => {
+					if (activeThinkId) return;
+					activeThinkId =
+						typeof crypto !== "undefined" && "randomUUID" in crypto
+							? (crypto.randomUUID() as string)
+							: `think-${Date.now()}`;
+					deltaBufferRef.current += `\n\n<<think:${activeThinkId}>>\n`;
+				};
+
+				const closeThinkIfOpen = () => {
+					if (!activeThinkId) return;
+					deltaBufferRef.current += `\n<<think_end:${activeThinkId}>>\n\n`;
+					activeThinkId = null;
+				};
 
 				const flushDeltaNow = () => {
 					if (flushDeltaTimer) {
@@ -2127,24 +2773,13 @@ export function useChat(options: UseChatOptions = {}) {
 							),
 						);
 					}
-
-					const pendingReasoning = reasoningBufferRef.current;
-					if (pendingReasoning) {
-						reasoningBufferRef.current = "";
-						reasoningText += pendingReasoning;
-						setPendingMessages((prev) =>
-							prev.map((m) =>
-								m.messageId === assistantTempId
-									? { ...m, reasoning: reasoningText, status: "sending" as const }
-									: m,
-							),
-						);
-					}
 				};
 
 				const scheduleFlush = () => {
 					if (flushDeltaTimer) return;
-					const delay = uiVisibleRef.current ? FLUSH_VISIBLE_MS : FLUSH_HIDDEN_MS;
+					const delay = uiVisibleRef.current
+						? FLUSH_VISIBLE_MS
+						: FLUSH_HIDDEN_MS;
 					flushDeltaTimer = setTimeout(flushDeltaNow, delay);
 				};
 
@@ -2182,8 +2817,10 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "delta") {
+							closeThinkIfOpen();
 							const payload = JSON.parse(evt.data) as { delta?: string };
-							const delta = typeof payload.delta === "string" ? payload.delta : "";
+							const delta =
+								typeof payload.delta === "string" ? payload.delta : "";
 							if (!delta) continue;
 							deltaBufferRef.current += delta;
 							scheduleFlush();
@@ -2191,15 +2828,18 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "reasoning-delta") {
+							ensureThinkStarted();
 							const payload = JSON.parse(evt.data) as { delta?: string };
-							const delta = typeof payload.delta === "string" ? payload.delta : "";
+							const delta =
+								typeof payload.delta === "string" ? payload.delta : "";
 							if (!delta) continue;
-							reasoningBufferRef.current += delta;
+							deltaBufferRef.current += delta;
 							scheduleFlush();
 							continue;
 						}
 
 						if (evt.event === "tool-call") {
+							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								toolCallId: string;
@@ -2260,7 +2900,12 @@ export function useChat(options: UseChatOptions = {}) {
 									} else {
 										toolCalls.push(nextToolCall);
 									}
-									return { ...m, content, toolCalls, status: "sending" as const };
+									return {
+										...m,
+										content,
+										toolCalls,
+										status: "sending" as const,
+									};
 								}),
 							);
 							setToolCallMeta((prev) => {
@@ -2276,6 +2921,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "tool-result") {
+							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								toolCallId: string;
@@ -2310,7 +2956,8 @@ export function useChat(options: UseChatOptions = {}) {
 											type: "function",
 											function: {
 												name: payload.toolName,
-												arguments: toolCallArgsById.get(payload.toolCallId) || "{}",
+												arguments:
+													toolCallArgsById.get(payload.toolCallId) || "{}",
 											},
 										} as ToolCall);
 
@@ -2327,7 +2974,8 @@ export function useChat(options: UseChatOptions = {}) {
 										getExecutionIdFromResultPayload(payloadResult)
 									) {
 										status = "pending";
-										executionId = getExecutionIdFromResultPayload(payloadResult);
+										executionId =
+											getExecutionIdFromResultPayload(payloadResult);
 										result = {
 											success: true,
 											message:
@@ -2341,7 +2989,8 @@ export function useChat(options: UseChatOptions = {}) {
 										typeof payloadResult.success === "boolean"
 									) {
 										status = payloadResult.success ? "completed" : "failed";
-										executionId = getExecutionIdFromResultPayload(payloadResult);
+										executionId =
+											getExecutionIdFromResultPayload(payloadResult);
 										result = {
 											success: payloadResult.success,
 											message: payloadResult.message as string | undefined,
@@ -2382,6 +3031,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "done") {
+							closeThinkIfOpen();
 							flushDeltaNow();
 							let realId = "";
 							try {
@@ -2422,6 +3072,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "error" || evt.event === "stream-error") {
+							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								message?: string;
@@ -2435,6 +3086,7 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 					}
 				} finally {
+					closeThinkIfOpen();
 					flushDeltaNow();
 					clearInterval(safetyInterval);
 				}
@@ -2469,9 +3121,7 @@ export function useChat(options: UseChatOptions = {}) {
 
 				if (!controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
-					finalizeExecutingToolCalls(
-						"settings.ai.errors.streamingError",
-					);
+					finalizeExecutingToolCalls("settings.ai.errors.streamingError");
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === assistantTempId
