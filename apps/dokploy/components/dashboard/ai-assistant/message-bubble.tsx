@@ -508,7 +508,7 @@ export function MessageBubble({
 							{t("common.unknownError")}
 						</p>
 					) : (
-						<div className="space-y-2">
+						<div className="space-y-2 text-sm">
 							{waterfallParts.map((part, idx) => {
 								if (part.type === "tool") {
 									const toolCall = toolCallById.get(part.toolCallId);
