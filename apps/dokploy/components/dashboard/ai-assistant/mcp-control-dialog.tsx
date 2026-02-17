@@ -307,13 +307,9 @@ export function McpControlDialog() {
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
 				<Button
-					variant={hasEnabledServers ? "secondary" : "ghost"}
+					variant="ghost"
 					size="icon"
-					className={cn(
-						"h-8 w-8 p-0",
-						hasEnabledServers &&
-							"bg-primary/10 text-primary hover:bg-primary/20",
-					)}
+					className={cn("h-8 w-8 p-0", hasEnabledServers && "text-primary")}
 					title={t("ai.chat.mcp.manage")}
 					aria-label={t("ai.chat.mcp.manage")}
 				>
