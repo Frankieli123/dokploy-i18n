@@ -12,6 +12,8 @@ function normalizeConversationValue(value: string | undefined | null): string {
 }
 
 const DRAFT_CONVERSATION_SCOPE_ID = "__draft_conversation__";
+const DISABLE_CLIENT_STREAM_TIMEOUT =
+	process.env.NEXT_PUBLIC_AI_DISABLE_CLIENT_STREAM_TIMEOUT === "true";
 
 function isAbortLikeError(error: unknown): boolean {
 	if (!error) return false;
@@ -881,9 +883,11 @@ export function useChat(options: UseChatOptions = {}) {
 	const abortControllerByConversationRef = useRef<
 		Record<string, AbortController>
 	>({});
+	const agentRunIdByConversationRef = useRef<Record<string, string>>({});
 	const conversationIdRef = useRef<string | undefined>(conversationId);
 	const approveExecution = api.ai.agent.approve.useMutation();
 	const executeExecution = api.ai.agent.execute.useMutation();
+	const cancelAgentRun = api.ai.agent.cancel.useMutation();
 	const setToolApprovalsDisabledMutation =
 		api.ai.conversations.setToolApprovalsDisabled.useMutation();
 	const setToolBudgetModeMutation =
@@ -903,9 +907,10 @@ export function useChat(options: UseChatOptions = {}) {
 				delete next[normalized];
 				return next;
 			});
-			if (
-				normalizeConversationValue(conversationIdRef.current) === normalized
-			) {
+			const activeScopeId =
+				normalizeConversationValue(conversationIdRef.current) ||
+				DRAFT_CONVERSATION_SCOPE_ID;
+			if (activeScopeId === normalized) {
 				setIsLoading(loading);
 			}
 		},
@@ -926,9 +931,10 @@ export function useChat(options: UseChatOptions = {}) {
 				delete next[normalized];
 				return next;
 			});
-			if (
-				normalizeConversationValue(conversationIdRef.current) === normalized
-			) {
+			const activeScopeId =
+				normalizeConversationValue(conversationIdRef.current) ||
+				DRAFT_CONVERSATION_SCOPE_ID;
+			if (activeScopeId === normalized) {
 				setCanContinueChat(canContinue);
 			}
 		},
@@ -960,9 +966,10 @@ export function useChat(options: UseChatOptions = {}) {
 				delete next[normalized];
 				return next;
 			});
-			if (
-				normalizeConversationValue(conversationIdRef.current) === normalized
-			) {
+			const activeScopeId =
+				normalizeConversationValue(conversationIdRef.current) ||
+				DRAFT_CONVERSATION_SCOPE_ID;
+			if (activeScopeId === normalized) {
 				setPendingApproval(approval);
 			}
 		},
@@ -981,11 +988,26 @@ export function useChat(options: UseChatOptions = {}) {
 			} else {
 				delete abortControllerByConversationRef.current[normalized];
 			}
-			if (
-				normalizeConversationValue(conversationIdRef.current) === normalized
-			) {
+			const activeScopeId =
+				normalizeConversationValue(conversationIdRef.current) ||
+				DRAFT_CONVERSATION_SCOPE_ID;
+			if (activeScopeId === normalized) {
 				setAbortController(controller);
 			}
+		},
+		[],
+	);
+
+	const setConversationAgentRunId = useCallback(
+		(targetConversationId: string | undefined, runId: string | null) => {
+			const normalized = normalizeConversationValue(targetConversationId);
+			if (!normalized) return;
+			const nextRunId = typeof runId === "string" ? runId.trim() : "";
+			if (nextRunId.length === 0) {
+				delete agentRunIdByConversationRef.current[normalized];
+				return;
+			}
+			agentRunIdByConversationRef.current[normalized] = nextRunId;
 		},
 		[],
 	);
@@ -1131,6 +1153,11 @@ export function useChat(options: UseChatOptions = {}) {
 	const mostRecentActiveRunId = useMemo(() => {
 		return getMostRecentActiveAgentRunId((serverMessages || []) as Message[]);
 	}, [serverMessages]);
+
+	useEffect(() => {
+		if (!conversationId) return;
+		setConversationAgentRunId(conversationId, mostRecentActiveRunId ?? null);
+	}, [conversationId, mostRecentActiveRunId, setConversationAgentRunId]);
 
 	const agentEvents = api.ai.agent.events.useQuery(
 		{ runId: mostRecentActiveRunId || "", limit: 500 },
@@ -1675,15 +1702,34 @@ export function useChat(options: UseChatOptions = {}) {
 
 	const stopGeneration = useCallback(() => {
 		const normalizedConversationId = normalizeConversationValue(conversationId);
-		const scopeId = normalizedConversationId || DRAFT_CONVERSATION_SCOPE_ID;
+		const normalizedRefConversationId = normalizeConversationValue(
+			conversationIdRef.current,
+		);
+		const scopeId =
+			normalizedRefConversationId ||
+			normalizedConversationId ||
+			DRAFT_CONVERSATION_SCOPE_ID;
+		const fallbackRunId =
+			normalizedRefConversationId === scopeId
+				? (mostRecentActiveRunId ?? "")
+				: "";
+		const runId =
+			agentRunIdByConversationRef.current[scopeId] ?? fallbackRunId ?? "";
+		if (runId.trim().length > 0) {
+			void cancelAgentRun.mutateAsync({ runId: runId.trim() }).catch(() => {});
+		}
 		const controller =
 			abortControllerByConversationRef.current[scopeId] ?? abortController;
 		controller?.abort();
+		setConversationAgentRunId(scopeId, null);
 		setConversationAbortControllerState(scopeId, null);
 		setConversationLoadingState(scopeId, false);
 	}, [
 		abortController,
+		cancelAgentRun,
 		conversationId,
+		mostRecentActiveRunId,
+		setConversationAgentRunId,
 		setConversationAbortControllerState,
 		setConversationLoadingState,
 	]);
@@ -1897,6 +1943,8 @@ export function useChat(options: UseChatOptions = {}) {
 					};
 
 					const deltaBufferRef = { current: "" as string };
+					let lastOutputText = "";
+					let sawAssistantOutput = false;
 					let lastReasoningText = "";
 					let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
 					const FLUSH_MS = 80;
@@ -2019,7 +2067,6 @@ export function useChat(options: UseChatOptions = {}) {
 					let lastProgressTime = streamStartTime;
 					const INITIAL_IDLE_NO_PROGRESS_MS = 45 * 1000;
 					const STALL_NO_PROGRESS_MS = 120 * 1000;
-					const MAX_STREAM_MS = 15 * 60 * 1000;
 					let hasVisibleProgress = false;
 					const isProgressEvent = (eventName: string) =>
 						eventName === "done" ||
@@ -2036,12 +2083,8 @@ export function useChat(options: UseChatOptions = {}) {
 						eventName === "agent.step.wait_approval";
 
 					const safetyInterval = setInterval(() => {
+						if (DISABLE_CLIENT_STREAM_TIMEOUT) return;
 						const now = Date.now();
-						if (now - streamStartTime > MAX_STREAM_MS) {
-							abortedBySafetyTimer = true;
-							controller.abort();
-							return;
-						}
 						const idleTimeoutMs = hasVisibleProgress
 							? STALL_NO_PROGRESS_MS
 							: INITIAL_IDLE_NO_PROGRESS_MS;
@@ -2055,7 +2098,10 @@ export function useChat(options: UseChatOptions = {}) {
 					try {
 						for await (const evt of readSseStream(response.body)) {
 							if (controller.signal.aborted) break;
-							if (evt.event === "ping") continue;
+							if (evt.event === "ping") {
+								lastProgressTime = Date.now();
+								continue;
+							}
 							if (isProgressEvent(evt.event)) {
 								lastProgressTime = Date.now();
 								hasVisibleProgress = true;
@@ -2099,6 +2145,9 @@ export function useChat(options: UseChatOptions = {}) {
 								payload && typeof payload.runId === "string"
 									? payload.runId.trim()
 									: "";
+							if (runId.length > 0) {
+								setConversationAgentRunId(streamConversationId, runId);
+							}
 							if (runId.length > 0 && assistantMessageId.startsWith("temp-")) {
 								flushDeltaNow();
 								const nextId = `agent-run-${runId}`;
@@ -2114,11 +2163,20 @@ export function useChat(options: UseChatOptions = {}) {
 							}
 
 							if (evt.event === "agent.output.delta") {
-								const delta =
+								const text =
 									payload && typeof payload.delta === "string"
 										? payload.delta
 										: "";
+								if (text.length === 0 || text === lastOutputText) continue;
+								const previous = lastOutputText;
+								lastOutputText = text;
+								const delta = text.startsWith(previous)
+									? text.slice(previous.length)
+									: previous.startsWith(text)
+										? ""
+										: text;
 								if (delta.length === 0) continue;
+								sawAssistantOutput = true;
 								deltaBufferRef.current += delta;
 								scheduleFlushDelta();
 								continue;
@@ -2225,7 +2283,7 @@ export function useChat(options: UseChatOptions = {}) {
 									payload && typeof payload.summary === "string"
 										? payload.summary.trim()
 										: "";
-								if (summary.length > 0) {
+								if (summary.length > 0 && !sawAssistantOutput) {
 									updateAssistantMessage((m) => {
 										const existing = m.content ?? "";
 										const normalizedSummary = summary.trim();
@@ -2322,18 +2380,17 @@ export function useChat(options: UseChatOptions = {}) {
 				} catch (error) {
 					setConversationAbortControllerState(streamConversationId, null);
 					if (isAbortLikeError(error)) {
-						const timeoutError = "settings.ai.errors.streamingError";
 						if (abortedBySafetyTimer) {
 							const assistantId = assistantMessageId;
 							setPendingMessages((prev) =>
 								prev.map((m) =>
 									m.messageId === assistantId
-										? { ...m, status: "error" as const, error: timeoutError }
+										? { ...m, status: "sent" as const }
 										: m,
 								),
 							);
 							setConversationLoadingState(streamConversationId, false);
-							options.onError?.(new Error(timeoutError));
+							await refetchMessages().catch(() => {});
 							return;
 						}
 						const assistantId = assistantMessageId;
@@ -2371,11 +2428,7 @@ export function useChat(options: UseChatOptions = {}) {
 						prev.map((m) =>
 							m.messageId === assistantId
 								? abortedBySafetyTimer
-									? {
-											...m,
-											status: "error" as const,
-											error: "settings.ai.errors.streamingError",
-										}
+									? { ...m, status: "sent" as const }
 									: { ...m, status: "sent" as const }
 								: m,
 						),
@@ -2383,7 +2436,7 @@ export function useChat(options: UseChatOptions = {}) {
 					setConversationLoadingState(streamConversationId, false);
 					setConversationAbortControllerState(streamConversationId, null);
 					if (abortedBySafetyTimer) {
-						options.onError?.(new Error("settings.ai.errors.streamingError"));
+						await refetchMessages().catch(() => {});
 					}
 					return;
 				}
@@ -2395,6 +2448,7 @@ export function useChat(options: UseChatOptions = {}) {
 						new Promise((resolve) => setTimeout(resolve, 10000)),
 					]);
 				} finally {
+					setConversationAgentRunId(streamConversationId, null);
 					const assistantId = assistantMessageId;
 					setPendingMessages((prev) =>
 						prev.filter(
@@ -2505,9 +2559,10 @@ export function useChat(options: UseChatOptions = {}) {
 
 				const IDLE_NO_TOOLS_MS = 30 * 1000;
 				const IDLE_WITH_TOOLS_MS = 10 * 60 * 1000;
-				const MAX_DURATION_MS = 15 * 60 * 1000;
+				const MAX_DURATION_MS = 60 * 60 * 1000;
 
 				const safetyInterval = setInterval(() => {
+					if (DISABLE_CLIENT_STREAM_TIMEOUT) return;
 					const now = Date.now();
 					const idleMs = now - lastEventTime;
 					const idleLimit =
@@ -2523,6 +2578,10 @@ export function useChat(options: UseChatOptions = {}) {
 				try {
 					for await (const evt of readSseStream(response.body)) {
 						if (controller.signal.aborted) break;
+						if (evt.event === "ping" || evt.event === "start") {
+							lastEventTime = Date.now();
+							continue;
+						}
 						if (
 							evt.event === "delta" ||
 							evt.event === "reasoning-delta" ||
@@ -2890,6 +2949,7 @@ export function useChat(options: UseChatOptions = {}) {
 			setConversationAbortControllerState,
 			setConversationCanContinueState,
 			setConversationLoadingState,
+			setConversationAgentRunId,
 			setConversationPendingApprovalState,
 		],
 	);
@@ -3036,9 +3096,10 @@ export function useChat(options: UseChatOptions = {}) {
 
 				const IDLE_NO_TOOLS_MS = 30 * 1000;
 				const IDLE_WITH_TOOLS_MS = 10 * 60 * 1000;
-				const MAX_DURATION_MS = 15 * 60 * 1000;
+				const MAX_DURATION_MS = 60 * 60 * 1000;
 
 				const safetyInterval = setInterval(() => {
+					if (DISABLE_CLIENT_STREAM_TIMEOUT) return;
 					const now = Date.now();
 					const idleMs = now - lastEventTime;
 					const idleLimit =
@@ -3053,7 +3114,10 @@ export function useChat(options: UseChatOptions = {}) {
 
 				try {
 					for await (const evt of readSseStream(response.body)) {
-						if (evt.event === "ping" || evt.event === "start") continue;
+						if (evt.event === "ping" || evt.event === "start") {
+							lastEventTime = Date.now();
+							continue;
+						}
 
 						if (
 							evt.event === "delta" ||
@@ -3459,6 +3523,7 @@ export function useChat(options: UseChatOptions = {}) {
 		setAbortController(null);
 		setIsLoading(false);
 		setConversationId(undefined);
+		agentRunIdByConversationRef.current = {};
 		setConversationAbortControllerState(DRAFT_CONVERSATION_SCOPE_ID, null);
 		setConversationLoadingState(DRAFT_CONVERSATION_SCOPE_ID, false);
 		setConversationCanContinueState(DRAFT_CONVERSATION_SCOPE_ID, false);
