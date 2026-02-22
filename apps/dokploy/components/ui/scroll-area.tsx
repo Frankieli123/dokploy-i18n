@@ -37,29 +37,64 @@ const ScrollArea = React.forwardRef<
 			[viewportRef],
 		);
 
-		const handleScrollbarWheel = React.useCallback(
-			(event: React.WheelEvent<HTMLDivElement>) => {
-				const viewport = viewportRefLocal.current;
-				if (!viewport) return;
-				if (event.deltaY) viewport.scrollTop += event.deltaY;
-				if (event.deltaX) viewport.scrollLeft += event.deltaX;
-			},
-			[],
-		);
+			const handleScrollbarWheel = React.useCallback(
+				(event: React.WheelEvent<HTMLDivElement>) => {
+					const viewport = viewportRefLocal.current;
+					if (!viewport) return;
+					if (event.deltaY) viewport.scrollTop += event.deltaY;
+					if (event.deltaX) viewport.scrollLeft += event.deltaX;
+				},
+				[],
+			);
 
-		return (
-			<ScrollAreaPrimitive.Root
-				ref={ref}
-				className={cn("relative overflow-hidden flex flex-col", className)}
+			const handleViewportWheel = React.useCallback(
+				(event: React.WheelEvent<HTMLDivElement>) => {
+					const viewport = viewportRefLocal.current;
+					if (!viewport) return;
+
+					const { deltaX, deltaY } = event;
+					if (!deltaX && !deltaY) return;
+
+					const canScrollY = viewport.scrollHeight > viewport.clientHeight;
+					const canScrollX = viewport.scrollWidth > viewport.clientWidth;
+
+					const atTop = viewport.scrollTop <= 0;
+					const atBottom =
+						viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight;
+					const atLeft = viewport.scrollLeft <= 0;
+					const atRight =
+						viewport.scrollLeft + viewport.clientWidth >= viewport.scrollWidth;
+
+					const shouldHandleY =
+						canScrollY && ((deltaY < 0 && !atTop) || (deltaY > 0 && !atBottom));
+					const shouldHandleX =
+						canScrollX && ((deltaX < 0 && !atLeft) || (deltaX > 0 && !atRight));
+
+					if (!shouldHandleY && !shouldHandleX) return;
+
+					// Some layouts end up preventing native wheel scrolling on the viewport.
+					// Apply wheel deltas directly as a fallback, while still allowing scroll chaining at edges.
+					event.preventDefault();
+					if (shouldHandleY) viewport.scrollTop += deltaY;
+					if (shouldHandleX) viewport.scrollLeft += deltaX;
+				},
+				[],
+			);
+
+			return (
+				<ScrollAreaPrimitive.Root
+					ref={ref}
+					className={cn("relative overflow-hidden flex flex-col", className)}
 				{...props}
-			>
-				<ScrollAreaPrimitive.Viewport
-					ref={mergedViewportRef}
-					onScroll={onViewportScroll}
-					// [&>div]:!block
-					className={cn(
-						"flex-1 min-h-0 w-full rounded-[inherit]",
-						viewPortClassName,
+				>
+					<ScrollAreaPrimitive.Viewport
+						ref={mergedViewportRef}
+						onScroll={onViewportScroll}
+						onWheel={handleViewportWheel}
+						// [&>div]:!block
+						className={cn(
+							"flex-1 min-h-0 w-full rounded-[inherit]",
+							viewPortClassName,
 					)}
 				>
 					{children}

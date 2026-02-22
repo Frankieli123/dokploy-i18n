@@ -135,6 +135,10 @@ export default async function handler(
 			uiLocale: req.cookies.DOKPLOY_LOCALE,
 		});
 		runId = typeof run?.runId === "string" ? run.runId : "";
+		writeSseEvent(res, "start", {
+			conversationId,
+			runId: runId.trim(),
+		});
 
 		while (!abortController.signal.aborted) {
 			const messages = await db.query.aiMessages.findMany({

@@ -2095,17 +2095,34 @@ export function useChat(options: UseChatOptions = {}) {
 						controller.abort();
 					}, 1000);
 
-					try {
-						for await (const evt of readSseStream(response.body)) {
-							if (controller.signal.aborted) break;
-							if (evt.event === "ping") {
-								lastProgressTime = Date.now();
-								continue;
-							}
-							if (isProgressEvent(evt.event)) {
-								lastProgressTime = Date.now();
-								hasVisibleProgress = true;
-							}
+						try {
+							for await (const evt of readSseStream(response.body)) {
+								if (controller.signal.aborted) break;
+								if (evt.event === "ping") {
+									lastProgressTime = Date.now();
+									continue;
+								}
+								if (evt.event === "start") {
+									lastProgressTime = Date.now();
+									try {
+										const started = JSON.parse(evt.data) as unknown;
+										const startedRunId =
+											isRecord(started) && typeof started.runId === "string"
+												? started.runId.trim()
+												: "";
+										if (startedRunId.length > 0) {
+											setConversationAgentRunId(
+												streamConversationId,
+												startedRunId,
+											);
+										}
+									} catch {}
+									continue;
+								}
+								if (isProgressEvent(evt.event)) {
+									lastProgressTime = Date.now();
+									hasVisibleProgress = true;
+								}
 
 							if (evt.event === "done") {
 								flushDeltaNow();

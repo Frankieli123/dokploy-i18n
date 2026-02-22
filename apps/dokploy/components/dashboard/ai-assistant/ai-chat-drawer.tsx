@@ -484,6 +484,10 @@ export function AIChatDrawer({
 			return;
 		}
 		if (e.key === "Enter" && !e.shiftKey) {
+			if (!hasAiConfigs || !selectedAiId || isLoading || !!pendingApproval) {
+				// Allow newline while sending is blocked (still lets user draft the next message).
+				return;
+			}
 			e.preventDefault();
 			handleSend();
 		}
@@ -731,7 +735,7 @@ export function AIChatDrawer({
 											? t("ai.chat.inputPlaceholder")
 											: t("ai.chat.configureFirst")
 									}
-									disabled={!hasAiConfigs || isLoading || !!pendingApproval}
+									disabled={!hasAiConfigs || !!pendingApproval}
 									className="min-h-[20px] max-h-[180px] resize-none overflow-y-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
 									aria-label={t("ai.chat.inputLabel")}
 								/>
@@ -926,6 +930,7 @@ function ConversationHistoryDialog(props: {
 	const { t } = useTranslation("common");
 	const [open, setOpen] = useState(false);
 	const [search, setSearch] = useState("");
+	const listViewportRef = useRef<HTMLDivElement | null>(null);
 
 	const { data: conversations, isLoading } = api.ai.conversations.list.useQuery(
 		{
@@ -958,6 +963,24 @@ function ConversationHistoryDialog(props: {
 		});
 	}, [conversations, search, t]);
 
+	const handleDialogWheel = useCallback((event: React.WheelEvent) => {
+		const viewport = listViewportRef.current;
+		if (!viewport) return;
+
+		const target = event.target as Node | null;
+		if (target && viewport.contains(target)) return;
+
+		if (
+			viewport.scrollHeight <= viewport.clientHeight &&
+			viewport.scrollWidth <= viewport.clientWidth
+		) {
+			return;
+		}
+
+		if (event.deltaY) viewport.scrollTop += event.deltaY;
+		if (event.deltaX) viewport.scrollLeft += event.deltaX;
+	}, []);
+
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
@@ -974,6 +997,7 @@ function ConversationHistoryDialog(props: {
 			<DialogContent
 				noInnerScroll
 				className="max-w-md max-h-[80vh] flex flex-col min-h-0 p-0 gap-0"
+				onWheel={handleDialogWheel}
 			>
 				<DialogHeader className="p-6 pb-2">
 					<DialogTitle className="flex items-center gap-2">
@@ -997,7 +1021,8 @@ function ConversationHistoryDialog(props: {
 				<ScrollArea
 					type="always"
 					className="flex-1 min-h-0"
-					viewPortClassName="p-6 pt-2"
+					viewPortClassName="p-6 pt-2 pr-8 overflow-y-auto overflow-x-hidden min-w-0 max-w-full [&>div]:!block [&>div]:!w-full [&>div]:!min-w-0 [&>div]:!max-w-full"
+					viewportRef={listViewportRef}
 				>
 					<div className="space-y-2">
 						{isLoading ? (
@@ -1030,13 +1055,13 @@ function ConversationHistoryDialog(props: {
 									<Button
 										key={c.conversationId}
 										variant={isCurrent ? "secondary" : "ghost"}
-										className="w-full justify-start h-auto px-3 py-2 flex-col items-start gap-1"
+										className="w-full min-w-0 justify-start h-auto px-3 py-2 flex-col items-start gap-1"
 										onClick={() => {
 											props.onSelect(c.conversationId);
 											setOpen(false);
 										}}
 									>
-										<span className="font-medium text-sm w-full text-left truncate">
+										<span className="w-full min-w-0 text-left text-sm font-medium whitespace-normal [overflow-wrap:anywhere] line-clamp-2">
 											{title}
 										</span>
 										<span className="text-xs text-muted-foreground tabular-nums">
@@ -1049,6 +1074,6 @@ function ConversationHistoryDialog(props: {
 					</div>
 				</ScrollArea>
 			</DialogContent>
-		</Dialog>
-	);
+			</Dialog>
+		);
 }
