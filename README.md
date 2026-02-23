@@ -1,202 +1,149 @@
 <div align="center">
   <a href="https://dokploy.com">
-    <img src=".github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%"  />
+    <img src=".github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%" />
   </a>
-  </br>
-  </br>
+  <br />
+  <br />
   <p>Join us on Discord for help, feedback, and discussions!</p>
   <a href="https://discord.gg/2tBnJ3jDJc">
-    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield"/>
+    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield" />
   </a>
 </div>
-<br />
 
+# Dokploy i18n
 
+基于官方 Dokploy 的社区增强版，增加了：
 
-<div align="center" markdown="1">
-   <sup>Special thanks to:</sup>
-   <br>
-   <br>
-   <a href="https://tuple.app/dokploy">
-     <img src=".github/sponsors/tuple.png" alt="Tuple's sponsorship image" width="400"/>
-   </a>
+- 多语言界面（i18n）
+- 内置 AI 助手面板（AI Panel）：Chat / Agent、工具调用审批、MCP Server 等
 
-### [Tuple, the premier screen sharing app for developers](https://tuple.app/dokploy)
-[Available for MacOS & Windows](https://tuple.app/dokploy)<br>
+上游项目：`dokploy/dokploy`  
+官方文档：`https://docs.dokploy.com`
 
-</div>
+## 语言 / Languages
 
+多语言 README 位于 `docs/readmes/`：
 
-Dokploy 是一款免费、可自托管的 PaaS（平台即服务），用于简化应用和数据库的部署与管理。本仓库基于官方 Dokploy，增加了多语言界面（i18n）支持。
+- 简体中文: `docs/readmes/README-zh-Hans.md`
+- 繁体中文: `docs/readmes/README-zh-Hant.md`
+- English: `docs/readmes/README-en.md`
+- 其他语言: 见 `docs/readmes/`
 
-## 🌐 选择语言 / Choose Language / 言語を選択 / 선택 언어
+## 快速开始（Linux 一键安装）
 
-多语言 README 已收纳至 `docs/readmes/`，请选择您的语言：
+要求：
 
-This project provides multi-language README documents. Please select your language from `docs/readmes/`:
+- root 权限
+- 端口 `80/443/3000` 空闲
+- 安装方式基于 Docker Swarm
 
-このプロジェクトは多言語 README ドキュメントを提供します。`docs/readmes/` から言語を選択してください：
-
-- [简体中文 (Simplified Chinese)](docs/readmes/README-zh-Hans.md)
-- [繁體中文 (Traditional Chinese)](docs/readmes/README-zh-Hant.md)
-- [English](docs/readmes/README-en.md)
-- [Español (Spanish)](docs/readmes/README-es.md)
-- [Deutsch (German)](docs/readmes/README-de.md)
-- [Français (French)](docs/readmes/README-fr.md)
-- [Italiano (Italian)](docs/readmes/README-it.md)
-- [日本語 (Japanese)](docs/readmes/README-ja.md)
-- [한국어 (Korean)](docs/readmes/README-ko.md)
-- [Русский (Russian)](docs/readmes/README-ru.md)
-- [Türkçe (Turkish)](docs/readmes/README-tr.md)
-- [Português (Brasil)](docs/readmes/README-pt-br.md)
-- [Nederlands (Dutch)](docs/readmes/README-nl.md)
-- [Norsk (Norwegian)](docs/readmes/README-no.md)
-- [Polski (Polish)](docs/readmes/README-pl.md)
-- [Українська (Ukrainian)](docs/readmes/README-uk.md)
-- [فارسی (Persian/Farsi)](docs/readmes/README-fa.md)
-- [Bahasa Indonesia](docs/readmes/README-id.md)
-- [Қазақша (Kazakh)](docs/readmes/README-kz.md)
-- [Azərbaycanca (Azerbaijani)](docs/readmes/README-az.md)
-- [മലയാളം (Malayalam)](docs/readmes/README-ml.md)
-
----
-
-以下是简体中文版本的快速预览：
-
-
-
-## ✨ 功能特性
-
-Dokploy 提供了一系列能力，帮助你在自己的服务器上更轻松地管理应用和数据库：
-
-- **应用部署**：支持 Node.js、PHP、Python、Go、Ruby 等多种语言和运行时。
-- **数据库管理**：内置 MySQL、PostgreSQL、MongoDB、MariaDB、Redis 等数据库的创建与管理。
-- **备份**：为数据库配置自动备份到外部存储。
-- **Docker Compose**：原生支持 Docker Compose，适合复杂多服务应用。
-- **多节点集群**：基于 Docker Swarm 管理集群，实现多节点扩缩容。
-- **模板市场**：一键部署开源应用（Plausible、Pocketbase、Cal.com 等）。
-- **Traefik 集成**：自动路由与负载均衡，对接 Traefik。
-- **实时监控**：监控 CPU、内存、磁盘、网络等资源使用情况。
-- **Docker 管理**：方便地部署和管理容器。
-- **CLI / API**：通过命令行或 API 管理资源。
-- **多服务器管理**：统一管理远程服务器上的部署。
-- **自托管**：在你的 VPS / 物理机上完全自托管运行。
-
-## 🚀 快速开始 / Quick Start
-
-在一台全新的 Linux 服务器上运行以下命令即可安装 Dokploy：
-
-Run the following command on a fresh Linux server to install Dokploy:
+通用环境：
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh | bash
 ```
 
-上面的脚本会自动拉取镜像：
+数据落盘到 `/data`（更方便备份与迁移）：
 
-- 面板主服务：`a3180623/dokploy-i18n:<版本号>`
+```bash
+curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data.sh | bash
+```
 
-> 注意：AI 记忆/向量检索依赖 PostgreSQL 的 pgvector 扩展。新安装会默认使用 `pgvector/pgvector:pg16` 作为 `dokploy-postgres` 镜像；如果你是旧版本升级且当前 `dokploy-postgres` 仍是 `postgres:16`，请先执行：
->
-> ```bash
-> docker service update --force --image pgvector/pgvector:pg16 dokploy-postgres
-> docker service update --force dokploy
-> ```
+国内网络环境（配置 Docker registry mirrors，加速拉取镜像）：
 
-如需使用官方 Dokploy Cloud，请访问：[Dokploy Cloud](https://app.dokploy.com)。  
-更多使用文档可参考官方文档：[docs.dokploy.com](https://docs.dokploy.com)。
+```bash
+curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-china.sh | bash
+```
 
-## 🌐 语言支持 / Language Support
+国内网络环境 + 数据落盘到 `/data`（推荐给国内服务器）：
 
-当前版本内置多语言界面（i18n），支持以下语言：
+```bash
+curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data-china.sh | bash
+```
 
-The current version comes with a built-in multi-language interface (i18n) and supports the following languages:
+说明：
 
-- 简体中文（zh-Hans）| 繁體中文（zh-Hant）| English（en）| Deutsch（de）| Español（es）
-- Français（fr）| Italiano（it）| 日本語（ja）| 한국어（ko）| Русский（ru）
-- Türkçe（tr）| Nederlands（nl）| Norsk（no）| Português (Brasil)（pt-br）| فارسی‎ (Farsi)（fa）
-- Bahasa Indonesia（id）| Українська（uk）| Қазақша（kz）| Azərbaycanca（az）| മലയാളം（ml）| Polski（pl）
+- `install-china.sh`: 仅配置 Docker registry mirrors（国内网络加速拉取镜像）
+- `install-data*.sh`: 将 Dokploy 持久化数据与 Docker data-root 迁移到 `/data`（可用 `DOKPLOY_DATA_DIR` / `DOCKER_DATA_ROOT` 调整）
+- `install-data-china.sh`: 同时配置 registry mirrors；若本机 Docker 已存在状态，脚本会拒绝自动迁移 data-root（可设置 `FORCE_DOCKER_DATA_ROOT_CHANGE=1` 强制，但有风险）
 
-你可以从 Dokploy 仪表板的左下角切换语言。
+可选：指定版本（例如 `canary` / `feature` / `latest`）：
 
-You can switch the language from the bottom-left corner of the Dokploy dashboard.
+```bash
+DOKPLOY_VERSION=canary bash install.sh
+```
 
-## ♥️ Sponsors
+安装后访问：`http://<your-server-ip>:3000`
 
-🙏 We're deeply grateful to all our sponsors who make Dokploy possible! Your support helps cover the costs of hosting, testing, and developing new features.
+## 国内网络环境加速配置（可选）
 
-[Dokploy Open Collective](https://opencollective.com/dokploy)
+### 更新检查地址（tags URL）
 
-[Github Sponsors](https://github.com/sponsors/Siumauricio)
+Dokploy 会通过镜像 tags 列表 API 判断是否有新版本。默认请求 Docker Hub：
 
-<!-- Hero Sponsors 🎖 -->
+```text
+https://hub.docker.com/v2/repositories/a3180623/dokploy-i18n/tags
+```
 
-<!-- Add Hero Sponsors here -->
+在国内若 Docker Hub 访问不稳定，可在 Web UI 配置一个可访问的镜像地址：
 
-### Hero Sponsors 🎖
+- `Dashboard -> Settings -> Server -> Web Server -> Update -> Update Source`
 
-<div>
-  <a href="https://www.hostinger.com/vps-hosting?ref=dokploy"><img src=".github/sponsors/hostinger.jpg" alt="Hostinger" width="300"/></a>
-  <a href="https://www.lxaer.com/?ref=dokploy"><img src=".github/sponsors/lxaer.png" alt="LX Aer" width="100"/></a>
-        <a href="https://www.lambdatest.com/?utm_source=dokploy&utm_medium=sponsor" target="_blank">
-            <img src="https://www.lambdatest.com/blue-logo.png"  width="450" height="100" />
-        </a>
+要求：
 
-</div>
+- 该 URL 需兼容 Docker Hub tags API 返回结构，至少包含 `results: [{ name, digest }]` 与 `next`（分页）。
+- 若镜像返回的 `next` 仍指向 Docker Hub，Dokploy 会尽量将其 origin 重写为你设置的 `tags URL`，以便继续从镜像分页拉取。
 
-<!-- Premium Supporters 🥇 -->
+相关环境变量：
 
-<!-- Add Premium Supporters here -->
+- `DOKPLOY_UPDATE_FETCH_TIMEOUT_MS`: 更新检查请求超时（默认 `8000`，单位毫秒）
+- `RELEASE_TAG`: 当前运行的 tag（默认 `latest`）。如果你固定运行某个版本（例如 `v0.27.0-i18n`），建议同步设置该环境变量，否则更新判断会按 `latest` 逻辑计算。
 
-### Premium Supporters 🥇
+### GitHub 克隆加速（Mirror Prefix / API Proxy）
 
-<div>
-  <a href="https://supafort.com/?ref=dokploy"><img src="https://supafort.com/build/q-4Ht4rBZR.webp" alt="Supafort.com" width="300"/></a>
-  <a href="https://agentdock.ai/?ref=dokploy"><img src=".github/sponsors/agentdock.png" alt="agentdock.ai" width="100"/></a>
-</div>
+当服务器无法稳定访问 GitHub 时，可在 GitHub Provider 中配置（用于 `git clone` 与 GitHub API）：
 
-<!-- Elite Contributors 🥈 -->
+- `Dashboard -> Settings -> Git Providers -> GitHub -> Edit`
 
-<!-- Add Elite Contributors here -->
+字段说明：
 
-### Elite Contributors 🥈
+- `Mirror Prefix URL (Git Clone)`: 给 clone URL 增加前缀，例如配置为 `https://ghproxy.com/`，实际 clone 会变为 `https://ghproxy.com/https://github.com/<owner>/<repo>.git`。
+- `GitHub API Proxy URL`: GitHub API 代理地址，同时也会注入到 clone 流程的 `http_proxy/https_proxy`（示例：`http://127.0.0.1:7890`）。
+- `Allow forwarding GitHub auth through Mirror Prefix`: 把 GitHub App installation token 通过请求头带给镜像前缀。仅对可信/自建镜像开启（否则存在泄露风险）。未开启时，镜像 clone 默认不携带 token，私有仓库可能无法克隆。
 
-<div>
-  <a href="https://americancloud.com/?ref=dokploy"><img src=".github/sponsors/american-cloud.png" alt="AmericanCloud" width="300"/></a>
-  <a href="https://tolgee.io/?utm_source=github_dokploy&utm_medium=banner&utm_campaign=dokploy"><img src="https://dokploy.com/tolgee-logo.png" alt="Tolgee" width="100"/></a>
-</div>
+## AI 助手面板（重点）
 
-### Supporting Members 🥉
+入口：
 
-<div>
+- 登录 Dokploy Dashboard
+- 点击右下角机器人按钮打开 AI 面板
 
-  <a href="https://cloudblast.io/?ref=dokploy"><img src="https://cloudblast.io/img/logo-icon.193cf13e.svg" width="250px" alt="Cloudblast.io"/></a>
+启用（必须先配置 Provider）：
 
-  <a href="https://synexa.ai/?ref=dokploy"><img src=".github/sponsors/synexa.png" width="65px" alt="Synexa"/></a>
-</div>
+- 进入 `Dashboard -> Settings -> AI`（路径：`/dashboard/settings/ai`）
+- 新增一个 AI Provider（支持 OpenAI / OpenAI-compatible / Anthropic / Gemini / Ollama 等，取决于你的配置与可用性）
 
-### Community Backers 🤝
+能力概览：
 
-#### Organizations:
+- Chat / Agent 两种模式
+- 工具调用审批：发送按钮会变为 Stop，可中断流式输出并尽量取消后端 run
+- MCP Servers：AI 面板内可直接管理 MCP Server，并在对话中被调用
 
-[Sponsors on Open Collective](https://opencollective.com/dokploy)
+### AI 依赖：pgvector（重要）
 
-#### Individuals:
+若要启用/使用 Embedding、向量检索等能力，PostgreSQL 需要支持 `pgvector`。
 
-[![Individual Contributors on Open Collective](https://opencollective.com/dokploy/individuals.svg?width=890)](https://opencollective.com/dokploy)
+如果你已部署过，并且 `dokploy-postgres` 仍为 `postgres:16`，可以升级为 `pgvector/pgvector:pg16`：
 
-### Contributors 🤝
+```bash
+docker service update --force --image pgvector/pgvector:pg16 dokploy-postgres
+docker service update --force dokploy
+```
 
-<a href="https://github.com/dokploy/dokploy/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=dokploy/dokploy" alt="Contributors" />
-</a>
+## 许可证 / License
 
-## 📺 Video Tutorial
+本仓库基于上游 Dokploy（Apache-2.0）。具体以 `LICENSE.MD` 为准。
 
-<a href="https://youtu.be/mznYKPvhcfw">
-  <img src="https://dokploy.com/banner.png" alt="Watch the video" width="400"/>
-</a>
+## Contributing
 
-## 🤝 Contributing
-
-Check out the [Contributing Guide](CONTRIBUTING.md) for more information.
+见 `CONTRIBUTING.md`。

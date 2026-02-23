@@ -42,10 +42,12 @@ yarn-error.log*
 .DS_Store
 *.pem
 
-.tmp/
-
-
 .db
-.windsurf/rules/1.md
-.windsurf/rules/1.md
+.windsurf/
+.claude/
 .codex_gemini
+.tmp/
+issues/
+test-relace/
+PLAN.md
+*.patch
