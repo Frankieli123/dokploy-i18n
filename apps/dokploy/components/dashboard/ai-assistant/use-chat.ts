@@ -327,6 +327,14 @@ export function mergeServerAndPendingMessages(
 	return merged
 		.map((message, index) => ({ message, index }))
 		.sort((left, right) => {
+			const leftIsSending = left.message.status === "sending";
+			const rightIsSending = right.message.status === "sending";
+			if (leftIsSending !== rightIsSending) {
+				// Keep in-flight messages at the bottom so the latest turn doesn't appear above
+				// its triggering user message due to clock skew / server-side createdAt ordering.
+				return leftIsSending ? 1 : -1;
+			}
+
 			const leftTime = Date.parse(left.message.createdAt ?? "");
 			const rightTime = Date.parse(right.message.createdAt ?? "");
 			if (
