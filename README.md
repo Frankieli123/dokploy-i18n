@@ -21,6 +21,7 @@
 
 - **多语言界面（i18n）** — 支持 20+ 种语言
 - **内置 AI 助手面板** — Chat / Agent、工具调用审批、MCP Server
+- **卷备份（Volume Backups）** — 定时备份 Docker 卷/绑定挂载到外部存储，支持恢复
 
 > 官方文档：[docs.dokploy.com](https://docs.dokploy.com)
 
@@ -40,6 +41,7 @@
 ## 目录
 
 - [快速开始](#快速开始)
+- [卷备份](#卷备份)
 - [国内网络加速配置](#国内网络加速配置)
 - [AI 助手面板](#ai-助手面板)
 - [许可证](#许可证)
@@ -71,6 +73,19 @@ DOKPLOY_VERSION=canary bash install.sh
 </details>
 
 安装后访问：`http://<your-server-ip>:3000`
+
+## 卷备份
+
+官方 Dokploy 仅支持数据库备份。本 fork 新增 **卷备份（Volume Backups）**，可对应用、Compose、数据库等任意服务的 Docker 卷和绑定挂载进行定时备份与恢复。
+
+**入口**：进入任意应用/服务详情页 → `卷备份` 标签页
+
+**能力**：
+- 按 Cron 表达式定时自动备份到 S3 等外部存储
+- 支持 Docker Named Volume、绑定挂载（Bind Mount）、一键备份全部挂载
+- 可配置保留最近 N 份备份，自动清理旧备份
+- 备份前可选停止容器以保证数据一致性
+- 支持从备份恢复
 
 ## 国内网络加速配置
 

@@ -1,172 +1,100 @@
 <div align="center">
   <a href="https://dokploy.com">
-    <img src=".github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%"  />
+    <img src="../../.github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%" />
   </a>
-  </br>
-  </br>
+  <br />
+  <br />
+
+  [![License](https://img.shields.io/github/license/Frankieli123/dokploy-i18n?style=flat-square)](../../LICENSE.MD)
+  [![Stars](https://img.shields.io/github/stars/Frankieli123/dokploy-i18n?style=flat-square)](https://github.com/Frankieli123/dokploy-i18n/stargazers)
+  [![Docker Pulls](https://img.shields.io/docker/pulls/a3180623/dokploy-i18n?style=flat-square)](https://hub.docker.com/r/a3180623/dokploy-i18n)
+
   <p>സഹായം, ഫീഡ്ബാക്ക്, ചർച്ചകൾ എന്നിവയ്ക്കായി ഞങ്ങളുടെ Discord-ൽ ചേരൂ!</p>
   <a href="https://discord.gg/2tBnJ3jDJc">
-    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield"/>
+    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield" />
   </a>
 </div>
-<br />
 
+# Dokploy i18n
 
-<div align="center" markdown="1">
-   <sup>പ്രത്യേക നന്ദി:</sup>
-   <br>
-   <br>
-   <a href="https://tuple.app/dokploy">
-     <img src=".github/sponsors/tuple.png" alt="Tuple's sponsorship image" width="400"/>
-   </a>
+ഔദ്യോഗിക [Dokploy](https://github.com/Dokploy/dokploy) അടിസ്ഥാനമാക്കിയുള്ള കമ്മ്യൂണിറ്റി മെച്ചപ്പെടുത്തിയ പതിപ്പ്:
 
-### [Tuple, ഡെവലപ്പർമാര്‍ക്കുള്ള മുൻ‌നിര സ്‌ക്രീൻ ഷെയറിംഗ് ആപ്ലിക്കേഷൻ](https://tuple.app/dokploy)
-[MacOS, Windows എന്നിവയ്‌ക്കായി ലഭ്യമാണ്](https://tuple.app/dokploy)<br>
+- **i18n** — 20+ ഭാഷകളുടെ പിന്തുണ
+- **AI അസിസ്റ്റന്റ് പാനൽ** — Chat / Agent, ടൂൾ കോൾ അംഗീകാരം, MCP Server
+- **വോളിയം ബാക്കപ്പുകൾ** — Docker വോളിയം/bind mount ബാക്കപ്പുകൾ ബാഹ്യ സ്റ്റോറേജിലേക്ക് ഷെഡ്യൂൾ ചെയ്യൽ, റിസ്റ്റോർ ചെയ്യലും
 
-</div>
+> ഔദ്യോഗിക ഡോക്യുമെന്റേഷൻ: [docs.dokploy.com](https://docs.dokploy.com)
 
+---
 
-Dokploy എന്നത് ആപ്ലിക്കേഷനുകളുടെയും ഡാറ്റാബേസുകളുടെയും ഡിപ്ലോയ്‌മെന്റും മാനേജ്‌മെന്റും ലളിതമാക്കുന്നതിനായി രൂപകല്പന ചെയ്തിട്ടുള്ള സൗജന്യ, സ്വയം-ഹോസ്റ്റ് ചെയ്ത PaaS (പ്ലാറ്റ്‌ഫോം ആസ് എ സർവീസ്) ആണ്. ഈ റെപ്പോസിറ്ററി ഔദ്യോഗിക Dokploy-യെ അടിസ്ഥാനമാക്കിയുള്ളതാണ്, മൾട്ടി-ലാംഗ്വേജ് ഇന്റർഫേസ് (i18n) പിന്തുണ ചേർത്തു.
+**ഭാഷകൾ**:&ensp;
+[简体中文](README-zh-Hans.md) |
+[繁體中文](README-zh-Hant.md) |
+[English](README-en.md) |
+[日本語](README-ja.md) |
+[한국어](README-ko.md) |
+[Русский](README-ru.md) |
+[കൂടുതൽ...](./)
 
-## ✨ സവിശേഷതകൾ
+---
 
-നിങ്ങളുടെ സ്വന്തം സെർവറുകളിൽ ആപ്ലിക്കേഷനുകളും ഡാറ്റാബേസുകളും എളുപ്പത്തിൽ മാനേജ് ചെയ്യാൻ നിങ്ങളെ സഹായിക്കുന്നതിന് Dokploy സമഗ്രമായ കഴിവുകളുടെ ഒരു കൂട്ടം നൽകുന്നു:
+## ഉള്ളടക്ക പട്ടിക
 
-- **ആപ്ലിക്കേഷൻ ഡിപ്ലോയ്‌മെന്റ്**: Node.js, PHP, Python, Go, Ruby തുടങ്ങിയവ ഉൾപ്പെടെ നിരവധി ഭാഷകളും റൺടൈം പരിതസ്ഥിതികളും പിന്തുണയ്ക്കുന്നു.
-- **ഡാറ്റാബേസ് മാനേജ്‌മെന്റ്**: MySQL, PostgreSQL, MongoDB, MariaDB, Redis തുടങ്ങിയവ ഉൾപ്പെടെ ഡാറ്റാബേസുകളുടെ ആന്തരിക സൃഷ്ടിയും മാനേജ്‌മെന്റും.
-- **ബാക്കപ്പ്**: ഡാറ്റാബേസുകൾക്കായി ബാഹ്യ സംഭരണത്തിലേക്ക് ഓട്ടോമാറ്റിക് ബാക്കപ്പുകൾ കonfigച്ചറുക.
-- **Docker Compose**: സങ്കീർണ്ണമായ മൾട്ടി-സർവീസ് ആപ്ലിക്കേഷനുകൾക്ക് അനുയോജ്യമായ Docker Compose-ന് നേറ്റീവ് പിന്തുണ.
-- **മൾട്ടി-നോഡ് ക്ലസ്റ്ററിംഗ്**: Docker Swarm അടിസ്ഥാനമാക്കിയുള്ള ക്ലസ്റ്റർ മാനേജ്‌മെന്റ്, മൾട്ടി-നോഡ് സ്കെയിലിംഗ് സാധ്യമാക്കുന്നു.
-- **ടെംപ്ലേറ്റ് മാർക്കെറ്റ്**: ഓപ്പൺ സോഴ്‌സ് ആപ്ലിക്കേഷനുകളുടെ (Plausible, Pocketbase, Cal.com മുതലായവ) ഒരു ക്ലിക്ക് ഡിപ്ലോയ്‌മെന്റ്.
-- **Traefik ഇന്റഗ്രേഷൻ**: ഓട്ടോമാറ്റിക് റൗട്ടിംഗും ലോഡ് ബാലൻസിംഗും, Traefik-ുമായി സംയോജിപ്പിച്ചു.
-- **റിയൽ-ടൈം മോണിറ്ററിംഗ്**: CPU, മെമ്മറി, ഡിസ്ക്, നെറ്റ്‌വർക്ക്, മറ്റ് റിസോഴ്‌സുകളുടെ ഉപയോഗം നിരീക്ഷിക്കുക.
-- **Docker മാനേജ്‌മെന്റ്**: കontainersകൾ എളുപ്പത്തിൽ ഡിപ്ലോയ് ചെയ്യുകയും മാനേജ് ചെയ്യുകയും ചെയ്യുക.
-- **CLI / API**: കമാൻഡ് ലൈനിലൂടെയോ API വഴിയോ റിസോഴ്‌സുകൾ മാനേജ് ചെയ്യുക.
-- **മൾട്ടി-സെർവർ മാനേജ്‌മെന്റ്**: വിദൂര സെർവറുകളിലെ ഡിപ്ലോയ്‌മെന്റുകളുടെ ഏകീകൃത മാനേജ്‌മെന്റ്.
-- **സ്വയം-ഹോസ്റ്റ്**: നിങ്ങളുടെ VPS അല്ലെങ്കിൽ ഫിസിക്കൽ മെഷീനിൽ പൂർണ്ണമായും സ്വയം-ഹോസ്റ്റ്.
+- [വേഗത്തിൽ ആരംഭിക്കുക](#വേഗത്തിൽ-ആരംഭിക്കുക)
+- [വോളിയം ബാക്കപ്പുകൾ](#വോളിയം-ബാക്കപ്പുകൾ)
+- [AI അസിസ്റ്റന്റ് പാനൽ](#ai-അസിസ്റ്റന്റ്-പാനൽ)
+- [ലൈസൻസ്](#ലൈസൻസ്)
 
-## 🚀 വേഗത്തിൽ ആരംഭിക്കുക
+## വേഗത്തിൽ ആരംഭിക്കുക
 
-Dokploy ഇൻസ്റ്റാൾ ചെയ്യുന്നതിന് ഒരു പുതിയ Linux സെർവറിൽ ഇനിപ്പറയുന്ന കമാൻഡ് പ്രവർത്തിപ്പിക്കുക:
+> ആവശ്യകതകൾ: root അനുമതികൾ, 80/443/3000 പോർട്ടുകൾ ഒഴിഞ്ഞിരിക്കണം, Docker Swarm
+
+| സാഹചര്യം | കമാൻഡ് |
+|------|------|
+| **സ്റ്റാൻഡേർഡ്** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh \| bash` |
+| **ഡാറ്റ /data-ൽ** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data.sh \| bash` |
+| **ചൈന നെറ്റ്വർക്ക്** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-china.sh \| bash` |
+| **ചൈന + /data** (ശുപാർശ ചെയ്യുന്നു) | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data-china.sh \| bash` |
+
+ഇൻസ്റ്റാൾ ചെയ്ത ശേഷം സന്ദർശിക്കുക: `http://<your-server-ip>:3000`
+
+## വോളിയം ബാക്കപ്പുകൾ
+
+ഔദ്യോഗിക Dokploy ഡാറ്റാബേസ് ബാക്കപ്പുകൾ മാത്രമേ പിന്തുണയ്ക്കുന്നുള്ളൂ. ഈ fork ഏതൊരു സേവനത്തിനും (ആപ്ലിക്കേഷനുകൾ, Compose, ഡാറ്റാബേസുകൾ) Docker വോളിയങ്ങളുടെയും bind mount-കളുടെയും ഷെഡ്യൂൾ ചെയ്ത ബാക്കപ്പും റിസ്റ്റോറും പ്രാപ്തമാക്കുന്ന **വോളിയം ബാക്കപ്പുകൾ** ചേർക്കുന്നു.
+
+**പ്രവേശനം**: ഏതെങ്കിലും ആപ്പ്/സേവന വിശദാംശ പേജിലേക്ക് പോകുക -> `വോളിയം ബാക്കപ്പുകൾ` ടാബ്
+
+**കഴിവുകൾ**:
+- Cron വഴി S3 തുടങ്ങിയവയിലേക്ക് ഷെഡ്യൂൾ ചെയ്ത ഓട്ടോ ബാക്കപ്പ്
+- Docker Named Volumes, Bind Mounts പിന്തുണ, എല്ലാ mount-കളും ഒരുമിച്ച് ബാക്കപ്പ് ചെയ്യൽ
+- അവസാന N ബാക്കപ്പുകൾ സൂക്ഷിക്കുക, പഴയവ ഓട്ടോമാറ്റിക്കായി വൃത്തിയാക്കൽ
+- ഡാറ്റ കൺസിസ്റ്റൻസിക്കായി ബാക്കപ്പിന് മുമ്പ് കണ്ടെയ്നർ നിർത്താനുള്ള ഓപ്ഷൻ
+- ബാക്കപ്പുകളിൽ നിന്ന് റിസ്റ്റോർ ചെയ്യൽ
+
+## AI അസിസ്റ്റന്റ് പാനൽ
+
+**പ്രവേശനം**: ഡാഷ്‌ബോർഡിലേക്ക് ലോഗിൻ ചെയ്യുക -> താഴെ വലത് കോണിലെ ബോട്ട് ബട്ടൺ ക്ലിക്ക് ചെയ്യുക
+
+**പ്രവർത്തനക്ഷമമാക്കുക**: `ഡാഷ്‌ബോർഡ് -> ക്രമീകരണങ്ങൾ -> AI` (`/dashboard/settings/ai`) -> AI പ്രൊവൈഡർ ചേർക്കുക (OpenAI / Anthropic / Gemini / Ollama തുടങ്ങിയവ)
+
+**കഴിവുകൾ**:
+- Chat / Agent രണ്ട് മോഡുകൾ
+- ടൂൾ കോൾ അംഗീകാരം: സ്ട്രീമിംഗ് തടസ്സപ്പെടുത്തി ബാക്കെൻഡ് റൺ റദ്ദാക്കാൻ കഴിയും
+- MCP സെർവറുകൾ: പാനലിൽ മാനേജ് ചെയ്യുക, സംഭാഷണങ്ങളിൽ വിളിക്കാവുന്നത്
+
+### pgvector ആശ്രിതത്വം
+
+Embedding/വെക്റ്റർ സെർച്ച് പ്രവർത്തനക്ഷമമാക്കാൻ PostgreSQL-ന് pgvector ആവശ്യമാണ്. dokploy-postgres ഇപ്പോഴും postgres:16 ആണെങ്കിൽ, അപ്ഗ്രേഡ് ചെയ്യുക:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh | bash
+docker service update --force --image pgvector/pgvector:pg16 dokploy-postgres
+docker service update --force dokploy
 ```
 
-മുകളിലെ സ്ക്രിപ്റ്റ് യാന്ത്രികമായി ഇമേജുകൾ പുറത്തെടുക്കും:
+## ലൈസൻസ്
 
-- പ്രധാന പാനൽ സേവനം: `a3180623/dokploy-i18n:<പതിപ്പ്>`
+Dokploy upstream (Apache-2.0) അടിസ്ഥാനമാക്കി, കാണുക [LICENSE.MD](../../LICENSE.MD).
 
-ഔദ്യോഗിക Dokploy Cloud ഉപയോഗിക്കുന്നതിന്, സന്ദർശിക്കുക: [Dokploy Cloud](https://app.dokploy.com).  
-കൂടുതൽ ഡോക്യുമെന്റേഷനായി, ഔദ്യോഗിക ഡോക്യുമെന്റേഷനെ കാണുക: [docs.dokploy.com](https://docs.dokploy.com).
+## സംഭാവന
 
-## 🌐 ഭാഷാ പിന്തുണ
-
-നിലവിലെ പതിപ്പ് ആന്തരിക മൾട്ടി-ലാംഗ്വേജ് ഇന്റർഫേസ് (i18n) ഉപയോഗിച്ച് വരുന്നു, ഇനിപ്പറയുന്ന ഭാഷകൾ പിന്തുണയ്ക്കുന്നു:
-
-- 简体中文 (zh-Hans)
-- 繁體中文 (zh-Hant)
-- English (en)
-- Deutsch (de) 
-- Español (es)
-- Français (fr)
-- Italiano (it)
-- 日本語 (ja)
-- 한국어 (ko)
-- Русский (ru)
-- Türkçe (tr)
-- Nederlands (nl)
-- Norsk (no)
-- Português (Brasil) (pt-br)
-- فارسی (Farsi) (fa)
-- Bahasa Indonesia (id)
-- Українська (uk)
-- Қазақша (kz)
-- Azərbaycanca (az)
-- മലയാളം (ml)
-- Polski (pl)
-
-Dokploy ഡാഷ്‌ബോർഡിന്റെ താഴെയുള്ള ഇടത് മൂലയിൽ നിന്ന് നിങ്ങൾക്ക് ഭാഷ മാറ്റാം.
-
-## ♥️ സ്പോൺസർമാർ
-
-🙏 Dokploy സാധ്യമാക്കുന്ന എല്ലാ സ്പോൺസർമാർക്കും ഞങ്ങൾ ആഴത്തിൽ കടപ്പെട്ടിരിക്കുന്നു! നിങ്ങളുടെ പിന്തുണ ഹോസ്റ്റിംഗ്, ടെസ്റ്റിംഗ്, പുതിയ സവിശേഷതകളുടെ വികസനം എന്നിവയുടെ ചിലവ് പരിഹരിക്കാൻ സഹായിക്കുന്നു.
-
-[Dokploy Open Collective](https://opencollective.com/dokploy)
-
-[Github Sponsors](https://github.com/sponsors/Siumauricio)
-
-<!-- Hero Sponsors 🎖 -->
-
-<!-- Add Hero Sponsors here -->
-
-### Hero Sponsors 🎖
-
-<div>
-  <a href="https://www.hostinger.com/vps-hosting?ref=dokploy"><img src=".github/sponsors/hostinger.jpg" alt="Hostinger" width="300"/></a>
-  <a href="https://www.lxaer.com/?ref=dokploy"><img src=".github/sponsors/lxaer.png" alt="LX Aer" width="100"/></a>
-        <a href="https://www.lambdatest.com/?utm_source=dokploy&utm_medium=sponsor" target="_blank">
-            <img src="https://www.lambdatest.com/blue-logo.png"  width="450" height="100" />
-        </a>
-
-</div>
-
-<!-- Premium Supporters 🥇 -->
-
-<!-- Add Premium Supporters here -->
-
-### Premium Supporters 🥇
-
-<div>
-  <a href="https://supafort.com/?ref=dokploy"><img src="https://supafort.com/build/q-4Ht4rBZR.webp" alt="Supafort.com" width="300"/></a>
-  <a href="https://agentdock.ai/?ref=dokploy"><img src=".github/sponsors/agentdock.png" alt="agentdock.ai" width="100"/></a>
-</div>
-
-<!-- Elite Contributors 🥈 -->
-
-<!-- Add Elite Contributors here -->
-
-### Elite Contributors 🥈
-
-<div>
-  <a href="https://americancloud.com/?ref=dokploy"><img src=".github/sponsors/american-cloud.png" alt="AmericanCloud" width="300"/></a>
-  <a href="https://tolgee.io/?utm_source=github_dokploy&utm_medium=banner&utm_campaign=dokploy"><img src="https://dokploy.com/tolgee-logo.png" alt="Tolgee" width="100"/></a>
-</div>
-
-### Supporting Members 🥉
-
-<div>
-
-  <a href="https://cloudblast.io/?ref=dokploy"><img src="https://cloudblast.io/img/logo-icon.193cf13e.svg" width="250px" alt="Cloudblast.io"/></a>
-
-  <a href="https://synexa.ai/?ref=dokploy"><img src=".github/sponsors/synexa.png" width="65px" alt="Synexa"/></a>
-</div>
-
-### Community Backers 🤝
-
-#### Organizations:
-
-[Sponsors on Open Collective](https://opencollective.com/dokploy)
-
-#### Individuals:
-
-[![Individual Contributors on Open Collective](https://opencollective.com/dokploy/individuals.svg?width=890)](https://opencollective.com/dokploy)
-
-### Contributors 🤝
-
-<a href="https://github.com/dokploy/dokploy/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=dokploy/dokploy" alt="Contributors" />
-</a>
-
-## 📺 വീഡിയോ ട്യൂട്ടോറിയൽ
-
-<a href="https://youtu.be/mznYKPvhcfw">
-  <img src="https://dokploy.com/banner.png" alt="Watch the video" width="400"/>
-</a>
-
-## 🤝 സംഭാവന
-
-കൂടുതൽ വിവരങ്ങൾക്ക് [സംഭാവന ഗൈഡ്](CONTRIBUTING.md) പരിശോധിക്കുക.
-
-
-
+കാണുക [CONTRIBUTING.md](../../CONTRIBUTING.md).

@@ -1,172 +1,100 @@
 <div align="center">
   <a href="https://dokploy.com">
-    <img src=".github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%"  />
+    <img src="../../.github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%" />
   </a>
-  </br>
-  </br>
+  <br />
+  <br />
+
+  [![License](https://img.shields.io/github/license/Frankieli123/dokploy-i18n?style=flat-square)](../../LICENSE.MD)
+  [![Stars](https://img.shields.io/github/stars/Frankieli123/dokploy-i18n?style=flat-square)](https://github.com/Frankieli123/dokploy-i18n/stargazers)
+  [![Docker Pulls](https://img.shields.io/docker/pulls/a3180623/dokploy-i18n?style=flat-square)](https://hub.docker.com/r/a3180623/dokploy-i18n)
+
   <p>Присоединяйтесь к нашему Discord для помощи, отзывов и обсуждений!</p>
   <a href="https://discord.gg/2tBnJ3jDJc">
-    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield"/>
+    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield" />
   </a>
 </div>
-<br />
 
+# Dokploy i18n
 
-<div align="center" markdown="1">
-   <sup>Особая благодарность:</sup>
-   <br>
-   <br>
-   <a href="https://tuple.app/dokploy">
-     <img src=".github/sponsors/tuple.png" alt="Tuple's sponsorship image" width="400"/>
-   </a>
+Улучшенная версия от сообщества на основе официального [Dokploy](https://github.com/Dokploy/dokploy), с:
 
-### [Tuple, ведущее приложение для совместного использования экрана для разработчиков](https://tuple.app/dokploy)
-[Доступно для MacOS и Windows](https://tuple.app/dokploy)<br>
+- **i18n** — Поддержка 20+ языков
+- **Панель ИИ-ассистента** — Chat / Agent, одобрение вызова инструментов, MCP Server
+- **Резервные копии томов** — Планирование резервного копирования Docker томов/bind mount на внешнее хранилище с восстановлением
 
-</div>
+> Официальная документация: [docs.dokploy.com](https://docs.dokploy.com)
 
+---
 
-Dokploy — это бесплатная, саморазмещаемая PaaS (Платформа как Сервис), предназначенная для упрощения развертывания и управления приложениями и базами данных. Этот репозиторий основан на официальном Dokploy с добавленной поддержкой многоязычного интерфейса (i18n).
+**Языки**:&ensp;
+[简体中文](README-zh-Hans.md) |
+[繁體中文](README-zh-Hant.md) |
+[English](README-en.md) |
+[日本語](README-ja.md) |
+[한국어](README-ko.md) |
+[Русский](README-ru.md) |
+[Ещё...](./)
 
-## ✨ Возможности
+---
 
-Dokploy предоставляет комплексный набор возможностей, который поможет вам легче управлять приложениями и базами данных на ваших собственных серверах:
+## Содержание
 
-- **Развертывание приложений**: Поддерживает множество языков и сред выполнения, включая Node.js, PHP, Python, Go, Ruby и другие.
-- **Управление базами данных**: Встроенное создание и управление базами данных, включая MySQL, PostgreSQL, MongoDB, MariaDB, Redis и другие.
-- **Резервное копирование**: Настройка автоматического резервного копирования во внешнее хранилище для баз данных.
-- **Docker Compose**: Нативная поддержка Docker Compose, идеально подходит для сложных многосервисных приложений.
-- **Кластер с несколькими узлами**: Управление кластерами на основе Docker Swarm, позволяющее масштабирование с несколькими узлами.
-- **Рынок шаблонов**: Развертывание с одним кликом приложений с открытым исходным кодом (Plausible, Pocketbase, Cal.com и др.).
-- **Интеграция Traefik**: Автоматическая маршрутизация и балансировка нагрузки, интегрированная с Traefik.
-- **Мониторинг в реальном времени**: Мониторинг использования CPU, памяти, диска, сети и других ресурсов.
-- **Управление Docker**: Легко развертывайте и управляйте контейнерами.
-- **CLI / API**: Управляйте ресурсами через командную строку или API.
-- **Управление несколькими серверами**: Единое управление развертываниями на удаленных серверах.
-- **Саморазмещаемое**: Полностью саморазмещаемое на вашем VPS или физической машине.
+- [Быстрый старт](#быстрый-старт)
+- [Резервные копии томов](#резервные-копии-томов)
+- [Панель ИИ-ассистента](#панель-ии-ассистента)
+- [Лицензия](#лицензия)
 
-## 🚀 Быстрый старт
+## Быстрый старт
 
-Выполните следующую команду на новом Linux-сервере для установки Dokploy:
+> Требования: права root, порты 80/443/3000 свободны, Docker Swarm
+
+| Сценарий | Команда |
+|------|------|
+| **Стандарт** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh \| bash` |
+| **Данные на /data** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data.sh \| bash` |
+| **Сеть Китая** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-china.sh \| bash` |
+| **Китай + /data** (Рекомендуется) | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data-china.sh \| bash` |
+
+После установки посетите: `http://<your-server-ip>:3000`
+
+## Резервные копии томов
+
+Официальный Dokploy поддерживает только резервное копирование баз данных. Этот fork добавляет **Резервные копии томов**, позволяя планировать резервное копирование и восстановление Docker томов и bind mount для любого сервиса (приложения, Compose, базы данных).
+
+**Вход**: Перейдите на страницу деталей любого приложения/сервиса -> вкладка `Резервные копии томов`
+
+**Возможности**:
+- Планируемое автосохранение на S3 и др. через cron
+- Поддержка Docker Named Volumes, Bind Mounts, резервное копирование всех томов сразу
+- Хранение последних N резервных копий, автоочистка старых
+- Опциональная остановка контейнера перед резервным копированием для согласованности данных
+- Восстановление из резервных копий
+
+## Панель ИИ-ассистента
+
+**Вход**: Войдите в Панель управления -> Нажмите кнопку бота в правом нижнем углу
+
+**Включить**: `Панель управления -> Настройки -> AI` (`/dashboard/settings/ai`) -> Добавить AI провайдера (OpenAI / Anthropic / Gemini / Ollama и др.)
+
+**Возможности**:
+- Chat / Agent два режима
+- Одобрение вызова инструментов: можно прервать поток и отменить выполнение на бэкенде
+- MCP Server: управление в панели, вызов в разговорах
+
+### Зависимость pgvector
+
+Для включения Embedding/векторного поиска PostgreSQL требуется pgvector. Если dokploy-postgres всё ещё postgres:16, обновите:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh | bash
+docker service update --force --image pgvector/pgvector:pg16 dokploy-postgres
+docker service update --force dokploy
 ```
 
-Скрипт выше автоматически загрузит образы:
+## Лицензия
 
-- Основная служба панели: `a3180623/dokploy-i18n:<версия>`
+Основано на Dokploy (Apache-2.0), см. [LICENSE.MD](../../LICENSE.MD).
 
-Для использования официального Dokploy Cloud посетите: [Dokploy Cloud](https://app.dokploy.com).  
-Для получения дополнительной документации обратитесь к официальной документации: [docs.dokploy.com](https://docs.dokploy.com).
+## Участие
 
-## 🌐 Поддержка языков
-
-Текущая версия поставляется со встроенным многоязычным интерфейсом (i18n) и поддерживает следующие языки:
-
-- 简体中文 (zh-Hans)
-- 繁體中文 (zh-Hant)
-- English (en)
-- Deutsch (de) 
-- Español (es)
-- Français (fr)
-- Italiano (it)
-- 日本語 (ja)
-- 한국어 (ko)
-- Русский (ru)
-- Türkçe (tr)
-- Nederlands (nl)
-- Norsk (no)
-- Português (Brasil) (pt-br)
-- فارسی (Farsi) (fa)
-- Bahasa Indonesia (id)
-- Українська (uk)
-- Қазақша (kz)
-- Azərbaycanca (az)
-- മലയാളം (ml)
-- Polski (pl)
-
-Вы можете изменить язык из левого нижнего угла панели Dokploy.
-
-## ♥️ Спонсоры
-
-🙏 Мы глубоко благодарны всем нашим спонсорам, которые делают Dokploy возможным! Ваша поддержка помогает покрыть расходы на хостинг, тестирование и разработку новых функций.
-
-[Dokploy Open Collective](https://opencollective.com/dokploy)
-
-[Github Sponsors](https://github.com/sponsors/Siumauricio)
-
-<!-- Hero Sponsors 🎖 -->
-
-<!-- Add Hero Sponsors here -->
-
-### Hero Sponsors 🎖
-
-<div>
-  <a href="https://www.hostinger.com/vps-hosting?ref=dokploy"><img src=".github/sponsors/hostinger.jpg" alt="Hostinger" width="300"/></a>
-  <a href="https://www.lxaer.com/?ref=dokploy"><img src=".github/sponsors/lxaer.png" alt="LX Aer" width="100"/></a>
-        <a href="https://www.lambdatest.com/?utm_source=dokploy&utm_medium=sponsor" target="_blank">
-            <img src="https://www.lambdatest.com/blue-logo.png"  width="450" height="100" />
-        </a>
-
-</div>
-
-<!-- Premium Supporters 🥇 -->
-
-<!-- Add Premium Supporters here -->
-
-### Premium Supporters 🥇
-
-<div>
-  <a href="https://supafort.com/?ref=dokploy"><img src="https://supafort.com/build/q-4Ht4rBZR.webp" alt="Supafort.com" width="300"/></a>
-  <a href="https://agentdock.ai/?ref=dokploy"><img src=".github/sponsors/agentdock.png" alt="agentdock.ai" width="100"/></a>
-</div>
-
-<!-- Elite Contributors 🥈 -->
-
-<!-- Add Elite Contributors here -->
-
-### Elite Contributors 🥈
-
-<div>
-  <a href="https://americancloud.com/?ref=dokploy"><img src=".github/sponsors/american-cloud.png" alt="AmericanCloud" width="300"/></a>
-  <a href="https://tolgee.io/?utm_source=github_dokploy&utm_medium=banner&utm_campaign=dokploy"><img src="https://dokploy.com/tolgee-logo.png" alt="Tolgee" width="100"/></a>
-</div>
-
-### Supporting Members 🥉
-
-<div>
-
-  <a href="https://cloudblast.io/?ref=dokploy"><img src="https://cloudblast.io/img/logo-icon.193cf13e.svg" width="250px" alt="Cloudblast.io"/></a>
-
-  <a href="https://synexa.ai/?ref=dokploy"><img src=".github/sponsors/synexa.png" width="65px" alt="Synexa"/></a>
-</div>
-
-### Community Backers 🤝
-
-#### Organizations:
-
-[Sponsors on Open Collective](https://opencollective.com/dokploy)
-
-#### Individuals:
-
-[![Individual Contributors on Open Collective](https://opencollective.com/dokploy/individuals.svg?width=890)](https://opencollective.com/dokploy)
-
-### Contributors 🤝
-
-<a href="https://github.com/dokploy/dokploy/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=dokploy/dokploy" alt="Contributors" />
-</a>
-
-## 📺 Видео-урок
-
-<a href="https://youtu.be/mznYKPvhcfw">
-  <img src="https://dokploy.com/banner.png" alt="Watch the video" width="400"/>
-</a>
-
-## 🤝 Участие
-
-Ознакомьтесь с [Руководством по участию](CONTRIBUTING.md) для получения дополнительной информации.
-
-
-
+См. [CONTRIBUTING.md](../../CONTRIBUTING.md).

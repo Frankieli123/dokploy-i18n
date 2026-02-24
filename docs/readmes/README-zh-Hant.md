@@ -1,172 +1,100 @@
 <div align="center">
   <a href="https://dokploy.com">
-    <img src=".github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%"  />
+    <img src="../../.github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%" />
   </a>
-  </br>
-  </br>
+  <br />
+  <br />
+
+  [![License](https://img.shields.io/github/license/Frankieli123/dokploy-i18n?style=flat-square)](../../LICENSE.MD)
+  [![Stars](https://img.shields.io/github/stars/Frankieli123/dokploy-i18n?style=flat-square)](https://github.com/Frankieli123/dokploy-i18n/stargazers)
+  [![Docker Pulls](https://img.shields.io/docker/pulls/a3180623/dokploy-i18n?style=flat-square)](https://hub.docker.com/r/a3180623/dokploy-i18n)
+
   <p>加入我們的 Discord，獲取幫助、反饋和討論！</p>
   <a href="https://discord.gg/2tBnJ3jDJc">
-    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield"/>
+    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield" />
   </a>
 </div>
-<br />
 
+# Dokploy i18n
 
-<div align="center" markdown="1">
-   <sup>特別感謝：</sup>
-   <br>
-   <br>
-   <a href="https://tuple.app/dokploy">
-     <img src=".github/sponsors/tuple.png" alt="Tuple's sponsorship image" width="400"/>
-   </a>
+基於官方 [Dokploy](https://github.com/Dokploy/dokploy) 的社群增強版，增加了：
 
-### [Tuple，開發者的頂級螢幕共享應用](https://tuple.app/dokploy)
-[適用於 MacOS 和 Windows](https://tuple.app/dokploy)<br>
+- **多語言介面（i18n）** — 支援 20+ 種語言
+- **內建 AI 助手面板** — Chat / Agent、工具呼叫審批、MCP Server
+- **卷備份（Volume Backups）** — 定時備份 Docker 卷/綁定掛載到外部儲存，支援還原
 
-</div>
+> 官方文件：[docs.dokploy.com](https://docs.dokploy.com)
 
+---
 
-Dokploy 是一款免費、可自託管的 PaaS（平台即服務），用於簡化應用和資料庫的部署與管理。本儲存庫基於官方 Dokploy，增加了多語言介面（i18n）支援。
+**語言 / Languages**:&ensp;
+[简体中文](README-zh-Hans.md) |
+[繁體中文](README-zh-Hant.md) |
+[English](README-en.md) |
+[日本語](README-ja.md) |
+[한국어](README-ko.md) |
+[Русский](README-ru.md) |
+[更多…](./)
 
-## ✨ 功能特性
+---
 
-Dokploy 提供了一系列能力，幫助你在自己的伺服器上更輕鬆地管理應用和資料庫：
+## 目錄
 
-- **應用部署**：支援 Node.js、PHP、Python、Go、Ruby 等多種語言和執行時期。
-- **資料庫管理**：內建 MySQL、PostgreSQL、MongoDB、MariaDB、Redis 等資料庫的建立與管理。
-- **備份**：為資料庫設定自動備份到外部儲存。
-- **Docker Compose**：原生支援 Docker Compose，適合複雜多服務應用。
-- **多節點叢集**：基於 Docker Swarm 管理叢集，實現多節點擴縮容。
-- **範本市場**：一鍵部署開源應用（Plausible、Pocketbase、Cal.com 等）。
-- **Traefik 整合**：自動路由與負載平衡，對接 Traefik。
-- **即時監控**：監控 CPU、記憶體、磁碟、網路等資源使用情況。
-- **Docker 管理**：方便地部署和管理容器。
-- **CLI / API**：透過命令列或 API 管理資源。
-- **多伺服器管理**：統一管理遠端伺服器上的部署。
-- **自託管**：在你的 VPS / 實體機上完全自託管執行。
+- [快速開始](#快速開始)
+- [卷備份](#卷備份)
+- [AI 助手面板](#ai-助手面板)
+- [授權條款](#授權條款)
 
-## 🚀 快速開始
+## 快速開始
 
-在一台全新的 Linux 伺服器上執行以下命令即可安裝 Dokploy：
+> 要求：root 權限，連接埠 `80/443/3000` 空閒，基於 Docker Swarm
+
+| 場景 | 命令 |
+|------|------|
+| **一般環境** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh \| bash` |
+| **資料存放至 `/data`** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data.sh \| bash` |
+| **中國網路加速** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-china.sh \| bash` |
+| **中國 + 資料存放**（推薦） | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data-china.sh \| bash` |
+
+安裝後訪問：`http://<your-server-ip>:3000`
+
+## 卷備份
+
+官方 Dokploy 僅支援資料庫備份。本 fork 新增 **卷備份（Volume Backups）**，可對應用、Compose、資料庫等任意服務的 Docker 卷和綁定掛載進行定時備份與還原。
+
+**入口**：進入任意應用/服務詳情頁 → `卷備份` 標籤頁
+
+**功能**：
+- 按 Cron 表達式定時自動備份到 S3 等外部儲存
+- 支援 Docker Named Volume、綁定掛載（Bind Mount）、一鍵備份全部掛載
+- 可設定保留最近 N 份備份，自動清理舊備份
+- 備份前可選停止容器以確保資料一致性
+- 支援從備份還原
+
+## AI 助手面板
+
+**入口**：登入 儀表板 → 點擊右下角機器人按鈕
+
+**啟用**：`儀表板 → 設定 → AI`（`/dashboard/settings/ai`）→ 新增 AI Provider（支援 OpenAI / Anthropic / Gemini / Ollama 等）
+
+**功能**：
+- Chat / Agent 兩種模式
+- 工具呼叫審批：可中斷串流輸出並取消後端 run
+- MCP Servers：面板內直接管理，對話中可被呼叫
+
+### pgvector 相依性
+
+啟用 Embedding / 向量檢索功能需要 PostgreSQL 支援 `pgvector`。若 `dokploy-postgres` 仍為 `postgres:16`，可升級：
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh | bash
+docker service update --force --image pgvector/pgvector:pg16 dokploy-postgres
+docker service update --force dokploy
 ```
 
-上面的腳本會自動拉取映像檔：
+## 授權條款
 
-- 面板主服務：`a3180623/dokploy-i18n:<版本號>`
+基於上游 Dokploy（Apache-2.0），詳見 [LICENSE.MD](../../LICENSE.MD)。
 
-如需使用官方 Dokploy Cloud，請造訪：[Dokploy Cloud](https://app.dokploy.com)。  
-更多使用文件可參考官方文件：[docs.dokploy.com](https://docs.dokploy.com)。
+## 貢獻
 
-## 🌐 語言支援
-
-目前版本內建多語言介面（i18n），支援以下語言：
-
-- 简体中文（zh-Hans）
-- 繁體中文（zh-Hant）
-- English（en）
-- Deutsch（de） 
-- Español（es）
-- Français（fr）
-- Italiano（it）
-- 日本語（ja）
-- 한국어（ko）
-- Русский（ru）
-- Türkçe（tr）
-- Nederlands（nl）
-- Norsk（no）
-- Português (Brasil)（pt-br）
-- فارسی‎ (Farsi)（fa）
-- Bahasa Indonesia（id）
-- Українська（uk）
-- Қазақша（kz）
-- Azərbaycanca（az）
-- മലയാളം（ml）
-- Polski（pl）
-
-你可以從 Dokploy 儀表板的左下角切換語言。
-
-## ♥️ 贊助商
-
-🙏 我們深深感謝所有使 Dokploy 成為可能的贊助商！您的支援有助於支付託管、測試和開發新功能的費用。
-
-[Dokploy Open Collective](https://opencollective.com/dokploy)
-
-[Github Sponsors](https://github.com/sponsors/Siumauricio)
-
-<!-- Hero Sponsors 🎖 -->
-
-<!-- Add Hero Sponsors here -->
-
-### Hero Sponsors 🎖
-
-<div>
-  <a href="https://www.hostinger.com/vps-hosting?ref=dokploy"><img src=".github/sponsors/hostinger.jpg" alt="Hostinger" width="300"/></a>
-  <a href="https://www.lxaer.com/?ref=dokploy"><img src=".github/sponsors/lxaer.png" alt="LX Aer" width="100"/></a>
-        <a href="https://www.lambdatest.com/?utm_source=dokploy&utm_medium=sponsor" target="_blank">
-            <img src="https://www.lambdatest.com/blue-logo.png"  width="450" height="100" />
-        </a>
-
-</div>
-
-<!-- Premium Supporters 🥇 -->
-
-<!-- Add Premium Supporters here -->
-
-### Premium Supporters 🥇
-
-<div>
-  <a href="https://supafort.com/?ref=dokploy"><img src="https://supafort.com/build/q-4Ht4rBZR.webp" alt="Supafort.com" width="300"/></a>
-  <a href="https://agentdock.ai/?ref=dokploy"><img src=".github/sponsors/agentdock.png" alt="agentdock.ai" width="100"/></a>
-</div>
-
-<!-- Elite Contributors 🥈 -->
-
-<!-- Add Elite Contributors here -->
-
-### Elite Contributors 🥈
-
-<div>
-  <a href="https://americancloud.com/?ref=dokploy"><img src=".github/sponsors/american-cloud.png" alt="AmericanCloud" width="300"/></a>
-  <a href="https://tolgee.io/?utm_source=github_dokploy&utm_medium=banner&utm_campaign=dokploy"><img src="https://dokploy.com/tolgee-logo.png" alt="Tolgee" width="100"/></a>
-</div>
-
-### Supporting Members 🥉
-
-<div>
-
-  <a href="https://cloudblast.io/?ref=dokploy"><img src="https://cloudblast.io/img/logo-icon.193cf13e.svg" width="250px" alt="Cloudblast.io"/></a>
-
-  <a href="https://synexa.ai/?ref=dokploy"><img src=".github/sponsors/synexa.png" width="65px" alt="Synexa"/></a>
-</div>
-
-### Community Backers 🤝
-
-#### Organizations:
-
-[Sponsors on Open Collective](https://opencollective.com/dokploy)
-
-#### Individuals:
-
-[![Individual Contributors on Open Collective](https://opencollective.com/dokploy/individuals.svg?width=890)](https://opencollective.com/dokploy)
-
-### Contributors 🤝
-
-<a href="https://github.com/dokploy/dokploy/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=dokploy/dokploy" alt="Contributors" />
-</a>
-
-## 📺 影片教學
-
-<a href="https://youtu.be/mznYKPvhcfw">
-  <img src="https://dokploy.com/banner.png" alt="Watch the video" width="400"/>
-</a>
-
-## 🤝 貢獻
-
-查看 [貢獻指南](CONTRIBUTING.md) 了解更多資訊。
-
-
-
+見 [CONTRIBUTING.md](../../CONTRIBUTING.md)。

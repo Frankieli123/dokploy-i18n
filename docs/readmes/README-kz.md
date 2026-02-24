@@ -1,172 +1,100 @@
 <div align="center">
   <a href="https://dokploy.com">
-    <img src=".github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%"  />
+    <img src="../../.github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%" />
   </a>
-  </br>
-  </br>
+  <br />
+  <br />
+
+  [![License](https://img.shields.io/github/license/Frankieli123/dokploy-i18n?style=flat-square)](../../LICENSE.MD)
+  [![Stars](https://img.shields.io/github/stars/Frankieli123/dokploy-i18n?style=flat-square)](https://github.com/Frankieli123/dokploy-i18n/stargazers)
+  [![Docker Pulls](https://img.shields.io/docker/pulls/a3180623/dokploy-i18n?style=flat-square)](https://hub.docker.com/r/a3180623/dokploy-i18n)
+
   <p>Көмек, пікірлер және талқылау үшін біздің Discord-қа қосылыңыз!</p>
   <a href="https://discord.gg/2tBnJ3jDJc">
-    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield"/>
+    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield" />
   </a>
 </div>
-<br />
 
+# Dokploy i18n
 
-<div align="center" markdown="1">
-   <sup>Арнайы алғыс:</sup>
-   <br>
-   <br>
-   <a href="https://tuple.app/dokploy">
-     <img src=".github/sponsors/tuple.png" alt="Tuple's sponsorship image" width="400"/>
-   </a>
+Ресми [Dokploy](https://github.com/Dokploy/dokploy) негізінде қауымдастық жетілдірген нұсқа:
 
-### [Tuple, әзірлеушілер үшін жетекші экранды бөлісу қолданбасы](https://tuple.app/dokploy)
-[MacOS және Windows үшін қолжетімді](https://tuple.app/dokploy)<br>
+- **i18n** — 20+ тілді қолдау
+- **Жасанды интеллект Ассистент Панелі** — Chat / Agent, құрал шақыруды бекіту, MCP Server
+- **Том резервтік көшірмелері** — Docker томы/bind mount резервтік көшірмелерін сыртқы сақтауға жоспарлау, қалпына келтірумен
 
-</div>
+> Ресми құжаттама: [docs.dokploy.com](https://docs.dokploy.com)
 
+---
 
-Dokploy - бұл қолданбалар мен деректер қорын орнату мен басқаруды жеңілдетуге арналған тегін, өзін-өзі басқаратын PaaS (Платформа ретіндегі Сервис). Бұл репозиторий ресми Dokploy негізінде көптілді интерфейс (i18n) қолдауы қосылған.
+**Тілдер**:&ensp;
+[简体中文](README-zh-Hans.md) |
+[繁體中文](README-zh-Hant.md) |
+[English](README-en.md) |
+[日本語](README-ja.md) |
+[한국어](README-ko.md) |
+[Русский](README-ru.md) |
+[Көбірек...](./)
 
-## ✨ Мүмкіндіктер
+---
 
-Dokploy өз серверлеріңізде қолданбалар мен деректер қорын оңай басқаруға көмектесетін кешенді мүмкіндіктер жиынтығын ұсынады:
+## Мазмұны
 
-- **Қолданбаларды Орнату**: Node.js, PHP, Python, Go, Ruby және басқаларды қоса алғанда, бірнеше тілдер мен орындау орталарын қолдайды.
-- **Деректер Қорын Басқару**: MySQL, PostgreSQL, MongoDB, MariaDB, Redis және басқаларды қоса алғанда, деректер қорын құру және басқарудың кіріктірілген жүйесі.
-- **Резервтік Көшірмелер**: Деректер қоры үшін сыртқы сақтауға автоматты резервтік көшірмелерді баптаңыз.
-- **Docker Compose**: Күрделі көп сервисті қолданбалар үшін керемет Docker Compose үшін жергілікті қолдау.
-- **Көп түйінді Кластерлеу**: Docker Swarm негізіндегі кластер басқару, көп түйінді масштабтауды мүмкін етеді.
-- **Қалыптар Нарығы**: Ашық кодты қолданбаларды бір басып орнату (Plausible, Pocketbase, Cal.com, т.б.).
-- **Traefik Интеграциясы**: Автоматты маршрутизация және жүктеме балансы, Traefik-пен интеграцияланған.
-- **Нақты Уақытта Мониторинг**: CPU, жад, диск, желі және басқа ресурстардың пайдаланылуын қадағалаңыз.
-- **Docker Басқару**: Контейнерлерді оңай орнатыңыз және басқарыңыз.
-- **CLI / API**: Ресурстарды командалық жол немесе API арқылы басқарыңыз.
-- **Көп Серверді Басқару**: Қашықтағы серверлердегі орнатуларды біріктірілген басқару.
-- **Өзін-өзі басқару**: VPS немесе физикалық машинаңызда толығымен өзін-өзі басқаратын.
+- [Жылдам Бастау](#жылдам-бастау)
+- [Том резервтік көшірмелері](#том-резервтік-көшірмелері)
+- [Жасанды интеллект Ассистент Панелі](#жасанды-интеллект-ассистент-панелі)
+- [Лицензия](#лицензия)
 
-## 🚀 Жылдам Бастау
+## Жылдам Бастау
 
-Dokploy-ды орнату үшін жаңа Linux серверінде келесі команданы орындаңыз:
+> Талаптар: root құқықтары, 80/443/3000 порттары бос, Docker Swarm
+
+| Сценарий | Команда |
+|------|------|
+| **Стандарт** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh \| bash` |
+| **Деректер /data-да** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data.sh \| bash` |
+| **Қытай желісі** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-china.sh \| bash` |
+| **Қытай + /data** (Ұсынылады) | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data-china.sh \| bash` |
+
+Орнатудан кейін кіріңіз: `http://<your-server-ip>:3000`
+
+## Том резервтік көшірмелері
+
+Ресми Dokploy тек дерекқор резервтік көшірмелерін қолдайды. Бұл fork кез келген қызмет (қолданбалар, Compose, дерекқорлар) үшін Docker томдары мен bind mount резервтік көшірмелерін жоспарлау және қалпына келтіру мүмкіндігін беретін **Том резервтік көшірмелері** қосады.
+
+**Кіру**: Кез келген қолданба/қызмет мәліметтер бетіне өтіңіз -> `Том резервтік көшірмелері` қойындысы
+
+**Мүмкіндіктер**:
+- Cron арқылы S3 және т.б. жоспарлы автоматты резервтік көшірме
+- Docker Named Volumes, Bind Mounts қолдауы, барлық mount бірден резервтік көшірме
+- Соңғы N резервтік көшірмені сақтау, ескілерін автотазалау
+- Дерекқор тұтастығы үшін резервтік көшірме алдында контейнерді тоқтату мүмкіндігі
+- Резервтік көшірмелерден қалпына келтіру
+
+## Жасанды интеллект Ассистент Панелі
+
+**Кіру**: Басқару панеліне кіріңіз -> оң жақ төменгі бұрыштағы бот түймесін басыңыз
+
+**Қосу**: `Басқару панелі -> Баптаулар -> Жасанды интеллект` (`/dashboard/settings/ai`) -> ЖИ провайдерін қосу (OpenAI / Anthropic / Gemini / Ollama және т.б.)
+
+**Мүмкіндіктер**:
+- Chat / Agent екі режим
+- Құрал шақыруды бекіту: ағынды үзіп, backend орындауды болдырмауға болады
+- MCP Serverлер: панельде басқару, сөйлесулерде шақыруға болады
+
+### pgvector тәуелділігі
+
+Embedding/векторлық іздеуді қосу үшін PostgreSQL pgvector-ге мұқтаж. Егер dokploy-postgres әлі postgres:16 болса, жаңартыңыз:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh | bash
+docker service update --force --image pgvector/pgvector:pg16 dokploy-postgres
+docker service update --force dokploy
 ```
 
-Жоғарыдағы скрипт автоматты түрде кескіндерді тартады:
+## Лицензия
 
-- Негізгі панель сервисі: `a3180623/dokploy-i18n:<нұсқа>`
+Dokploy upstream (Apache-2.0) негізінде, қараңыз [LICENSE.MD](../../LICENSE.MD).
 
-Ресми Dokploy Cloud пайдалану үшін, барыңыз: [Dokploy Cloud](https://app.dokploy.com).  
-Қосымша құжаттар үшін ресми құжаттамаға қараңыз: [docs.dokploy.com](https://docs.dokploy.com).
+## Үлес Қосу
 
-## 🌐 Тілдік Қолдау
-
-Ағымдағы нұсқа кіріктірілген көптілді интерфейспен (i18n) жүктеледі және келесі тілдерді қолдайды:
-
-- 简体中文 (zh-Hans)
-- 繁體中文 (zh-Hant)
-- English (en)
-- Deutsch (de) 
-- Español (es)
-- Français (fr)
-- Italiano (it)
-- 日本語 (ja)
-- 한국어 (ko)
-- Русский (ru)
-- Türkçe (tr)
-- Nederlands (nl)
-- Norsk (no)
-- Português (Brasil) (pt-br)
-- فارسی (Farsi) (fa)
-- Bahasa Indonesia (id)
-- Українська (uk)
-- Қазақша (kz)
-- Azərbaycanca (az)
-- മലയാളം (ml)
-- Polski (pl)
-
-Тілді Dokploy бақылау панелінің сол төменгі бұрышынан өзгертуге болады.
-
-## ♥️ Демеушілер
-
-🙏 Біз Dokploy-ды мүмкін ететін барлық демеушілерімізге терең ризашылығымызды білдіреміз! Сіздің қолдауыңыз хостинг, тестілеу және жаңа мүмкіндіктерді әзірлеу шығындарын жабуға көмектеседі.
-
-[Dokploy Open Collective](https://opencollective.com/dokploy)
-
-[Github Sponsors](https://github.com/sponsors/Siumauricio)
-
-<!-- Hero Sponsors 🎖 -->
-
-<!-- Add Hero Sponsors here -->
-
-### Hero Sponsors 🎖
-
-<div>
-  <a href="https://www.hostinger.com/vps-hosting?ref=dokploy"><img src=".github/sponsors/hostinger.jpg" alt="Hostinger" width="300"/></a>
-  <a href="https://www.lxaer.com/?ref=dokploy"><img src=".github/sponsors/lxaer.png" alt="LX Aer" width="100"/></a>
-        <a href="https://www.lambdatest.com/?utm_source=dokploy&utm_medium=sponsor" target="_blank">
-            <img src="https://www.lambdatest.com/blue-logo.png"  width="450" height="100" />
-        </a>
-
-</div>
-
-<!-- Premium Supporters 🥇 -->
-
-<!-- Add Premium Supporters here -->
-
-### Premium Supporters 🥇
-
-<div>
-  <a href="https://supafort.com/?ref=dokploy"><img src="https://supafort.com/build/q-4Ht4rBZR.webp" alt="Supafort.com" width="300"/></a>
-  <a href="https://agentdock.ai/?ref=dokploy"><img src=".github/sponsors/agentdock.png" alt="agentdock.ai" width="100"/></a>
-</div>
-
-<!-- Elite Contributors 🥈 -->
-
-<!-- Add Elite Contributors here -->
-
-### Elite Contributors 🥈
-
-<div>
-  <a href="https://americancloud.com/?ref=dokploy"><img src=".github/sponsors/american-cloud.png" alt="AmericanCloud" width="300"/></a>
-  <a href="https://tolgee.io/?utm_source=github_dokploy&utm_medium=banner&utm_campaign=dokploy"><img src="https://dokploy.com/tolgee-logo.png" alt="Tolgee" width="100"/></a>
-</div>
-
-### Supporting Members 🥉
-
-<div>
-
-  <a href="https://cloudblast.io/?ref=dokploy"><img src="https://cloudblast.io/img/logo-icon.193cf13e.svg" width="250px" alt="Cloudblast.io"/></a>
-
-  <a href="https://synexa.ai/?ref=dokploy"><img src=".github/sponsors/synexa.png" width="65px" alt="Synexa"/></a>
-</div>
-
-### Community Backers 🤝
-
-#### Organizations:
-
-[Sponsors on Open Collective](https://opencollective.com/dokploy)
-
-#### Individuals:
-
-[![Individual Contributors on Open Collective](https://opencollective.com/dokploy/individuals.svg?width=890)](https://opencollective.com/dokploy)
-
-### Contributors 🤝
-
-<a href="https://github.com/dokploy/dokploy/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=dokploy/dokploy" alt="Contributors" />
-</a>
-
-## 📺 Бейне Оқулық
-
-<a href="https://youtu.be/mznYKPvhcfw">
-  <img src="https://dokploy.com/banner.png" alt="Watch the video" width="400"/>
-</a>
-
-## 🤝 Үлес Қосу
-
-Қосымша ақпарат үшін [Үлес Қосу Нұсқаулығы](CONTRIBUTING.md) қараңыз.
-
-
-
+Қараңыз [CONTRIBUTING.md](../../CONTRIBUTING.md).

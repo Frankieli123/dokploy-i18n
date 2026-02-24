@@ -1,172 +1,100 @@
 <div align="center">
   <a href="https://dokploy.com">
-    <img src=".github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%"  />
+    <img src="../../.github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%" />
   </a>
-  </br>
-  </br>
+  <br />
+  <br />
+
+  [![License](https://img.shields.io/github/license/Frankieli123/dokploy-i18n?style=flat-square)](../../LICENSE.MD)
+  [![Stars](https://img.shields.io/github/stars/Frankieli123/dokploy-i18n?style=flat-square)](https://github.com/Frankieli123/dokploy-i18n/stargazers)
+  [![Docker Pulls](https://img.shields.io/docker/pulls/a3180623/dokploy-i18n?style=flat-square)](https://hub.docker.com/r/a3180623/dokploy-i18n)
+
   <p>Discordに参加して、ヘルプ、フィードバック、ディスカッションに参加しましょう！</p>
   <a href="https://discord.gg/2tBnJ3jDJc">
-    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield"/>
+    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield" />
   </a>
 </div>
-<br />
 
+# Dokploy i18n
 
-<div align="center" markdown="1">
-   <sup>特別な感謝：</sup>
-   <br>
-   <br>
-   <a href="https://tuple.app/dokploy">
-     <img src=".github/sponsors/tuple.png" alt="Tuple's sponsorship image" width="400"/>
-   </a>
+公式[Dokploy](https://github.com/Dokploy/dokploy)をベースにしたコミュニティ拡張版：
 
-### [Tuple、開発者向けの最高の画面共有アプリ](https://tuple.app/dokploy)
-[MacOSとWindowsで利用可能](https://tuple.app/dokploy)<br>
+- **i18n** — 20以上の言語に対応
+- **AIアシスタントパネル** — チャット/エージェント、ツール呼び出し承認、MCPサーバー
+- **ボリュームバックアップ** — Dockerボリューム/バインドマウントの外部ストレージへの定期バックアップ、復元対応
 
-</div>
+> 公式ドキュメント：[docs.dokploy.com](https://docs.dokploy.com)
 
+---
 
-Dokployは、アプリケーションとデータベースのデプロイメントと管理を簡素化するために設計された、無料のセルフホスト型PaaS（プラットフォーム・アズ・ア・サービス）です。このリポジトリは、多言語インターフェース（i18n）サポートを追加した公式Dokployを基にしています。
+**言語**:&ensp;
+[简体中文](README-zh-Hans.md) |
+[繁體中文](README-zh-Hant.md) |
+[English](README-en.md) |
+[日本語](README-ja.md) |
+[한국어](README-ko.md) |
+[Русский](README-ru.md) |
+[もっと...](./)
 
-## ✨ 機能
+---
 
-Dokployは、独自のサーバーでアプリケーションとデータベースをより簡単に管理するための包括的な機能セットを提供します：
+## 目次
 
-- **アプリケーションデプロイメント**：Node.js、PHP、Python、Go、Rubyなど、複数の言語とランタイムをサポート。
-- **データベース管理**：MySQL、PostgreSQL、MongoDB、MariaDB、Redisなどのデータベースの作成と管理を内蔵。
-- **バックアップ**：データベースの外部ストレージへの自動バックアップを設定。
-- **Docker Compose**：Docker Composeのネイティブサポート。複雑なマルチサービスアプリケーションに最適。
-- **マルチノードクラスタリング**：Docker Swarmベースのクラスタ管理により、マルチノードのスケーリングが可能。
-- **テンプレートマーケットプレース**：オープンソースアプリケーション（Plausible、Pocketbase、Cal.comなど）のワンクリックデプロイメント。
-- **Traefik統合**：自動ルーティングとロードバランシング、Traefikとの統合。
-- **リアルタイムモニタリング**：CPU、メモリ、ディスク、ネットワークなどのリソース使用状況を監視。
-- **Docker管理**：コンテナを簡単にデプロイして管理。
-- **CLI / API**：コマンドラインまたはAPIを通じてリソースを管理。
-- **マルチサーバー管理**：リモートサーバー上のデプロイメントを統一管理。
-- **セルフホスティング**：VPSまたは物理マシンで完全にセルフホスト可能。
+- [クイックスタート](#クイックスタート)
+- [ボリュームバックアップ](#ボリュームバックアップ)
+- [AIアシスタントパネル](#aiアシスタントパネル)
+- [ライセンス](#ライセンス)
 
-## 🚀 クイックスタート
+## クイックスタート
 
-新しいLinuxサーバーで次のコマンドを実行してDokployをインストールします：
+> 要件：root権限、ポート80/443/3000が空き、Docker Swarm
+
+| シナリオ | コマンド |
+|------|------|
+| **標準** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh \| bash` |
+| **データを/dataに** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data.sh \| bash` |
+| **中国ネットワーク** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-china.sh \| bash` |
+| **中国 + /data**（推奨） | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data-china.sh \| bash` |
+
+インストール後：`http://<your-server-ip>:3000` にアクセス
+
+## ボリュームバックアップ
+
+公式Dokployはデータベースバックアップのみ対応しています。このforkは**ボリュームバックアップ**を追加し、あらゆるサービス（アプリケーション、Compose、データベース）のDockerボリュームとバインドマウントの定期バックアップと復元を可能にします。
+
+**入口**：任意のアプリ/サービス詳細ページへ -> `ボリュームバックアップ`タブ
+
+**機能**：
+- CronによるS3などへの自動バックアップ
+- Docker Named Volume、バインドマウント対応、全マウントの一括バックアップ
+- 最新N個のバックアップを保持、古いものを自動削除
+- データ整合性のためバックアップ前にコンテナ停止を選択可能
+- バックアップからの復元
+
+## AIアシスタントパネル
+
+**入口**：ダッシュボードにログイン -> 右下のボットボタンをクリック
+
+**有効化**：`ダッシュボード → 設定 → AI`（`/dashboard/settings/ai`）-> AIプロバイダーを追加（OpenAI / Anthropic / Gemini / Ollama等）
+
+**機能**：
+- チャット/エージェント2つのモード
+- ツール呼び出し承認：ストリーミングを中断してバックエンドの実行をキャンセル可能
+- MCPサーバー：パネル内で管理、会話で呼び出し可能
+
+### pgvector依存関係
+
+Embedding/ベクトル検索を有効にするには、PostgreSQLにpgvectorが必要です。dokploy-postgresがまだpostgres:16の場合、アップグレード：
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh | bash
+docker service update --force --image pgvector/pgvector:pg16 dokploy-postgres
+docker service update --force dokploy
 ```
 
-上記のスクリプトは自動的にイメージをプルします：
+## ライセンス
 
-- メインパネルサービス：`a3180623/dokploy-i18n:<バージョン>`
+アップストリームDokploy（Apache-2.0）に基づく、[LICENSE.MD](../../LICENSE.MD)を参照。
 
-公式Dokploy Cloudを使用するには、[Dokploy Cloud](https://app.dokploy.com)にアクセスしてください。  
-詳細なドキュメントについては、公式ドキュメントを参照してください：[docs.dokploy.com](https://docs.dokploy.com)。
+## 貢献
 
-## 🌐 言語サポート
-
-現在のバージョンには組み込みの多言語インターフェース（i18n）が付属しており、次の言語をサポートしています：
-
-- 简体中文 (zh-Hans)
-- 繁體中文 (zh-Hant)
-- English (en)
-- Deutsch (de) 
-- Español (es)
-- Français (fr)
-- Italiano (it)
-- 日本語 (ja)
-- 한국어 (ko)
-- Русский (ru)
-- Türkçe (tr)
-- Nederlands (nl)
-- Norsk (no)
-- Português (Brasil) (pt-br)
-- فارسی (Farsi) (fa)
-- Bahasa Indonesia (id)
-- Українська (uk)
-- Қазақша (kz)
-- Azərbaycanca (az)
-- മലയാളം (ml)
-- Polski (pl)
-
-Dokployダッシュボードの左下から言語を切り替えることができます。
-
-## ♥️ スポンサー
-
-🙏 Dokployを可能にしてくれるすべてのスポンサーに心から感謝します！あなたのサポートは、ホスティング、テスト、新機能の開発の費用を賄うのに役立ちます。
-
-[Dokploy Open Collective](https://opencollective.com/dokploy)
-
-[Github Sponsors](https://github.com/sponsors/Siumauricio)
-
-<!-- Hero Sponsors 🎖 -->
-
-<!-- Add Hero Sponsors here -->
-
-### Hero Sponsors 🎖
-
-<div>
-  <a href="https://www.hostinger.com/vps-hosting?ref=dokploy"><img src=".github/sponsors/hostinger.jpg" alt="Hostinger" width="300"/></a>
-  <a href="https://www.lxaer.com/?ref=dokploy"><img src=".github/sponsors/lxaer.png" alt="LX Aer" width="100"/></a>
-        <a href="https://www.lambdatest.com/?utm_source=dokploy&utm_medium=sponsor" target="_blank">
-            <img src="https://www.lambdatest.com/blue-logo.png"  width="450" height="100" />
-        </a>
-
-</div>
-
-<!-- Premium Supporters 🥇 -->
-
-<!-- Add Premium Supporters here -->
-
-### Premium Supporters 🥇
-
-<div>
-  <a href="https://supafort.com/?ref=dokploy"><img src="https://supafort.com/build/q-4Ht4rBZR.webp" alt="Supafort.com" width="300"/></a>
-  <a href="https://agentdock.ai/?ref=dokploy"><img src=".github/sponsors/agentdock.png" alt="agentdock.ai" width="100"/></a>
-</div>
-
-<!-- Elite Contributors 🥈 -->
-
-<!-- Add Elite Contributors here -->
-
-### Elite Contributors 🥈
-
-<div>
-  <a href="https://americancloud.com/?ref=dokploy"><img src=".github/sponsors/american-cloud.png" alt="AmericanCloud" width="300"/></a>
-  <a href="https://tolgee.io/?utm_source=github_dokploy&utm_medium=banner&utm_campaign=dokploy"><img src="https://dokploy.com/tolgee-logo.png" alt="Tolgee" width="100"/></a>
-</div>
-
-### Supporting Members 🥉
-
-<div>
-
-  <a href="https://cloudblast.io/?ref=dokploy"><img src="https://cloudblast.io/img/logo-icon.193cf13e.svg" width="250px" alt="Cloudblast.io"/></a>
-
-  <a href="https://synexa.ai/?ref=dokploy"><img src=".github/sponsors/synexa.png" width="65px" alt="Synexa"/></a>
-</div>
-
-### Community Backers 🤝
-
-#### Organizations:
-
-[Sponsors on Open Collective](https://opencollective.com/dokploy)
-
-#### Individuals:
-
-[![Individual Contributors on Open Collective](https://opencollective.com/dokploy/individuals.svg?width=890)](https://opencollective.com/dokploy)
-
-### Contributors 🤝
-
-<a href="https://github.com/dokploy/dokploy/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=dokploy/dokploy" alt="Contributors" />
-</a>
-
-## 📺 ビデオチュートリアル
-
-<a href="https://youtu.be/mznYKPvhcfw">
-  <img src="https://dokploy.com/banner.png" alt="Watch the video" width="400"/>
-</a>
-
-## 🤝 貢献
-
-詳細については、[貢献ガイド](CONTRIBUTING.md)をご確認ください。
-
-
-
+[CONTRIBUTING.md](../../CONTRIBUTING.md)を参照。

@@ -1,172 +1,100 @@
 <div align="center">
   <a href="https://dokploy.com">
-    <img src=".github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%"  />
+    <img src="../../.github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%" />
   </a>
-  </br>
-  </br>
+  <br />
+  <br />
+
+  [![License](https://img.shields.io/github/license/Frankieli123/dokploy-i18n?style=flat-square)](../../LICENSE.MD)
+  [![Stars](https://img.shields.io/github/stars/Frankieli123/dokploy-i18n?style=flat-square)](https://github.com/Frankieli123/dokploy-i18n/stargazers)
+  [![Docker Pulls](https://img.shields.io/docker/pulls/a3180623/dokploy-i18n?style=flat-square)](https://hub.docker.com/r/a3180623/dokploy-i18n)
+
   <p>Yardım, geri bildirim ve tartışmalar için Discord sunucumuza katılın!</p>
   <a href="https://discord.gg/2tBnJ3jDJc">
-    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield"/>
+    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield" />
   </a>
 </div>
-<br />
 
+# Dokploy i18n
 
-<div align="center" markdown="1">
-   <sup>Özel teşekkürler:</sup>
-   <br>
-   <br>
-   <a href="https://tuple.app/dokploy">
-     <img src=".github/sponsors/tuple.png" alt="Tuple's sponsorship image" width="400"/>
-   </a>
+Resmi [Dokploy](https://github.com/Dokploy/dokploy) tabanlı topluluk geliştirilmiş sürüm:
 
-### [Tuple, geliştiriciler için önde gelen ekran paylaşım uygulaması](https://tuple.app/dokploy)
-[MacOS ve Windows için kullanılabilir](https://tuple.app/dokploy)<br>
+- **i18n** — 20+ dil desteği
+- **AI Asistan Paneli** — Chat / Agent, araç çağrısı onayı, MCP Server
+- **Birim Yedekleri** — Docker birimi/bind mount yedeklerini dış depolama alanına zamanla, geri yükleme desteği
 
-</div>
+> Resmi dokümantasyon: [docs.dokploy.com](https://docs.dokploy.com)
 
+---
 
-Dokploy, uygulama ve veritabanlarının dağıtımını ve yönetimini kolaylaştırmak için tasarlanmış ücretsiz, kendi barındıran bir PaaS (Platform as a Service) platformudur. Bu depo, çok dilli arayüz (i18n) desteği eklenmiş resmi Dokploy'a dayanmaktadır.
+**Diller**:&ensp;
+[简体中文](README-zh-Hans.md) |
+[繁體中文](README-zh-Hant.md) |
+[English](README-en.md) |
+[日本語](README-ja.md) |
+[한국어](README-ko.md) |
+[Русский](README-ru.md) |
+[Daha fazla...](./)
 
-## ✨ Özellikler
+---
 
-Dokploy, kendi sunucularınızda uygulama ve veritabanlarını daha kolay yönetmenize yardımcı olmak için kapsamlı bir özellik seti sağlar:
+## İçerik
 
-- **Uygulama Dağıtımı**: Node.js, PHP, Python, Go, Ruby ve daha fazlasını içeren birden fazla dil ve çalışma zamanını destekler.
-- **Veritabanı Yönetimi**: MySQL, PostgreSQL, MongoDB, MariaDB, Redis ve daha fazlasını içeren veritabanlarının yerleşik oluşturma ve yönetimi.
-- **Yedekleme**: Veritabanları için harici depolamaya otomatik yedekleme yapılandırın.
-- **Docker Compose**: Docker Compose için yerel destek, karmaşık çoklu hizmet uygulamaları için mükemmel.
-- **Çoklu Düğüm Kümeleme**: Docker Swarm tabanlı küme yönetimi, çoklu düğüm ölçeklendirmesini mümkün kılar.
-- **Şablon Pazarı**: Açık kaynak uygulamaların (Plausible, Pocketbase, Cal.com vb.) tek tıkla dağıtımı.
-- **Traefik Entegrasyonu**: Otomatik yönlendirme ve yük dengeleme, Traefik ile entegre.
-- **Gerçek Zamanlı İzleme**: CPU, bellek, disk, ağ ve diğer kaynak kullanımını izleyin.
-- **Docker Yönetimi**: Kapsayıcıları kolayca dağıtın ve yönetin.
-- **CLI / API**: Komut satırı veya API aracılığıyla kaynakları yönetin.
-- **Çoklu Sunucu Yönetimi**: Uzak sunuculardaki dağıtımları birleşik olarak yönetin.
-- **Kendi Barındırma**: VPS veya fiziksel makinenizde tamamen kendi barındırma.
+- [Hızlı Başlangıç](#hızlı-başlangıç)
+- [Birim Yedekleri](#birim-yedekleri)
+- [AI Asistan Paneli](#ai-asistan-paneli)
+- [Lisans](#lisans)
 
-## 🚀 Hızlı Başlangıç
+## Hızlı Başlangıç
 
-Dokploy'u yüklemek için yeni bir Linux sunucusunda aşağıdaki komutu çalıştırın:
+> Gereksinimler: root yetkisi, 80/443/3000 portları boş, Docker Swarm
+
+| Senaryo | Komut |
+|------|------|
+| **Standart** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh \| bash` |
+| **Veri /data'da** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data.sh \| bash` |
+| **Çin ağı** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-china.sh \| bash` |
+| **Çin + /data** (Önerilen) | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data-china.sh \| bash` |
+
+Kurulumdan sonra ziyaret et: `http://<your-server-ip>:3000`
+
+## Birim Yedekleri
+
+Resmi Dokploy sadece veritabanı yedeklerini destekler. Bu fork, herhangi bir hizmet (uygulamalar, Compose, veritabanları) için Docker birimleri ve bind mount'ların zamanlanmış yedekleme ve geri yükleme imkanı sağlayan **Birim Yedekleri** ekler.
+
+**Giriş**: Herhangi bir uygulama/hizmet detay sayfasına git -> `Birim yedekleri` sekmesi
+
+**Yetenekler**:
+- Cron ile S3 vb.'ye zamanlanmış otomatik yedekleme
+- Docker Named Volumes, Bind Mounts desteği, tüm mount'ları tek seferde yedekle
+- Son N yedeği sakla, eskileri otomatik temizle
+- Veri tutarlılığı için yedekleme öncesi konteyner durdurma seçeneği
+- Yedeklerden geri yükleme
+
+## AI Asistan Paneli
+
+**Giriş**: Gösterge paneline giriş yap -> Sağ alt köşedeki bot düğmesine tıkla
+
+**Etkinleştir**: `Gösterge paneli -> Ayarlar -> AI` (`/dashboard/settings/ai`) -> AI Sağlayıcı ekle (OpenAI / Anthropic / Gemini / Ollama vb.)
+
+**Yetenekler**:
+- Chat / Agent iki mod
+- Araç çağrısı onayı: akışı kesebilir ve backend çalışmasını iptal edebilir
+- MCP Serverlar: panelde yönet, konuşmalarda çağrılabilir
+
+### pgvector bağımlılığı
+
+Embedding/vektör aramayı etkinleştirmek için PostgreSQL'in pgvector'a ihtiyacı var. dokploy-postgres hala postgres:16 ise, yükselt:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh | bash
+docker service update --force --image pgvector/pgvector:pg16 dokploy-postgres
+docker service update --force dokploy
 ```
 
-Yukarıdaki betik otomatik olarak görüntüleri çekecektir:
+## Lisans
 
-- Ana panel hizmeti: `a3180623/dokploy-i18n:<sürüm>`
+Upstream Dokploy (Apache-2.0) tabanlı, bkz. [LICENSE.MD](../../LICENSE.MD).
 
-Resmi Dokploy Cloud'u kullanmak için ziyaret edin: [Dokploy Cloud](https://app.dokploy.com).  
-Daha fazla belge için resmi belgelere bakın: [docs.dokploy.com](https://docs.dokploy.com).
+## Katkıda Bulunma
 
-## 🌐 Dil Desteği
-
-Mevcut sürüm, yerleşik çok dilli arayüz (i18n) ile birlikte gelir ve aşağıdaki dilleri destekler:
-
-- 简体中文 (zh-Hans)
-- 繁體中文 (zh-Hant)
-- English (en)
-- Deutsch (de) 
-- Español (es)
-- Français (fr)
-- Italiano (it)
-- 日本語 (ja)
-- 한국어 (ko)
-- Русский (ru)
-- Türkçe (tr)
-- Nederlands (nl)
-- Norsk (no)
-- Português (Brasil) (pt-br)
-- فارسی (Farsi) (fa)
-- Bahasa Indonesia (id)
-- Українська (uk)
-- Қазақша (kz)
-- Azərbaycanca (az)
-- മലയാളം (ml)
-- Polski (pl)
-
-Dil, Dokploy kontrol panelinin sol alt köşesinden değiştirilebilir.
-
-## ♥️ Sponsorlar
-
-🙏 Dokploy'u mümkün kılan tüm sponsorlarımıza derinden minnettarız! Desteğiniz barındırma, test etme ve yeni özellikler geliştirme maliyetlerini karşılamaya yardımcı oluyor.
-
-[Dokploy Open Collective](https://opencollective.com/dokploy)
-
-[Github Sponsors](https://github.com/sponsors/Siumauricio)
-
-<!-- Hero Sponsors 🎖 -->
-
-<!-- Add Hero Sponsors here -->
-
-### Hero Sponsors 🎖
-
-<div>
-  <a href="https://www.hostinger.com/vps-hosting?ref=dokploy"><img src=".github/sponsors/hostinger.jpg" alt="Hostinger" width="300"/></a>
-  <a href="https://www.lxaer.com/?ref=dokploy"><img src=".github/sponsors/lxaer.png" alt="LX Aer" width="100"/></a>
-        <a href="https://www.lambdatest.com/?utm_source=dokploy&utm_medium=sponsor" target="_blank">
-            <img src="https://www.lambdatest.com/blue-logo.png"  width="450" height="100" />
-        </a>
-
-</div>
-
-<!-- Premium Supporters 🥇 -->
-
-<!-- Add Premium Supporters here -->
-
-### Premium Supporters 🥇
-
-<div>
-  <a href="https://supafort.com/?ref=dokploy"><img src="https://supafort.com/build/q-4Ht4rBZR.webp" alt="Supafort.com" width="300"/></a>
-  <a href="https://agentdock.ai/?ref=dokploy"><img src=".github/sponsors/agentdock.png" alt="agentdock.ai" width="100"/></a>
-</div>
-
-<!-- Elite Contributors 🥈 -->
-
-<!-- Add Elite Contributors here -->
-
-### Elite Contributors 🥈
-
-<div>
-  <a href="https://americancloud.com/?ref=dokploy"><img src=".github/sponsors/american-cloud.png" alt="AmericanCloud" width="300"/></a>
-  <a href="https://tolgee.io/?utm_source=github_dokploy&utm_medium=banner&utm_campaign=dokploy"><img src="https://dokploy.com/tolgee-logo.png" alt="Tolgee" width="100"/></a>
-</div>
-
-### Supporting Members 🥉
-
-<div>
-
-  <a href="https://cloudblast.io/?ref=dokploy"><img src="https://cloudblast.io/img/logo-icon.193cf13e.svg" width="250px" alt="Cloudblast.io"/></a>
-
-  <a href="https://synexa.ai/?ref=dokploy"><img src=".github/sponsors/synexa.png" width="65px" alt="Synexa"/></a>
-</div>
-
-### Community Backers 🤝
-
-#### Organizations:
-
-[Sponsors on Open Collective](https://opencollective.com/dokploy)
-
-#### Individuals:
-
-[![Individual Contributors on Open Collective](https://opencollective.com/dokploy/individuals.svg?width=890)](https://opencollective.com/dokploy)
-
-### Contributors 🤝
-
-<a href="https://github.com/dokploy/dokploy/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=dokploy/dokploy" alt="Contributors" />
-</a>
-
-## 📺 Video Eğitimi
-
-<a href="https://youtu.be/mznYKPvhcfw">
-  <img src="https://dokploy.com/banner.png" alt="Watch the video" width="400"/>
-</a>
-
-## 🤝 Katkıda Bulunma
-
-Daha fazla bilgi için [Katkıda Bulunma Rehberi](CONTRIBUTING.md)'ne bakın.
-
-
-
+Bkz. [CONTRIBUTING.md](../../CONTRIBUTING.md).

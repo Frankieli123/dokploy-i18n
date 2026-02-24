@@ -1,172 +1,100 @@
 <div align="center">
   <a href="https://dokploy.com">
-    <img src=".github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%"  />
+    <img src="../../.github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%" />
   </a>
-  </br>
-  </br>
+  <br />
+  <br />
+
+  [![License](https://img.shields.io/github/license/Frankieli123/dokploy-i18n?style=flat-square)](../../LICENSE.MD)
+  [![Stars](https://img.shields.io/github/stars/Frankieli123/dokploy-i18n?style=flat-square)](https://github.com/Frankieli123/dokploy-i18n/stargazers)
+  [![Docker Pulls](https://img.shields.io/docker/pulls/a3180623/dokploy-i18n?style=flat-square)](https://hub.docker.com/r/a3180623/dokploy-i18n)
+
   <p>Dołącz do naszego Discorda, aby uzyskać pomoc, opinie i dyskusje!</p>
   <a href="https://discord.gg/2tBnJ3jDJc">
-    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield"/>
+    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield" />
   </a>
 </div>
-<br />
 
+# Dokploy i18n
 
-<div align="center" markdown="1">
-   <sup>Szczególne podziękowania dla:</sup>
-   <br>
-   <br>
-   <a href="https://tuple.app/dokploy">
-     <img src=".github/sponsors/tuple.png" alt="Tuple's sponsorship image" width="400"/>
-   </a>
+Wersja rozszerzona przez społeczność na podstawie oficjalnego [Dokploy](https://github.com/Dokploy/dokploy), z:
 
-### [Tuple, najlepsza aplikacja do udostępniania ekranu dla deweloperów](https://tuple.app/dokploy)
-[Dostępne dla MacOS i Windows](https://tuple.app/dokploy)<br>
+- **i18n** — Obsługa 20+ języków
+- **Panel Asystenta AI** — Chat / Agent, zatwierdzanie wywołań narzędzi, MCP Server
+- **Kopie zapasowe woluminów** — Planowanie kopii zapasowych woluminów Docker/bind mount do zewnętrznego magazynu, z przywracaniem
 
-</div>
+> Oficjalna dokumentacja: [docs.dokploy.com](https://docs.dokploy.com)
 
+---
 
-Dokploy to darmowa, samodzielnie hostowana PaaS (Platform as a Service) zaprojektowana w celu uproszczenia wdrażania i zarządzania aplikacjami oraz bazami danych. To repozytorium jest oparte na oficjalnym Dokploy z dodanym wsparciem dla wielojęzycznego interfejsu (i18n).
+**Języki**:&ensp;
+[简体中文](README-zh-Hans.md) |
+[繁體中文](README-zh-Hant.md) |
+[English](README-en.md) |
+[日本語](README-ja.md) |
+[한국어](README-ko.md) |
+[Русский](README-ru.md) |
+[Więcej...](./)
 
-## ✨ Funkcje
+---
 
-Dokploy zapewnia kompleksowy zestaw możliwości, które pomogą Ci łatwiej zarządzać aplikacjami i bazami danych na własnych serwerach:
+## Spis treści
 
-- **Wdrażanie aplikacji**: Obsługuje wiele języków i środowisk uruchomieniowych, w tym Node.js, PHP, Python, Go, Ruby i więcej.
-- **Zarządzanie bazami danych**: Wbudowane tworzenie i zarządzanie bazami danych, w tym MySQL, PostgreSQL, MongoDB, MariaDB, Redis i więcej.
-- **Backupy**: Skonfiguruj automatyczne backupy do zewnętrznego magazynu dla baz danych.
-- **Docker Compose**: Natywne wsparcie dla Docker Compose, idealne dla złożonych aplikacji wielousługowych.
-- **Klaster wielowęzłowy**: Zarządzanie klastrem oparte na Docker Swarm, umożliwia skalowanie wielowęzłowe.
-- **Rynek szablonów**: Wdrażanie jednym kliknięciem aplikacji open source (Plausible, Pocketbase, Cal.com itp.).
-- **Integracja Traefik**: Automatyczne routowanie i równoważenie obciążenia, zintegrowane z Traefik.
-- **Monitorowanie w czasie rzeczywistym**: Monitoruj użycie CPU, pamięci, dysku, sieci i innych zasobów.
-- **Zarządzanie Dockerem**: Łatwo wdrażaj i zarządzaj kontenerami.
-- **CLI / API**: Zarządzaj zasobami przez wiersz poleceń lub API.
-- **Zarządzanie wieloma serwerami**: Ujednolicone zarządzanie wdrożeniami na zdalnych serwerach.
-- **Samodzielne hostowanie**: W pełni samodzielne hostowanie na Twoim VPS lub maszynie fizycznej.
+- [Szybki Start](#szybki-start)
+- [Kopie zapasowe woluminów](#kopie-zapasowe-woluminow)
+- [Panel Asystenta AI](#panel-asystenta-ai)
+- [Licencja](#licencja)
 
-## 🚀 Szybki Start
+## Szybki Start
 
-Uruchom następujące polecenie na nowym serwerze Linux, aby zainstalować Dokploy:
+> Wymagania: uprawnienia root, porty 80/443/3000 wolne, Docker Swarm
+
+| Scenariusz | Komenda |
+|------|------|
+| **Standardowy** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh \| bash` |
+| **Dane na /data** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data.sh \| bash` |
+| **Sieć Chińska** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-china.sh \| bash` |
+| **Chiny + /data** (Zalecane) | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data-china.sh \| bash` |
+
+Po instalacji odwiedź: `http://<your-server-ip>:3000`
+
+## Kopie zapasowe woluminów
+
+Oficjalny Dokploy obsługuje tylko kopie zapasowe baz danych. Ten fork dodaje **Kopie zapasowe woluminów**, umożliwiając planowanie kopii zapasowych i przywracanie woluminów Docker i bind mounts dla dowolnej usługi (aplikacje, Compose, bazy danych).
+
+**Wejście**: Przejdź do strony szczegółów dowolnej aplikacji/usługi -> zakładka `Kopie zapasowe woluminów`
+
+**Możliwości**:
+- Zaplanowana automatyczna kopia zapasowa do S3 itp. przez cron
+- Obsługa Docker Named Volumes, Bind Mounts, kopia wszystkich montowań naraz
+- Zachowaj ostatnie N kopii zapasowych, automatyczne czyszczenie starych
+- Opcjonalne zatrzymanie kontenera przed kopią zapasową dla spójności danych
+- Przywracanie z kopii zapasowych
+
+## Panel Asystenta AI
+
+**Wejście**: Zaloguj się do Pulpitu -> Kliknij przycisk bota w prawym dolnym rogu
+
+**Włącz**: `Pulpit -> Ustawienia -> AI` (`/dashboard/settings/ai`) -> Dodaj dostawcę AI (OpenAI / Anthropic / Gemini / Ollama itp.)
+
+**Możliwości**:
+- Chat / Agent dwa tryby
+- Zatwierdzanie wywołań narzędzi: można przerwać strumieniowanie i anulować uruchomienie backendu
+- MCP Servers: zarządzanie w panelu, wywoływalne w rozmowach
+
+### Zależność pgvector
+
+Aby włączyć Embedding/wyszukiwanie wektorowe, PostgreSQL potrzebuje pgvector. Jeśli dokploy-postgres to nadal postgres:16, zaktualizuj:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh | bash
+docker service update --force --image pgvector/pgvector:pg16 dokploy-postgres
+docker service update --force dokploy
 ```
 
-Powyższy skrypt automatycznie pobierze obrazy:
+## Licencja
 
-- Główna usługa panelu: `a3180623/dokploy-i18n:<wersja>`
+Na podstawie Dokploy upstream (Apache-2.0), zobacz [LICENSE.MD](../../LICENSE.MD).
 
-Aby użyć oficjalnego Dokploy Cloud, odwiedź: [Dokploy Cloud](https://app.dokploy.com).  
-Więcej dokumentacji znajdziesz w oficjalnej dokumentacji: [docs.dokploy.com](https://docs.dokploy.com).
+## Współtworzenie
 
-## 🌐 Wsparcie języków
-
-Aktualna wersja jest dostarczana ze zintegrowanym wielojęzycznym interfejsem (i18n) i obsługuje następujące języki:
-
-- 简体中文 (zh-Hans)
-- 繁體中文 (zh-Hant)
-- English (en)
-- Deutsch (de) 
-- Español (es)
-- Français (fr)
-- Italiano (it)
-- 日本語 (ja)
-- 한국어 (ko)
-- Русский (ru)
-- Türkçe (tr)
-- Nederlands (nl)
-- Norsk (no)
-- Português (Brasil) (pt-br)
-- فارسی (Farsi) (fa)
-- Bahasa Indonesia (id)
-- Українська (uk)
-- Қазақша (kz)
-- Azərbaycanca (az)
-- മലയാളം (ml)
-- Polski (pl)
-
-Możesz zmienić język z lewego dolnego rogu panelu Dokploy.
-
-## ♥️ Sponsorzy
-
-🙏 Jesteśmy bardzo wdzięczni wszystkim naszym sponsorom, którzy umożliwiają Dokploy! Twoje wsparcie pomaga pokryć koszty hostingu, testowania i opracowywania nowych funkcji.
-
-[Dokploy Open Collective](https://opencollective.com/dokploy)
-
-[Github Sponsors](https://github.com/sponsors/Siumauricio)
-
-<!-- Hero Sponsors 🎖 -->
-
-<!-- Add Hero Sponsors here -->
-
-### Hero Sponsors 🎖
-
-<div>
-  <a href="https://www.hostinger.com/vps-hosting?ref=dokploy"><img src=".github/sponsors/hostinger.jpg" alt="Hostinger" width="300"/></a>
-  <a href="https://www.lxaer.com/?ref=dokploy"><img src=".github/sponsors/lxaer.png" alt="LX Aer" width="100"/></a>
-        <a href="https://www.lambdatest.com/?utm_source=dokploy&utm_medium=sponsor" target="_blank">
-            <img src="https://www.lambdatest.com/blue-logo.png"  width="450" height="100" />
-        </a>
-
-</div>
-
-<!-- Premium Supporters 🥇 -->
-
-<!-- Add Premium Supporters here -->
-
-### Premium Supporters 🥇
-
-<div>
-  <a href="https://supafort.com/?ref=dokploy"><img src="https://supafort.com/build/q-4Ht4rBZR.webp" alt="Supafort.com" width="300"/></a>
-  <a href="https://agentdock.ai/?ref=dokploy"><img src=".github/sponsors/agentdock.png" alt="agentdock.ai" width="100"/></a>
-</div>
-
-<!-- Elite Contributors 🥈 -->
-
-<!-- Add Elite Contributors here -->
-
-### Elite Contributors 🥈
-
-<div>
-  <a href="https://americancloud.com/?ref=dokploy"><img src=".github/sponsors/american-cloud.png" alt="AmericanCloud" width="300"/></a>
-  <a href="https://tolgee.io/?utm_source=github_dokploy&utm_medium=banner&utm_campaign=dokploy"><img src="https://dokploy.com/tolgee-logo.png" alt="Tolgee" width="100"/></a>
-</div>
-
-### Supporting Members 🥉
-
-<div>
-
-  <a href="https://cloudblast.io/?ref=dokploy"><img src="https://cloudblast.io/img/logo-icon.193cf13e.svg" width="250px" alt="Cloudblast.io"/></a>
-
-  <a href="https://synexa.ai/?ref=dokploy"><img src=".github/sponsors/synexa.png" width="65px" alt="Synexa"/></a>
-</div>
-
-### Community Backers 🤝
-
-#### Organizations:
-
-[Sponsors on Open Collective](https://opencollective.com/dokploy)
-
-#### Individuals:
-
-[![Individual Contributors on Open Collective](https://opencollective.com/dokploy/individuals.svg?width=890)](https://opencollective.com/dokploy)
-
-### Contributors 🤝
-
-<a href="https://github.com/dokploy/dokploy/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=dokploy/dokploy" alt="Contributors" />
-</a>
-
-## 📺 Samouczek wideo
-
-<a href="https://youtu.be/mznYKPvhcfw">
-  <img src="https://dokploy.com/banner.png" alt="Watch the video" width="400"/>
-</a>
-
-## 🤝 Współtworzenie
-
-Sprawdź [Przewodnik po współtworzeniu](CONTRIBUTING.md), aby uzyskać więcej informacji.
-
-
-
+Zobacz [CONTRIBUTING.md](../../CONTRIBUTING.md).

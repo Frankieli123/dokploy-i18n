@@ -1,172 +1,100 @@
 <div align="center">
   <a href="https://dokploy.com">
-    <img src=".github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%"  />
+    <img src="../../.github/sponsors/logo.png" alt="Dokploy - Open Source Alternative to Vercel, Heroku and Netlify." width="100%" />
   </a>
-  </br>
-  </br>
+  <br />
+  <br />
+
+  [![License](https://img.shields.io/github/license/Frankieli123/dokploy-i18n?style=flat-square)](../../LICENSE.MD)
+  [![Stars](https://img.shields.io/github/stars/Frankieli123/dokploy-i18n?style=flat-square)](https://github.com/Frankieli123/dokploy-i18n/stargazers)
+  [![Docker Pulls](https://img.shields.io/docker/pulls/a3180623/dokploy-i18n?style=flat-square)](https://hub.docker.com/r/a3180623/dokploy-i18n)
+
   <p>Bli med på vår Discord for hjelp, tilbakemeldinger og diskusjoner!</p>
   <a href="https://discord.gg/2tBnJ3jDJc">
-    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield"/>
+    <img src="https://discordapp.com/api/guilds/1234073262418563112/widget.png?style=banner2" alt="Discord Shield" />
   </a>
 </div>
-<br />
 
+# Dokploy i18n
 
-<div align="center" markdown="1">
-   <sup>Spesiell takk til:</sup>
-   <br>
-   <br>
-   <a href="https://tuple.app/dokploy">
-     <img src=".github/sponsors/tuple.png" alt="Tuple's sponsorship image" width="400"/>
-   </a>
+Community forbedret versjon basert på offisiell [Dokploy](https://github.com/Dokploy/dokploy), med:
 
-### [Tuple, den ledende skjermdelingsappen for utviklere](https://tuple.app/dokploy)
-[Tilgjengelig for MacOS og Windows](https://tuple.app/dokploy)<br>
+- **i18n** — Støtte for 20+ språk
+- **AI Assistent Panel** — Chat / Agent, verktøykall-godkjenning, MCP Server
+- **Volum-sikkerhetskopier** — Planlagte Docker volum/bind mount sikkerhetskopier til ekstern lagring, med gjenoppretting
 
-</div>
+> Offisiell dokumentasjon: [docs.dokploy.com](https://docs.dokploy.com)
 
+---
 
-Dokploy er en gratis, selv-hostet PaaS (Platform as a Service) designet for å forenkle distribusjon og administrasjon av applikasjoner og databaser. Dette repository er basert på offisiell Dokploy med lagt til støtte for flerspråklig grensesnitt (i18n).
+**Språk**:&ensp;
+[简体中文](README-zh-Hans.md) |
+[繁體中文](README-zh-Hant.md) |
+[English](README-en.md) |
+[日本語](README-ja.md) |
+[한국어](README-ko.md) |
+[Русский](README-ru.md) |
+[Mer...](./)
 
-## ✨ Funksjoner
+---
 
-Dokploy tilbyr et omfattende sett med muligheter for å hjelpe deg med å administrere applikasjoner og databaser enklere på dine egne servere:
+## Innholdsfortegnelse
 
-- **Applikasjonsdistribusjon**: Støtter flere språk og kjøretidsmiljøer inkludert Node.js, PHP, Python, Go, Ruby og mer.
-- **Databaseadministrasjon**: Innebygd opprettelse og administrasjon av databaser inkludert MySQL, PostgreSQL, MongoDB, MariaDB, Redis og mer.
-- **Sikkerhetskopiering**: Konfigurer automatiske sikkerhetskopier til ekstern lagring for databaser.
-- **Docker Compose**: Innebygd støtte for Docker Compose, perfekt for komplekse multi-service applikasjoner.
-- **Multi-node clustering**: Clusteradministrasjon basert på Docker Swarm, muliggjør multi-node skalering.
-- **Malmarked**: En-klikk distribusjon av åpen kildekode applikasjoner (Plausible, Pocketbase, Cal.com, etc.).
-- **Traefik-integrasjon**: Automatisk ruting og lastbalansering, integrert med Traefik.
-- **Sanntids overvåking**: Overvåk bruken av CPU, minne, disk, nettverk og andre ressurser.
-- **Docker-administrasjon**: Distribuer og administrer containere enkelt.
-- **CLI / API**: Administrer ressurser via kommandolinje eller API.
-- **Multi-server administrasjon**: Enhetlig administrasjon av distribusjoner på eksterne servere.
-- **Selv-hostet**: Fullt selv-hostet på din VPS eller fysisk maskin.
+- [Rask Start](#rask-start)
+- [Volum-sikkerhetskopier](#volum-sikkerhetskopier)
+- [AI Assistent Panel](#ai-assistent-panel)
+- [Lisens](#lisens)
 
-## 🚀 Rask Start
+## Rask Start
 
-Kjør følgende kommando på en ny Linux-server for å installere Dokploy:
+> Krav: root rettigheter, porter 80/443/3000 ledige, Docker Swarm
+
+| Scenario | Kommando |
+|------|------|
+| **Standard** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh \| bash` |
+| **Data på /data** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data.sh \| bash` |
+| **Kina nettverk** | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-china.sh \| bash` |
+| **Kina + /data** (Anbefalt) | `curl -fsSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install-data-china.sh \| bash` |
+
+Etter installasjon besøk: `http://<your-server-ip>:3000`
+
+## Volum-sikkerhetskopier
+
+Offisiell Dokploy støtter kun database-sikkerhetskopier. Denne fork legger til **Volum-sikkerhetskopier**, som muliggjør planlagte sikkerhetskopier og gjenoppretting av Docker volumer og bind mounts for enhver tjeneste (applikasjoner, Compose, databaser).
+
+**Inngang**: Gå til en app/tjeneste detaljside -> `Volum-sikkerhetskopier` fane
+
+**Egenskaper**:
+- Planlagt auto-sikkerhetskopi til S3 etc. via cron
+- Støtter Docker Named Volumes, Bind Mounts, sikkerhetskopi av alle mounts samtidig
+- Behold de siste N sikkerhetskopiene, automatisk opprydding av gamle
+- Valgfri container-stopp før sikkerhetskopi for datakonsistens
+- Gjenoppretting fra sikkerhetskopier
+
+## AI Assistent Panel
+
+**Inngang**: Logg inn på Dashbord -> Klikk på bot-knappen i nedre høyre hjørne
+
+**Aktiver**: `Dashbord -> Innstillinger -> AI` (`/dashboard/settings/ai`) -> Legg til AI-leverandør (OpenAI / Anthropic / Gemini / Ollama etc.)
+
+**Egenskaper**:
+- Chat / Agent to moduser
+- Verktøykall-godkjenning: kan avbryte strømming og kansellere backend-kjøring
+- MCP Servere: administrer i panelet, kan kalles i samtaler
+
+### pgvector avhengighet
+
+For å aktivere Embedding/vektorsøk, trenger PostgreSQL pgvector. Hvis dokploy-postgres fortsatt er postgres:16, oppgrader:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Frankieli123/dokploy-i18n/main/install.sh | bash
+docker service update --force --image pgvector/pgvector:pg16 dokploy-postgres
+docker service update --force dokploy
 ```
 
-Skriptet over vil automatisk hente bildene:
+## Lisens
 
-- Hovedpaneltjeneste: `a3180623/dokploy-i18n:<versjon>`
+Basert på oppstrøms Dokploy (Apache-2.0), se [LICENSE.MD](../../LICENSE.MD).
 
-For å bruke offisiell Dokploy Cloud, besøk: [Dokploy Cloud](https://app.dokploy.com).  
-For mer dokumentasjon, se den offisielle dokumentasjonen: [docs.dokploy.com](https://docs.dokploy.com).
+## Bidra
 
-## 🌐 Språkstøtte
-
-Den nåværende versjonen leveres med et innebygd flerspråklig grensesnitt (i18n) og støtter følgende språk:
-
-- 简体中文 (zh-Hans)
-- 繁體中文 (zh-Hant)
-- English (en)
-- Deutsch (de) 
-- Español (es)
-- Français (fr)
-- Italiano (it)
-- 日本語 (ja)
-- 한국어 (ko)
-- Русский (ru)
-- Türkçe (tr)
-- Nederlands (nl)
-- Norsk (no)
-- Português (Brasil) (pt-br)
-- فارسی (Farsi) (fa)
-- Bahasa Indonesia (id)
-- Українська (uk)
-- Қазақша (kz)
-- Azərbaycanca (az)
-- മലയാളം (ml)
-- Polski (pl)
-
-Du kan endre språket fra nedre venstre hjørne av Dokploy-dashbordet.
-
-## ♥️ Sponsorer
-
-🙏 Vi er dypt takknemlige til alle våre sponsorer som gjør Dokploy mulig! Din støtte bidrar til å dekke kostnadene ved hosting, testing og utvikling av nye funksjoner.
-
-[Dokploy Open Collective](https://opencollective.com/dokploy)
-
-[Github Sponsors](https://github.com/sponsors/Siumauricio)
-
-<!-- Hero Sponsors 🎖 -->
-
-<!-- Add Hero Sponsors here -->
-
-### Hero Sponsors 🎖
-
-<div>
-  <a href="https://www.hostinger.com/vps-hosting?ref=dokploy"><img src=".github/sponsors/hostinger.jpg" alt="Hostinger" width="300"/></a>
-  <a href="https://www.lxaer.com/?ref=dokploy"><img src=".github/sponsors/lxaer.png" alt="LX Aer" width="100"/></a>
-        <a href="https://www.lambdatest.com/?utm_source=dokploy&utm_medium=sponsor" target="_blank">
-            <img src="https://www.lambdatest.com/blue-logo.png"  width="450" height="100" />
-        </a>
-
-</div>
-
-<!-- Premium Supporters 🥇 -->
-
-<!-- Add Premium Supporters here -->
-
-### Premium Supporters 🥇
-
-<div>
-  <a href="https://supafort.com/?ref=dokploy"><img src="https://supafort.com/build/q-4Ht4rBZR.webp" alt="Supafort.com" width="300"/></a>
-  <a href="https://agentdock.ai/?ref=dokploy"><img src=".github/sponsors/agentdock.png" alt="agentdock.ai" width="100"/></a>
-</div>
-
-<!-- Elite Contributors 🥈 -->
-
-<!-- Add Elite Contributors here -->
-
-### Elite Contributors 🥈
-
-<div>
-  <a href="https://americancloud.com/?ref=dokploy"><img src=".github/sponsors/american-cloud.png" alt="AmericanCloud" width="300"/></a>
-  <a href="https://tolgee.io/?utm_source=github_dokploy&utm_medium=banner&utm_campaign=dokploy"><img src="https://dokploy.com/tolgee-logo.png" alt="Tolgee" width="100"/></a>
-</div>
-
-### Supporting Members 🥉
-
-<div>
-
-  <a href="https://cloudblast.io/?ref=dokploy"><img src="https://cloudblast.io/img/logo-icon.193cf13e.svg" width="250px" alt="Cloudblast.io"/></a>
-
-  <a href="https://synexa.ai/?ref=dokploy"><img src=".github/sponsors/synexa.png" width="65px" alt="Synexa"/></a>
-</div>
-
-### Community Backers 🤝
-
-#### Organizations:
-
-[Sponsors on Open Collective](https://opencollective.com/dokploy)
-
-#### Individuals:
-
-[![Individual Contributors on Open Collective](https://opencollective.com/dokploy/individuals.svg?width=890)](https://opencollective.com/dokploy)
-
-### Contributors 🤝
-
-<a href="https://github.com/dokploy/dokploy/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=dokploy/dokploy" alt="Contributors" />
-</a>
-
-## 📺 Video Opplæring
-
-<a href="https://youtu.be/mznYKPvhcfw">
-  <img src="https://dokploy.com/banner.png" alt="Watch the video" width="400"/>
-</a>
-
-## 🤝 Bidra
-
-Sjekk ut [Bidragsguiden](CONTRIBUTING.md) for mer informasjon.
-
-
-
+Se [CONTRIBUTING.md](../../CONTRIBUTING.md).
