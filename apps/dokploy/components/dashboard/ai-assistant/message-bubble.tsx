@@ -22,7 +22,7 @@ import { ToolCallBlock } from "./tool-call-block";
 import type { Message, ToolCall } from "./use-chat";
 
 const assistantHeadingClassName =
-	"break-words [overflow-wrap:anywhere] text-sm font-semibold leading-relaxed mb-2 mt-3 first:mt-0";
+	"break-words [overflow-wrap:anywhere] text-xs font-semibold leading-relaxed mb-2 mt-3 first:mt-0";
 
 const assistantMarkdownComponents: Components = {
 	p: ({ children }) => (
@@ -499,15 +499,15 @@ export function MessageBubble({
 					className={cn(isUser && "rounded-xl border bg-muted/30 px-3 py-2.5")}
 				>
 					{isUser ? (
-						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm">
+						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-xs">
 							{bubbleText}
 						</p>
 					) : shouldShowEmptyAssistantFallback ? (
-						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm">
+						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-xs">
 							{t("common.unknownError")}
 						</p>
 					) : (
-						<div className="space-y-2 text-sm">
+						<div className="space-y-2 text-xs">
 							{waterfallParts.map((part, idx) => {
 								if (part.type === "tool") {
 									const toolCall = toolCallById.get(part.toolCallId);
@@ -534,11 +534,11 @@ export function MessageBubble({
 									return (
 										<p
 											key={`text-${idx}`}
-											className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm"
+											className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-xs"
 										>
 											{text}
 											{idx === lastStreamingTextIdx && (
-												<span className="inline-block w-[2px] h-4 ml-1 bg-current align-middle animate-pulse" />
+												<span className="inline-block w-[2px] h-3 ml-1 bg-current align-middle animate-pulse" />
 											)}
 										</p>
 									);

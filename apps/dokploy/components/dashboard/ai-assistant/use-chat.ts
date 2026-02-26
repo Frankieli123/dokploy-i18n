@@ -309,8 +309,33 @@ export function mergeServerAndPendingMessages(
 	});
 	const mergedServerIds = new Set(mergedServer.map((m) => m.messageId));
 
+	const isEphemeralPendingId = (messageId: string) =>
+		messageId.startsWith("temp-") || messageId.startsWith("agent-run-");
+
 	const pendingOnly = pending.filter((pendingMessage) => {
 		if (mergedServerIds.has(pendingMessage.messageId)) return false;
+		if (isEphemeralPendingId(pendingMessage.messageId)) {
+			const pendingTime = Date.parse(pendingMessage.createdAt ?? "");
+			const hasEquivalentOnServer = mergedServer.some((serverMessage) => {
+				if (serverMessage.role !== pendingMessage.role) return false;
+				if (serverMessage.content !== pendingMessage.content) return false;
+				if (
+					!areAttachmentsEqual(
+						serverMessage.attachments,
+						pendingMessage.attachments,
+					)
+				) {
+					return false;
+				}
+				const serverTime = Date.parse(serverMessage.createdAt ?? "");
+				if (Number.isFinite(pendingTime) && Number.isFinite(serverTime)) {
+					// Avoid dropping legitimate repeated messages from earlier history.
+					if (serverTime < pendingTime - 60 * 1000) return false;
+				}
+				return true;
+			});
+			if (hasEquivalentOnServer) return false;
+		}
 		if (pendingMessage.status === "sending") return true;
 		return !mergedServer.some(
 			(serverMessage) =>
@@ -320,7 +345,7 @@ export function mergeServerAndPendingMessages(
 					serverMessage.attachments,
 					pendingMessage.attachments,
 				),
-		);
+			);
 	});
 
 	const merged = [...mergedServer, ...pendingOnly];
@@ -2405,19 +2430,6 @@ export function useChat(options: UseChatOptions = {}) {
 				} catch (error) {
 					setConversationAbortControllerState(streamConversationId, null);
 					if (isAbortLikeError(error)) {
-						if (abortedBySafetyTimer) {
-							const assistantId = assistantMessageId;
-							setPendingMessages((prev) =>
-								prev.map((m) =>
-									m.messageId === assistantId
-										? { ...m, status: "sent" as const }
-										: m,
-								),
-							);
-							setConversationLoadingState(streamConversationId, false);
-							await refetchMessages().catch(() => {});
-							return;
-						}
 						const assistantId = assistantMessageId;
 						setPendingMessages((prev) =>
 							prev.map((m) =>
@@ -2426,7 +2438,29 @@ export function useChat(options: UseChatOptions = {}) {
 									: m,
 							),
 						);
-						setConversationLoadingState(streamConversationId, false);
+						let didRefetch = false;
+						try {
+							const refetchPromise = refetchMessages()
+								.then(() => true)
+								.catch(() => false);
+							didRefetch = await Promise.race([
+								refetchPromise,
+								new Promise<boolean>((resolve) =>
+									setTimeout(() => resolve(false), 10000),
+								),
+							]);
+						} finally {
+							setConversationLoadingState(streamConversationId, false);
+							if (didRefetch) {
+								setPendingMessages((prev) =>
+									prev.filter(
+										(m) =>
+											m.messageId !== userTempId &&
+											m.messageId !== assistantId,
+									),
+								);
+							}
+						}
 						return;
 					}
 
@@ -2451,17 +2485,34 @@ export function useChat(options: UseChatOptions = {}) {
 					const assistantId = assistantMessageId;
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === assistantId
-								? abortedBySafetyTimer
-									? { ...m, status: "sent" as const }
-									: { ...m, status: "sent" as const }
+							m.messageId === userTempId || m.messageId === assistantId
+								? { ...m, status: "sent" as const }
 								: m,
 						),
 					);
-					setConversationLoadingState(streamConversationId, false);
-					setConversationAbortControllerState(streamConversationId, null);
-					if (abortedBySafetyTimer) {
-						await refetchMessages().catch(() => {});
+					let didRefetch = false;
+					try {
+						const refetchPromise = refetchMessages()
+							.then(() => true)
+							.catch(() => false);
+						didRefetch = await Promise.race([
+							refetchPromise,
+							new Promise<boolean>((resolve) =>
+								setTimeout(() => resolve(false), 10000),
+							),
+						]);
+					} finally {
+						setConversationLoadingState(streamConversationId, false);
+						setConversationAbortControllerState(streamConversationId, null);
+						if (didRefetch) {
+							setPendingMessages((prev) =>
+								prev.filter(
+									(m) =>
+										m.messageId !== userTempId &&
+										m.messageId !== assistantId,
+								),
+							);
+						}
 					}
 					return;
 				}

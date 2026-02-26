@@ -68,70 +68,70 @@ export const ShowVolumes = ({ id, type }: Props) => {
 							{data?.mounts.map((mount) => (
 								<div key={mount.mountId}>
 									<div
-										key={mount.mountId}
-										className="flex w-full flex-col sm:flex-row sm:items-center justify-between gap-4 sm:gap-10 border rounded-lg p-4"
-									>
-										{/* <Package className="size-8 self-center text-muted-foreground" /> */}
-										<div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 flex-col gap-4 sm:gap-8">
-											<div className="flex flex-col gap-1">
-												<span className="font-medium">
-													{t("volumes.list.mountType")}
-												</span>
-												<span className="text-sm text-muted-foreground">
-													{mount.type.toUpperCase()}
-												</span>
-											</div>
-											{mount.type === "volume" && (
-												<div className="flex flex-col gap-1">
+											key={mount.mountId}
+											className="flex w-full flex-col sm:flex-row sm:items-center justify-between gap-4 sm:gap-10 border rounded-lg p-4"
+										>
+											{/* <Package className="size-8 self-center text-muted-foreground" /> */}
+											<div className="grid flex-1 min-w-0 grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 sm:gap-8">
+												<div className="flex min-w-0 flex-col gap-1">
 													<span className="font-medium">
-														{t("volumes.list.volumeName")}
+														{t("volumes.list.mountType")}
 													</span>
 													<span className="text-sm text-muted-foreground">
-														{mount.volumeName}
+														{mount.type.toUpperCase()}
 													</span>
 												</div>
-											)}
+												{mount.type === "volume" && (
+													<div className="flex min-w-0 flex-col gap-1">
+														<span className="font-medium">
+															{t("volumes.list.volumeName")}
+														</span>
+														<span className="text-sm text-muted-foreground break-all">
+															{mount.volumeName}
+														</span>
+													</div>
+												)}
 
-											{mount.type === "file" && (
-												<div className="flex flex-col gap-1">
-													<span className="font-medium">
-														{t("volumes.list.content")}
-													</span>
-													<span className="text-sm text-muted-foreground line-clamp-[10] whitespace-break-spaces">
-														{mount.content}
-													</span>
-												</div>
-											)}
-											{mount.type === "bind" && (
-												<div className="flex flex-col gap-1">
-													<span className="font-medium">
-														{t("volumes.list.hostPath")}
-													</span>
-													<span className="text-sm text-muted-foreground">
-														{mount.hostPath}
-													</span>
-												</div>
-											)}
-											{mount.type === "file" && (
-												<div className="flex flex-col gap-1">
-													<span className="font-medium">
-														{t("volumes.list.filePath")}
-													</span>
-													<span className="text-sm text-muted-foreground">
-														{mount.filePath}
-													</span>
-												</div>
-											)}
+												{mount.type === "file" && (
+													<div className="flex min-w-0 flex-col gap-1">
+														<span className="font-medium">
+															{t("volumes.list.content")}
+														</span>
+														<span className="text-sm text-muted-foreground line-clamp-[10] whitespace-break-spaces">
+															{mount.content}
+														</span>
+													</div>
+												)}
+												{mount.type === "bind" && (
+													<div className="flex min-w-0 flex-col gap-1">
+														<span className="font-medium">
+															{t("volumes.list.hostPath")}
+														</span>
+														<span className="text-sm text-muted-foreground break-all">
+															{mount.hostPath}
+														</span>
+													</div>
+												)}
+												{mount.type === "file" && (
+													<div className="flex min-w-0 flex-col gap-1">
+														<span className="font-medium">
+															{t("volumes.list.filePath")}
+														</span>
+														<span className="text-sm text-muted-foreground break-all">
+															{mount.filePath}
+														</span>
+													</div>
+												)}
 
-											<div className="flex flex-col gap-1">
-												<span className="font-medium">
-													{t("volumes.list.mountPath")}
-												</span>
-												<span className="text-sm text-muted-foreground">
-													{mount.mountPath}
-												</span>
+												<div className="flex min-w-0 flex-col gap-1">
+													<span className="font-medium">
+														{t("volumes.list.mountPath")}
+													</span>
+													<span className="text-sm text-muted-foreground break-all">
+														{mount.mountPath}
+													</span>
+												</div>
 											</div>
-										</div>
 										<div className="flex flex-row gap-1">
 											<UpdateVolume
 												mountId={mount.mountId}
