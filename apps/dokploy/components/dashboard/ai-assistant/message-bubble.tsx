@@ -22,7 +22,7 @@ import { ToolCallBlock } from "./tool-call-block";
 import type { Message, ToolCall } from "./use-chat";
 
 const assistantHeadingClassName =
-	"break-words [overflow-wrap:anywhere] text-xs font-semibold leading-relaxed mb-2 mt-3 first:mt-0";
+	"break-words [overflow-wrap:anywhere] text-sm font-semibold leading-relaxed mb-2 mt-3 first:mt-0";
 
 const assistantMarkdownComponents: Components = {
 	p: ({ children }) => (
@@ -105,7 +105,7 @@ const assistantMarkdownComponents: Components = {
 		);
 	},
 	pre: ({ children }) => (
-		<pre className="my-2 max-w-full overflow-x-auto rounded-md border border-border/50 bg-background/40 p-2 text-xs leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+		<pre className="my-2 max-w-full overflow-x-hidden rounded-md border border-border/50 bg-background/40 p-2 text-xs leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
 			{children}
 		</pre>
 	),
@@ -499,21 +499,33 @@ export function MessageBubble({
 					className={cn(isUser && "rounded-xl border bg-muted/30 px-3 py-2.5")}
 				>
 					{isUser ? (
-						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-xs">
+						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm">
 							{bubbleText}
 						</p>
 					) : shouldShowEmptyAssistantFallback ? (
-						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-xs">
+						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm">
 							{t("common.unknownError")}
 						</p>
 					) : (
-						<div className="space-y-2 text-xs">
+						<div className="space-y-2 text-sm">
 							{waterfallParts.map((part, idx) => {
 								if (part.type === "tool") {
 									const toolCall = toolCallById.get(part.toolCallId);
-									return toolCall
-										? renderToolCallCard(toolCall, `tool-${toolCall.id}-${idx}`)
-										: null;
+									if (toolCall) {
+										return renderToolCallCard(
+											toolCall,
+											`tool-${toolCall.id}-${idx}`,
+										);
+									}
+
+									return (
+										<p
+											key={`tool-marker-${part.toolCallId}-${idx}`}
+											className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm font-mono text-muted-foreground"
+										>
+											{`<<tool:${part.toolCallId}>>`}
+										</p>
+									);
 								}
 								if (part.type === "think") {
 									const value = part.value;
@@ -534,11 +546,11 @@ export function MessageBubble({
 									return (
 										<p
 											key={`text-${idx}`}
-											className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-xs"
+											className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm"
 										>
 											{text}
 											{idx === lastStreamingTextIdx && (
-												<span className="inline-block w-[2px] h-3 ml-1 bg-current align-middle animate-pulse" />
+												<span className="inline-block w-[2px] h-4 ml-1 bg-current align-middle animate-pulse" />
 											)}
 										</p>
 									);

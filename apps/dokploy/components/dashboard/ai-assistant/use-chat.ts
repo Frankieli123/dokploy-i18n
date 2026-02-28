@@ -345,7 +345,7 @@ export function mergeServerAndPendingMessages(
 					serverMessage.attachments,
 					pendingMessage.attachments,
 				),
-			);
+		);
 	});
 
 	const merged = [...mergedServer, ...pendingOnly];
@@ -389,6 +389,7 @@ type RetryContext = {
 type AgentReplayState = {
 	runId: string;
 	createdAt: string;
+	endAt: string;
 	content: string;
 	toolCalls: ToolCall[];
 	toolCallIndexById: Map<string, number>;
@@ -542,6 +543,7 @@ function buildServerDisplayMessages(serverMessages: Message[]): Message[] {
 				const initialState: AgentReplayState = {
 					runId,
 					createdAt: message.createdAt,
+					endAt: message.createdAt,
 					content: "",
 					toolCalls: [],
 					toolCallIndexById: new Map(),
@@ -553,6 +555,7 @@ function buildServerDisplayMessages(serverMessages: Message[]): Message[] {
 				runStates.set(runId, initialState);
 				return initialState;
 			})();
+		existing.endAt = message.createdAt;
 
 		if (type === "agent.output.delta") {
 			const text = typeof payload.delta === "string" ? payload.delta : "";
@@ -726,31 +729,123 @@ function buildServerDisplayMessages(serverMessages: Message[]): Message[] {
 		}
 	}
 
-	const persistedToolCallIds = new Set<string>();
-	for (const message of baseMessages) {
-		for (const tc of message.toolCalls || []) {
-			if (tc?.id) persistedToolCallIds.add(tc.id);
+	type RunWindow = {
+		runId: string;
+		startMs: number;
+		endMs: number;
+	};
+	const runWindows: RunWindow[] = [];
+	for (const state of runStates.values()) {
+		const startMs = Date.parse(state.createdAt ?? "");
+		const endMs = Date.parse(state.endAt ?? "");
+		if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
+		runWindows.push({ runId: state.runId, startMs, endMs });
+	}
+
+	const RUN_ASSISTANT_MATCH_EARLY_MS = 2 * 60 * 1000;
+	const RUN_ASSISTANT_MATCH_LATE_MS = 5 * 60 * 1000;
+	const assistantMessageByRunId = new Map<string, Message>();
+	if (runWindows.length > 0) {
+		for (const message of baseMessages) {
+			if (message.role !== "assistant") continue;
+			const messageMs = Date.parse(message.createdAt ?? "");
+			if (!Number.isFinite(messageMs)) continue;
+			let best: { runId: string; dist: number } | null = null;
+			for (const w of runWindows) {
+				if (
+					messageMs < w.startMs - RUN_ASSISTANT_MATCH_EARLY_MS ||
+					messageMs > w.endMs + RUN_ASSISTANT_MATCH_LATE_MS
+				) {
+					continue;
+				}
+				const dist = Math.abs(w.endMs - messageMs);
+				if (!best || dist < best.dist) best = { runId: w.runId, dist };
+			}
+			if (!best) continue;
+			const existing = assistantMessageByRunId.get(best.runId);
+			if (!existing) {
+				assistantMessageByRunId.set(best.runId, message);
+				continue;
+			}
+			const existingMs = Date.parse(existing.createdAt ?? "");
+			const existingDist = Number.isFinite(existingMs)
+				? Math.abs(
+						(runWindows.find((w) => w.runId === best.runId)?.endMs ??
+							existingMs) - existingMs,
+					)
+				: Number.POSITIVE_INFINITY;
+			if (best.dist < existingDist)
+				assistantMessageByRunId.set(best.runId, message);
 		}
 	}
+
+	const hiddenAssistantMessageIds = new Set<string>();
+	const OUTPUT_TRUNCATED_MARKER = "\n... (truncated)";
+
+	const extractThinkBlocks = (input: string) => {
+		if (!input.includes("<<think:")) return "";
+		const blocks: string[] = [];
+		const re = /<<think:[^>]+>>[\s\S]*?(?:<<think_end:[^>]+>>|$)/g;
+		let match: RegExpExecArray | null = re.exec(input);
+		while (match) {
+			blocks.push(match[0]);
+			match = re.exec(input);
+		}
+		return blocks.join("\n\n");
+	};
 
 	const replayMessages = Array.from(runStates.values())
 		.map((state): Message | null => {
 			const isFailed =
 				state.status === "failed" || state.status === "cancelled";
+			const persistedAssistant = assistantMessageByRunId.get(state.runId);
+			const persistedContent =
+				persistedAssistant && typeof persistedAssistant.content === "string"
+					? persistedAssistant.content
+					: "";
+			const toolCallsFromAssistant = Array.isArray(
+				persistedAssistant?.toolCalls,
+			)
+				? persistedAssistant.toolCalls
+				: [];
+
+			const contentBase = state.content ?? "";
+			const contentBaseIsTruncated = contentBase.includes(
+				OUTPUT_TRUNCATED_MARKER,
+			);
+			const shouldPreferPersisted =
+				contentBaseIsTruncated && persistedContent.trim().length > 0;
+
+			let contentToRender =
+				contentBase.trim().length > 0 && !shouldPreferPersisted
+					? contentBase
+					: persistedContent.trim().length > 0
+						? persistedContent
+						: contentBase;
+			const toolCallsToRender =
+				state.toolCalls.length > 0 ? state.toolCalls : toolCallsFromAssistant;
+
+			if (contentToRender === persistedContent && contentBaseIsTruncated) {
+				const thinkBlocks = extractThinkBlocks(contentBase);
+				if (
+					thinkBlocks.trim().length > 0 &&
+					!contentToRender.includes("<<think:")
+				) {
+					const separator = contentToRender.endsWith("\n") ? "\n" : "\n\n";
+					contentToRender = `${contentToRender}${separator}${thinkBlocks}`;
+				}
+			}
+
 			const isRunning = state.status === "running";
-			const toolCallsToRender = state.hasSummary
-				? state.toolCalls.filter((tc) => !persistedToolCallIds.has(tc.id))
-				: state.toolCalls;
-			const contentToRender =
-				state.hasSummary && state.status === "completed" && !isRunning
-					? ""
-					: state.content;
 			if (
 				contentToRender.trim().length === 0 &&
 				toolCallsToRender.length === 0 &&
 				!isRunning
 			) {
 				return null;
+			}
+			if (persistedAssistant) {
+				hiddenAssistantMessageIds.add(persistedAssistant.messageId);
 			}
 			return {
 				messageId: `agent-run-${state.runId}`,
@@ -774,7 +869,14 @@ function buildServerDisplayMessages(serverMessages: Message[]): Message[] {
 		})
 		.filter((m): m is Message => m !== null);
 
-	return [...baseMessages, ...replayMessages];
+	const filteredBase = hiddenAssistantMessageIds.size
+		? baseMessages.filter(
+				(m) =>
+					m.role !== "assistant" || !hiddenAssistantMessageIds.has(m.messageId),
+			)
+		: baseMessages;
+
+	return [...filteredBase, ...replayMessages];
 }
 
 function hasActiveAgentRunInMessages(messages: Message[]): boolean {
@@ -2128,34 +2230,47 @@ export function useChat(options: UseChatOptions = {}) {
 						controller.abort();
 					}, 1000);
 
-						try {
-							for await (const evt of readSseStream(response.body)) {
-								if (controller.signal.aborted) break;
-								if (evt.event === "ping") {
-									lastProgressTime = Date.now();
-									continue;
-								}
-								if (evt.event === "start") {
-									lastProgressTime = Date.now();
-									try {
-										const started = JSON.parse(evt.data) as unknown;
-										const startedRunId =
-											isRecord(started) && typeof started.runId === "string"
-												? started.runId.trim()
-												: "";
-										if (startedRunId.length > 0) {
-											setConversationAgentRunId(
-												streamConversationId,
-												startedRunId,
+					try {
+						for await (const evt of readSseStream(response.body)) {
+							if (controller.signal.aborted) break;
+							if (evt.event === "ping") {
+								lastProgressTime = Date.now();
+								continue;
+							}
+							if (evt.event === "start") {
+								lastProgressTime = Date.now();
+								try {
+									const started = JSON.parse(evt.data) as unknown;
+									const startedRunId =
+										isRecord(started) && typeof started.runId === "string"
+											? started.runId.trim()
+											: "";
+									if (startedRunId.length > 0) {
+										setConversationAgentRunId(
+											streamConversationId,
+											startedRunId,
+										);
+										if (assistantMessageId.startsWith("temp-")) {
+											flushDeltaNow();
+											const nextId = `agent-run-${startedRunId}`;
+											const previousId = assistantMessageId;
+											setPendingMessages((prev) =>
+												prev.map((m) =>
+													m.messageId === previousId
+														? { ...m, messageId: nextId }
+														: m,
+												),
 											);
+											assistantMessageId = nextId;
 										}
-									} catch {}
-									continue;
-								}
-								if (isProgressEvent(evt.event)) {
-									lastProgressTime = Date.now();
-									hasVisibleProgress = true;
-								}
+									}
+								} catch {}
+								continue;
+							}
+							if (isProgressEvent(evt.event)) {
+								lastProgressTime = Date.now();
+								hasVisibleProgress = true;
+							}
 
 							if (evt.event === "done") {
 								flushDeltaNow();
@@ -2455,8 +2570,7 @@ export function useChat(options: UseChatOptions = {}) {
 								setPendingMessages((prev) =>
 									prev.filter(
 										(m) =>
-											m.messageId !== userTempId &&
-											m.messageId !== assistantId,
+											m.messageId !== userTempId && m.messageId !== assistantId,
 									),
 								);
 							}
@@ -2508,8 +2622,7 @@ export function useChat(options: UseChatOptions = {}) {
 							setPendingMessages((prev) =>
 								prev.filter(
 									(m) =>
-										m.messageId !== userTempId &&
-										m.messageId !== assistantId,
+										m.messageId !== userTempId && m.messageId !== assistantId,
 								),
 							);
 						}
