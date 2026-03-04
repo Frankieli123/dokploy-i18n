@@ -37,6 +37,13 @@ import {
 	FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -49,20 +56,61 @@ import { cn } from "@/lib/utils";
 import { api } from "@/utils/api";
 import { translateErrorMessage } from "@/utils/error-translation";
 
-const mcpServerSchema = z.object({
-	name: z.string().min(1),
-	serverUrl: z.string().url(),
-	headersJson: z.string().optional().default(""),
-	isEnabled: z.boolean().optional().default(true),
-});
+const mcpServerSchema = z
+	.object({
+		transportType: z.enum(["http", "stdio"]).optional().default("http"),
+		name: z.string().min(1),
+		serverUrl: z.string().optional().default(""),
+		headersJson: z.string().optional().default(""),
+		command: z.string().optional().default(""),
+		envJson: z.string().optional().default(""),
+		cwd: z.string().optional().default(""),
+		isEnabled: z.boolean().optional().default(true),
+	})
+	.superRefine((val, ctx) => {
+		const transportType = val.transportType ?? "http";
+		if (transportType === "stdio") {
+			if (!val.command.trim()) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["command"],
+					message: "Command is required",
+				});
+			}
+			return;
+		}
+
+		const serverUrl = val.serverUrl.trim();
+		if (!serverUrl) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["serverUrl"],
+				message: "Server URL is required",
+			});
+			return;
+		}
+		try {
+			new URL(serverUrl);
+		} catch {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["serverUrl"],
+				message: "Invalid URL",
+			});
+		}
+	});
 
 type McpServerFormValues = z.infer<typeof mcpServerSchema>;
 
 type McpServerRow = {
 	mcpServerId: string;
 	name: string;
-	serverUrl: string;
+	transportType?: string | null;
+	serverUrl?: string | null;
 	headers?: Record<string, string> | null;
+	command?: string | null;
+	env?: Record<string, string> | null;
+	cwd?: string | null;
 	isEnabled: boolean;
 };
 
@@ -119,33 +167,52 @@ export const AiMcpServersForm = () => {
 	const form = useForm<McpServerFormValues>({
 		resolver: zodResolver(mcpServerSchema),
 		defaultValues: {
+			transportType: "http",
 			name: "",
 			serverUrl: "",
 			headersJson: "",
+			command: "",
+			envJson: "",
+			cwd: "",
 			isEnabled: true,
 		},
 	});
+
+	const transportType = form.watch("transportType") ?? "http";
 
 	useEffect(() => {
 		if (!open) {
 			setEditing(null);
 			form.reset({
+				transportType: "http",
 				name: "",
 				serverUrl: "",
 				headersJson: "",
+				command: "",
+				envJson: "",
+				cwd: "",
 				isEnabled: true,
 			});
 			return;
 		}
 
 		if (!editing) return;
+		const transportType =
+			editing.transportType === "stdio" ? "stdio" : ("http" as const);
 		form.reset({
+			transportType,
 			name: editing.name,
-			serverUrl: editing.serverUrl,
+			serverUrl: transportType === "http" ? String(editing.serverUrl ?? "") : "",
 			headersJson:
-				editing.headers && typeof editing.headers === "object"
+				transportType === "http" && editing.headers && typeof editing.headers === "object"
 					? JSON.stringify(editing.headers, null, 2)
 					: "",
+			command: transportType === "stdio" ? String(editing.command ?? "") : "",
+			envJson:
+				transportType === "stdio" && editing.env && typeof editing.env === "object"
+					? JSON.stringify(editing.env, null, 2)
+					: "",
+			cwd: transportType === "stdio" ? String(editing.cwd ?? "") : "",
 			isEnabled: editing.isEnabled,
 		});
 	}, [editing, form, open]);
@@ -156,8 +223,12 @@ export const AiMcpServersForm = () => {
 		return servers.map((s) => ({
 			mcpServerId: s.mcpServerId,
 			name: s.name,
-			serverUrl: s.serverUrl,
+			transportType: (s as any).transportType ?? null,
+			serverUrl: (s as any).serverUrl ?? null,
 			headers: (s as any).headers ?? null,
+			command: (s as any).command ?? null,
+			env: (s as any).env ?? null,
+			cwd: (s as any).cwd ?? null,
 			isEnabled: s.isEnabled,
 		}));
 	}, [servers]);
@@ -179,6 +250,58 @@ export const AiMcpServersForm = () => {
 	};
 
 	const onSubmit = async (values: McpServerFormValues) => {
+		const transportType = values.transportType ?? "http";
+		const name = values.name.trim();
+		const isEnabled = values.isEnabled ?? true;
+
+		if (transportType === "stdio") {
+			const env = safeJsonParseObject(values.envJson ?? "");
+			if (env === null) {
+				form.setError("envJson", {
+					type: "validate",
+					message: t("settings.ai.mcpServers.form.envInvalid"),
+				});
+				return;
+			}
+
+			const command = values.command.trim();
+			const cwd = values.cwd.trim();
+			try {
+				if (editing) {
+					await updateServer({
+						mcpServerId: editing.mcpServerId,
+						name,
+						command,
+						env,
+						cwd: cwd.length > 0 ? cwd : null,
+						isEnabled,
+					});
+				} else {
+					await createServer({
+						transportType: "stdio",
+						name,
+						command,
+						env,
+						cwd: cwd.length > 0 ? cwd : null,
+						isEnabled,
+					});
+				}
+
+				await utils.ai.mcpServers.list.invalidate();
+				toast.success(t("settings.ai.mcpServers.toast.saveSuccess"));
+				setOpen(false);
+			} catch (error) {
+				const errorMessage =
+					error instanceof Error
+						? error.message
+						: t("settings.ai.toast.unknownError");
+				toast.error(t("settings.ai.mcpServers.toast.saveError"), {
+					description: translateErrorMessage(errorMessage, t),
+				});
+			}
+			return;
+		}
+
 		const headers = safeJsonParseObject(values.headersJson ?? "");
 		if (headers === null) {
 			form.setError("headersJson", {
@@ -192,17 +315,18 @@ export const AiMcpServersForm = () => {
 			if (editing) {
 				await updateServer({
 					mcpServerId: editing.mcpServerId,
-					name: values.name.trim(),
+					name,
 					serverUrl: values.serverUrl.trim(),
 					headers,
-					isEnabled: values.isEnabled ?? true,
+					isEnabled,
 				});
 			} else {
 				await createServer({
-					name: values.name.trim(),
+					transportType: "http",
+					name,
 					serverUrl: values.serverUrl.trim(),
 					headers,
-					isEnabled: values.isEnabled ?? true,
+					isEnabled,
 				});
 			}
 
@@ -262,11 +386,11 @@ export const AiMcpServersForm = () => {
 								</DialogDescription>
 							</DialogHeader>
 
-							<Form {...form}>
-								<form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-									<FormField
-										control={form.control}
-										name="name"
+								<Form {...form}>
+									<form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+										<FormField
+											control={form.control}
+											name="name"
 										render={({ field }) => (
 											<FormItem>
 												<FormLabel>
@@ -282,62 +406,191 @@ export const AiMcpServersForm = () => {
 												</FormControl>
 												<FormMessage />
 											</FormItem>
-										)}
-									/>
+											)}
+										/>
 
-									<FormField
-										control={form.control}
-										name="serverUrl"
-										render={({ field }) => (
-											<FormItem>
-												<FormLabel>
-													{t("settings.ai.mcpServers.form.serverUrl.label")}
-												</FormLabel>
-												<FormControl>
-													<Input
-														placeholder={t(
-															"settings.ai.mcpServers.form.serverUrl.placeholder",
+										<FormField
+											control={form.control}
+											name="transportType"
+											render={({ field }) => (
+												<FormItem>
+													<FormLabel>
+														{t("settings.ai.mcpServers.form.transportType.label")}
+													</FormLabel>
+													<FormControl>
+														<Select
+															value={field.value ?? "http"}
+															onValueChange={field.onChange}
+															disabled={!!editing}
+														>
+															<SelectTrigger>
+																<SelectValue />
+															</SelectTrigger>
+															<SelectContent>
+																<SelectItem value="http">
+																	{t(
+																		"settings.ai.mcpServers.form.transportType.http",
+																	)}
+																</SelectItem>
+																<SelectItem value="stdio">
+																	{t(
+																		"settings.ai.mcpServers.form.transportType.stdio",
+																	)}
+																</SelectItem>
+															</SelectContent>
+														</Select>
+													</FormControl>
+													<FormDescription>
+														{t(
+															"settings.ai.mcpServers.form.transportType.description",
 														)}
-														{...field}
-													/>
-												</FormControl>
-												<FormDescription>
-													{t("settings.ai.mcpServers.form.serverUrl.description")}
-												</FormDescription>
-												<FormMessage />
-											</FormItem>
-										)}
-									/>
+													</FormDescription>
+													<FormMessage />
+												</FormItem>
+											)}
+										/>
 
-									<FormField
-										control={form.control}
-										name="headersJson"
-										render={({ field }) => (
-											<FormItem>
-												<FormLabel>
-													{t("settings.ai.mcpServers.form.headers.label")}
-												</FormLabel>
-												<FormControl>
-													<Textarea
-														rows={6}
-														placeholder={t(
-															"settings.ai.mcpServers.form.headers.placeholder",
-														)}
-														className="font-mono text-xs"
-														{...field}
-													/>
-												</FormControl>
-												<FormDescription>
-													{t("settings.ai.mcpServers.form.headers.description")}
-												</FormDescription>
-												<FormMessage />
-											</FormItem>
-										)}
-									/>
+										{transportType === "stdio" ? (
+											<>
+												<FormField
+													control={form.control}
+													name="command"
+													render={({ field }) => (
+														<FormItem>
+															<FormLabel>
+																{t("settings.ai.mcpServers.form.command.label")}
+															</FormLabel>
+															<FormControl>
+																<Input
+																	placeholder={t(
+																		"settings.ai.mcpServers.form.command.placeholder",
+																	)}
+																	{...field}
+																/>
+															</FormControl>
+															<FormDescription>
+																{t(
+																	"settings.ai.mcpServers.form.command.description",
+																)}
+															</FormDescription>
+															<FormMessage />
+														</FormItem>
+													)}
+												/>
 
-									<FormField
-										control={form.control}
-										name="isEnabled"
+												<FormField
+													control={form.control}
+													name="envJson"
+													render={({ field }) => (
+														<FormItem>
+															<FormLabel>
+																{t("settings.ai.mcpServers.form.env.label")}
+															</FormLabel>
+															<FormControl>
+																<Textarea
+																	rows={6}
+																	placeholder={t(
+																		"settings.ai.mcpServers.form.env.placeholder",
+																	)}
+																	className="font-mono text-xs"
+																	{...field}
+																/>
+															</FormControl>
+															<FormDescription>
+																{t("settings.ai.mcpServers.form.env.description")}
+															</FormDescription>
+															<FormMessage />
+														</FormItem>
+													)}
+												/>
+
+												<FormField
+													control={form.control}
+													name="cwd"
+													render={({ field }) => (
+														<FormItem>
+															<FormLabel>
+																{t("settings.ai.mcpServers.form.cwd.label")}
+															</FormLabel>
+															<FormControl>
+																<Input
+																	placeholder={t(
+																		"settings.ai.mcpServers.form.cwd.placeholder",
+																	)}
+																	{...field}
+																/>
+															</FormControl>
+															<FormDescription>
+																{t("settings.ai.mcpServers.form.cwd.description")}
+															</FormDescription>
+															<FormMessage />
+														</FormItem>
+													)}
+												/>
+											</>
+										) : (
+											<>
+												<FormField
+													control={form.control}
+													name="serverUrl"
+													render={({ field }) => (
+														<FormItem>
+															<FormLabel>
+																{t(
+																	"settings.ai.mcpServers.form.serverUrl.label",
+																)}
+															</FormLabel>
+															<FormControl>
+																<Input
+																	placeholder={t(
+																		"settings.ai.mcpServers.form.serverUrl.placeholder",
+																	)}
+																	{...field}
+																/>
+															</FormControl>
+															<FormDescription>
+																{t(
+																	"settings.ai.mcpServers.form.serverUrl.description",
+																)}
+															</FormDescription>
+															<FormMessage />
+														</FormItem>
+													)}
+												/>
+
+												<FormField
+													control={form.control}
+													name="headersJson"
+													render={({ field }) => (
+														<FormItem>
+															<FormLabel>
+																{t("settings.ai.mcpServers.form.headers.label")}
+															</FormLabel>
+															<FormControl>
+																<Textarea
+																	rows={6}
+																	placeholder={t(
+																		"settings.ai.mcpServers.form.headers.placeholder",
+																	)}
+																	className="font-mono text-xs"
+																	{...field}
+																/>
+															</FormControl>
+															<FormDescription>
+																{t(
+																	"settings.ai.mcpServers.form.headers.description",
+																)}
+															</FormDescription>
+															<FormMessage />
+														</FormItem>
+													)}
+												/>
+											</>
+										)}
+
+										<FormField
+											control={form.control}
+											name="isEnabled"
 										render={({ field }) => (
 											<FormItem className="flex items-center justify-between rounded-lg border p-4">
 												<div className="space-y-0.5">
@@ -391,24 +644,32 @@ export const AiMcpServersForm = () => {
 				</div>
 			) : serverRows.length === 0 ? null : (
 				<div className="flex flex-col gap-2">
-					{serverRows.map((server) => {
-						const result = testResults[server.mcpServerId];
-						const isTesting = !!testing[server.mcpServerId];
-						const status = result?.status ?? "unknown";
-						return (
-							<div
-								key={server.mcpServerId}
-								className="flex items-center justify-between bg-sidebar p-1 w-full rounded-lg"
-							>
-								<div className="flex items-center justify-between p-3.5 rounded-lg bg-background border w-full">
-									<div className="min-w-0">
-										<div className="text-sm font-medium truncate">
-											{server.name}
+						{serverRows.map((server) => {
+							const result = testResults[server.mcpServerId];
+							const isTesting = !!testing[server.mcpServerId];
+							const status = result?.status ?? "unknown";
+							const transportType =
+								server.transportType === "stdio" ? "stdio" : "http";
+							const subtitle =
+								transportType === "stdio"
+									? String(server.command ?? "")
+									: String(server.serverUrl ?? "");
+							return (
+								<div
+									key={server.mcpServerId}
+									className="flex items-center justify-between bg-sidebar p-1 w-full rounded-lg"
+								>
+									<div className="flex items-center justify-between p-3.5 rounded-lg bg-background border w-full">
+										<div className="min-w-0">
+											<div className="text-sm font-medium truncate">
+												{server.name}
+											</div>
+											<CardDescription className="truncate">
+												{`${transportType.toUpperCase()}${
+													subtitle.trim().length > 0 ? ` • ${subtitle}` : ""
+												}`}
+											</CardDescription>
 										</div>
-										<CardDescription className="truncate">
-											{server.serverUrl}
-										</CardDescription>
-									</div>
 
 									<div className="flex items-center gap-2 shrink-0">
 										<TooltipProvider delayDuration={0}>

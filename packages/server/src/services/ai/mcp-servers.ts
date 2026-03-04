@@ -4,6 +4,7 @@ import { db } from "@dokploy/server/db";
 import { aiMcpServers } from "@dokploy/server/db/schema";
 import { TRPCError } from "@trpc/server";
 import { desc, eq } from "drizzle-orm";
+import { IS_CLOUD } from "../../constants";
 
 type McpClient = import("@modelcontextprotocol/sdk/client/index.js").Client;
 
@@ -43,6 +44,24 @@ const MCP_TOOL_LIST_ERROR_TTL_MS = 15 * 1000;
 const MCP_TOOL_LIST_CACHE_MAX_ENTRIES = 200;
 const mcpToolListCache = new Map<string, AiMcpToolListCacheEntry>();
 const mcpToolListInFlight = new Map<string, Promise<AiMcpToolListCacheEntry>>();
+
+type McpTransportType = "http" | "stdio";
+
+type HttpMcpConnection = {
+	transportType: "http";
+	serverUrl: string;
+	headers: Record<string, string>;
+};
+
+type StdioMcpConnection = {
+	transportType: "stdio";
+	command: string;
+	args: string[];
+	env: Record<string, string>;
+	cwd?: string;
+};
+
+type McpConnection = HttpMcpConnection | StdioMcpConnection;
 
 function getMcpToolListCacheKey(params: {
 	organizationId: string;
@@ -230,6 +249,34 @@ function normalizeMcpServerUrl(value: unknown): string {
 		.replace(/\/+$/, "");
 }
 
+function normalizeMcpTransportType(value: unknown): McpTransportType {
+	const raw = String(value ?? "")
+		.trim()
+		.toLowerCase();
+	if (raw === "stdio") return "stdio";
+	return "http";
+}
+
+function normalizeMcpArgs(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((v) => (typeof v === "string" ? v : v == null ? "" : String(v)))
+		.map((v) => v.trim())
+		.filter((v) => v.length > 0)
+		.slice(0, 200);
+}
+
+function normalizeMcpEnv(value: unknown): Record<string, string> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+		const key = String(k ?? "").trim();
+		if (!key) continue;
+		out[key] = typeof v === "string" ? v : v == null ? "" : String(v);
+	}
+	return out;
+}
+
 function inferMcpTransportFromUrl(
 	serverUrl: string,
 ): "streamable" | "sse" | null {
@@ -288,14 +335,149 @@ async function closeMcpTransport(transport: {
 	} catch {}
 }
 
+function parseCommand(commandString: string): { command: string; args: string[] } {
+	const trimmed = String(commandString ?? "").trim();
+	if (trimmed.length === 0) {
+		throw new Error("Empty command string");
+	}
+
+	const parts: string[] = [];
+	let current = "";
+	let inQuote: string | null = null;
+	let escaped = false;
+
+	for (let i = 0; i < trimmed.length; i++) {
+		const char = trimmed[i];
+		if (escaped) {
+			current += char;
+			escaped = false;
+			continue;
+		}
+		if (char === "\\") {
+			escaped = true;
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			if (inQuote === char) {
+				inQuote = null;
+			} else if (inQuote === null) {
+				inQuote = char;
+			} else {
+				current += char;
+			}
+			continue;
+		}
+		if (char === " " && inQuote === null) {
+			if (current.length > 0) {
+				parts.push(current);
+				current = "";
+			}
+			continue;
+		}
+		current += char;
+	}
+
+	if (current.length > 0) parts.push(current);
+	if (parts.length === 0) {
+		throw new Error("Empty command string after parsing");
+	}
+
+	const command = parts[0];
+	if (!command) {
+		throw new Error("Empty command string after parsing");
+	}
+	return { command, args: parts.slice(1) };
+}
+
+function buildStdioServerRef(conn: StdioMcpConnection): string {
+	const cmd = conn.command.trim();
+	const args = conn.args.length > 0 ? ` ${conn.args.join(" ")}` : "";
+	return `stdio:${cmd}${args}`.trim();
+}
+
+function assertStdioSupported() {
+	if (IS_CLOUD) {
+		throw new TRPCError({
+			code: "FORBIDDEN",
+			message: "Stdio MCP transport is not available in cloud mode",
+		});
+	}
+}
+
+function assertStdioAllowed() {
+	assertStdioSupported();
+	if (process.env.AI_MCP_ENABLE_STDIO !== "true") {
+		throw new TRPCError({
+			code: "FORBIDDEN",
+			message: "Stdio MCP transport is disabled (set AI_MCP_ENABLE_STDIO=true)",
+		});
+	}
+}
+
+function buildMcpConnectionFromRow(row: {
+	transportType?: unknown;
+	serverUrl?: unknown;
+	headers?: unknown;
+	command?: unknown;
+	args?: unknown;
+	env?: unknown;
+	cwd?: unknown;
+}): { conn: McpConnection; serverRef: string } {
+	const transportType = normalizeMcpTransportType(row.transportType);
+
+	if (transportType === "stdio") {
+		assertStdioAllowed();
+		const commandRaw = String(row.command ?? "").trim();
+		if (!commandRaw) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "MCP stdio command is required",
+			});
+		}
+		const parsed = parseCommand(commandRaw);
+		const extraArgs = normalizeMcpArgs(row.args);
+		const args = [...parsed.args, ...extraArgs];
+		const cwd =
+			typeof row.cwd === "string" && row.cwd.trim().length > 0
+				? row.cwd.trim()
+				: undefined;
+
+		const conn: StdioMcpConnection = {
+			transportType: "stdio",
+			command: parsed.command,
+			args,
+			env: normalizeMcpEnv(row.env),
+			cwd,
+		};
+		return { conn, serverRef: buildStdioServerRef(conn) };
+	}
+
+	const serverUrl = normalizeMcpServerUrl(row.serverUrl);
+	if (!serverUrl) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "MCP server URL is required",
+		});
+	}
+	return {
+		conn: {
+			transportType: "http",
+			serverUrl,
+			headers: normalizeMcpHeaders(row.headers),
+		},
+		serverRef: serverUrl,
+	};
+}
+
 async function withMcpClient<T>(params: {
-	serverUrl: string;
-	headers: Record<string, string>;
+	conn: McpConnection;
 	fn: (client: McpClient) => Promise<T>;
 }): Promise<T> {
 	let Client: typeof import("@modelcontextprotocol/sdk/client/index.js").Client;
 	let StreamableHTTPClientTransport: typeof import("@modelcontextprotocol/sdk/client/streamableHttp.js").StreamableHTTPClientTransport;
 	let SSEClientTransport: typeof import("@modelcontextprotocol/sdk/client/sse.js").SSEClientTransport;
+	let StdioClientTransport: typeof import("@modelcontextprotocol/sdk/client/stdio.js").StdioClientTransport;
+	let getDefaultEnvironment: typeof import("@modelcontextprotocol/sdk/client/stdio.js").getDefaultEnvironment;
 	try {
 		({ Client } = await import("@modelcontextprotocol/sdk/client/index.js"));
 		({ StreamableHTTPClientTransport } = await import(
@@ -304,16 +486,68 @@ async function withMcpClient<T>(params: {
 		({ SSEClientTransport } = await import(
 			"@modelcontextprotocol/sdk/client/sse.js"
 		));
-	} catch (error) {
-		throw new TRPCError({
-			code: "INTERNAL_SERVER_ERROR",
-			message: "MCP SDK is not available on this server",
-			cause: error,
+		({ StdioClientTransport, getDefaultEnvironment } = await import(
+			"@modelcontextprotocol/sdk/client/stdio.js"
+		));
+		} catch (error) {
+			throw new TRPCError({
+				code: "INTERNAL_SERVER_ERROR",
+				message: "MCP SDK is not available on this server",
+				cause: error,
+			});
+		}
+
+	if (params.conn.transportType === "stdio") {
+		assertStdioAllowed();
+		const conn = params.conn;
+		const transport = new StdioClientTransport({
+			command: conn.command,
+			args: conn.args,
+			env: { ...getDefaultEnvironment(), ...conn.env },
+			cwd: conn.cwd,
+			stderr: "pipe",
 		});
+
+		let stderrText = "";
+		const stderr = transport.stderr;
+		if (stderr) {
+			stderr.on("data", (chunk: unknown) => {
+				try {
+					const text = Buffer.isBuffer(chunk)
+						? chunk.toString("utf8")
+						: String(chunk ?? "");
+					if (!text) return;
+					stderrText = (stderrText + text).slice(-32_768);
+				} catch {}
+			});
+		}
+
+		const mcpTransport = transport as Parameters<McpClient["connect"]>[0] & {
+			terminateSession?: () => Promise<void> | void;
+			close?: () => Promise<void> | void;
+		};
+		const client = new Client({ name: "dokploy", version: "1.0.0" });
+
+		try {
+			await client.connect(mcpTransport);
+			return await params.fn(client);
+		} catch (error) {
+			const tail = stderrText.trim();
+			if (tail.length > 0) {
+				const msg = error instanceof Error ? error.message : String(error);
+				throw new Error(`${msg}\n\n[stderr]\n${tail}`);
+			}
+			throw error;
+		} finally {
+			try {
+				await client.close();
+			} catch {}
+			await closeMcpTransport(mcpTransport);
+		}
 	}
 
-	const url = new URL(params.serverUrl);
-	const requestInit = { headers: params.headers };
+	const url = new URL(params.conn.serverUrl);
+	const requestInit = { headers: params.conn.headers };
 
 	const runWithTransport = async (
 		transportType: "streamable" | "sse",
@@ -339,7 +573,7 @@ async function withMcpClient<T>(params: {
 		}
 	};
 
-	const hintedTransport = inferMcpTransportFromUrl(params.serverUrl);
+	const hintedTransport = inferMcpTransportFromUrl(params.conn.serverUrl);
 	if (hintedTransport === "sse") {
 		return await runWithTransport("sse");
 	}
@@ -380,22 +614,83 @@ export const listAiMcpServersByOrganizationId = async (params: {
 
 export const createAiMcpServer = async (
 	organizationId: string,
-	input: {
-		name: string;
-		serverUrl: string;
-		headers?: Record<string, string>;
-		isEnabled?: boolean;
-	},
+	input:
+		| {
+				transportType?: "http";
+				name: string;
+				serverUrl: string;
+				headers?: Record<string, string>;
+				isEnabled?: boolean;
+		  }
+		| {
+				transportType: "stdio";
+				name: string;
+				command: string;
+				args?: string[];
+				env?: Record<string, string>;
+				cwd?: string | null;
+				isEnabled?: boolean;
+		  },
 ) => {
 	const name = String(input.name ?? "").trim();
-	const serverUrl = normalizeMcpServerUrl(input.serverUrl);
-	const headers = normalizeMcpHeaders(input.headers);
-	const isEnabled = input.isEnabled !== false;
+	const transportType = normalizeMcpTransportType(
+		(input as { transportType?: unknown }).transportType,
+	);
+	const isEnabled = (input as any).isEnabled !== false;
 
-	if (!name || !serverUrl) {
+	if (!name) {
 		throw new TRPCError({
 			code: "BAD_REQUEST",
-			message: "MCP server name and URL are required",
+			message: "MCP server name is required",
+		});
+	}
+
+	if (transportType === "stdio") {
+		assertStdioSupported();
+		const command = String((input as any).command ?? "").trim();
+		if (!command) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "MCP stdio command is required",
+			});
+		}
+		const args = normalizeMcpArgs((input as any).args);
+		const env = normalizeMcpEnv((input as any).env);
+		const cwd =
+			typeof (input as any).cwd === "string" && (input as any).cwd.trim().length > 0
+				? (input as any).cwd.trim()
+				: undefined;
+
+		const [row] = await db
+			.insert(aiMcpServers)
+			.values({
+				organizationId,
+				name,
+				transportType: "stdio",
+				command,
+				args,
+				env,
+				cwd,
+				isEnabled,
+			})
+			.returning();
+
+		if (!row) {
+			throw new TRPCError({
+				code: "INTERNAL_SERVER_ERROR",
+				message: "Failed to create MCP server",
+			});
+		}
+
+		return row;
+	}
+
+	const serverUrl = normalizeMcpServerUrl((input as any).serverUrl);
+	const headers = normalizeMcpHeaders((input as any).headers);
+	if (!serverUrl) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "MCP server URL is required",
 		});
 	}
 
@@ -404,6 +699,7 @@ export const createAiMcpServer = async (
 		.values({
 			organizationId,
 			name,
+			transportType: "http",
 			serverUrl,
 			headers,
 			isEnabled,
@@ -427,6 +723,10 @@ export const updateAiMcpServer = async (
 		name?: string;
 		serverUrl?: string;
 		headers?: Record<string, string>;
+		command?: string;
+		args?: string[];
+		env?: Record<string, string>;
+		cwd?: string | null;
 		isEnabled?: boolean;
 	},
 ) => {
@@ -448,6 +748,8 @@ export const updateAiMcpServer = async (
 		});
 	}
 
+	const transportType = normalizeMcpTransportType((existing as any).transportType);
+
 	const update: Record<string, unknown> = {
 		updatedAt: new Date().toISOString(),
 	};
@@ -461,21 +763,65 @@ export const updateAiMcpServer = async (
 		}
 		update.name = name;
 	}
-	if (typeof input.serverUrl === "string") {
-		const serverUrl = normalizeMcpServerUrl(input.serverUrl);
-		if (!serverUrl) {
+
+	if (transportType === "http") {
+		if (typeof input.command === "string" || typeof input.args !== "undefined") {
 			throw new TRPCError({
 				code: "BAD_REQUEST",
-				message: "MCP server URL is required",
+				message: "Stdio fields are not supported for HTTP MCP servers",
 			});
 		}
-		update.serverUrl = serverUrl;
+		if (typeof input.env !== "undefined" || typeof input.cwd !== "undefined") {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "Stdio fields are not supported for HTTP MCP servers",
+			});
+		}
+		if (typeof input.serverUrl === "string") {
+			const serverUrl = normalizeMcpServerUrl(input.serverUrl);
+			if (!serverUrl) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "MCP server URL is required",
+				});
+			}
+			update.serverUrl = serverUrl;
+		}
+		if (typeof input.headers !== "undefined") {
+			update.headers = normalizeMcpHeaders(input.headers);
+		}
+	} else {
+		assertStdioSupported();
+		if (typeof input.serverUrl === "string" || typeof input.headers !== "undefined") {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "HTTP fields are not supported for stdio MCP servers",
+			});
+		}
+		if (typeof input.command === "string") {
+			const command = input.command.trim();
+			if (!command) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "MCP stdio command is required",
+				});
+			}
+			update.command = command;
+		}
+		if (typeof input.args !== "undefined") {
+			update.args = normalizeMcpArgs(input.args);
+		}
+		if (typeof input.env !== "undefined") {
+			update.env = normalizeMcpEnv(input.env);
+		}
+		if (typeof input.cwd !== "undefined") {
+			const cwd = typeof input.cwd === "string" ? input.cwd.trim() : "";
+			update.cwd = cwd.length > 0 ? cwd : null;
+		}
 	}
+
 	if (typeof input.isEnabled === "boolean") {
 		update.isEnabled = input.isEnabled;
-	}
-	if (typeof input.headers !== "undefined") {
-		update.headers = normalizeMcpHeaders(input.headers);
 	}
 
 	const [row] = await db
@@ -535,14 +881,12 @@ export const testAiMcpServer = async (params: {
 		});
 	}
 
-	const serverUrl = normalizeMcpServerUrl(server.serverUrl);
-	const headers = normalizeMcpHeaders(server.headers);
 	const startedAt = Date.now();
 
 	try {
+		const { conn } = buildMcpConnectionFromRow(server as any);
 		const res = await withMcpClient({
-			serverUrl,
-			headers,
+			conn,
 			fn: (client) => client.listTools({}),
 		});
 		const tools = Array.isArray((res as any)?.tools) ? (res as any).tools : [];
@@ -590,12 +934,10 @@ export const listAiMcpTools = async (params: {
 		});
 	}
 
-	const serverUrl = normalizeMcpServerUrl(server.serverUrl);
-	const headers = normalizeMcpHeaders(server.headers);
+	const { conn, serverRef } = buildMcpConnectionFromRow(server as any);
 
 	const res = await withMcpClient({
-		serverUrl,
-		headers,
+		conn,
 		fn: (client) => client.listTools({}),
 	});
 
@@ -611,7 +953,7 @@ export const listAiMcpTools = async (params: {
 		}))
 		.filter((t: AiMcpToolInfo) => t.name.trim().length > 0);
 
-	return { serverUrl, tools };
+	return { serverUrl: serverRef, tools };
 };
 
 export const listAiMcpToolsCached = async (params: {
@@ -747,8 +1089,7 @@ export const callAiMcpTool = async (params: {
 		});
 	}
 
-	const serverUrl = normalizeMcpServerUrl(server.serverUrl);
-	const headers = normalizeMcpHeaders(server.headers);
+	const { conn } = buildMcpConnectionFromRow(server as any);
 	const args =
 		params.arguments &&
 		typeof params.arguments === "object" &&
@@ -757,8 +1098,7 @@ export const callAiMcpTool = async (params: {
 			: {};
 
 	const res = await withMcpClient({
-		serverUrl,
-		headers,
+		conn,
 		fn: (client) => client.callTool({ name: toolName, arguments: args }),
 	});
 

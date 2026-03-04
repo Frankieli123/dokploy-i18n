@@ -9,6 +9,7 @@ import {
 	ChevronDown,
 	ChevronUp,
 	Clock,
+	Copy,
 	CreditCard,
 	Database,
 	FileKey,
@@ -26,8 +27,10 @@ import {
 	User,
 	Wrench,
 } from "lucide-react";
+import copyToClipboard from "copy-to-clipboard";
 import { useTranslation } from "next-i18next";
 import { useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ToolCall } from "./use-chat";
@@ -149,6 +152,23 @@ function getConfirmLiteral(parsedArgs: unknown): string {
 	return "";
 }
 
+function toPrettyText(value: unknown): string {
+	if (value == null) return "";
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value, null, 2);
+	} catch {
+		return String(value);
+	}
+}
+
+function countLines(text: string): number {
+	const normalized = String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const trimmed = normalized.replace(/\n+$/, "");
+	if (trimmed.length === 0) return 0;
+	return trimmed.split("\n").length;
+}
+
 export function ToolCallBlock({
 	toolCall,
 	status = "pending",
@@ -184,6 +204,9 @@ export function ToolCallBlock({
 			return toolCall.function.arguments;
 		}
 	})();
+
+	const paramsText = toPrettyText(parsedArgs);
+	const paramsLineCount = countLines(paramsText);
 
 	const unknownToolInfo = (() => {
 		if (!result || result.success !== false) return null;
@@ -316,7 +339,7 @@ export function ToolCallBlock({
 		if (isUnknownToolError) {
 			const suggested = unknownToolInfo?.suggestedToolName ?? "";
 			if (suggested.trim().length > 0) {
-				return `${result.message || result.error || t("ai.toolCall.unknownTool")} → ${suggested}`;
+				return `${result.message || result.error || t("ai.toolCall.unknownTool")} -> ${suggested}`;
 			}
 			return result.message || result.error || "";
 		}
@@ -345,6 +368,29 @@ export function ToolCallBlock({
 		}
 		return "";
 	})();
+
+	const resultOutputText = (() => {
+		if (!result) return "";
+		if (result.data != null) {
+			const text = toPrettyText(result.data);
+			if (text.trim().length > 0) return text;
+		}
+		if (typeof result.message === "string" && result.message.trim().length > 0) {
+			return result.message.trim();
+		}
+		if (typeof result.error === "string" && result.error.trim().length > 0) {
+			return result.error.trim();
+		}
+		return "";
+	})();
+	const resultLineCount = countLines(resultOutputText);
+
+	const copyText = (text: string) => {
+		if (text.trim().length === 0) return;
+		const ok = copyToClipboard(text);
+		if (ok) toast.success(t("common.copiedToClipboard"));
+		else toast.error(t("common.unknownError"));
+	};
 
 	return (
 		<>
@@ -385,23 +431,50 @@ export function ToolCallBlock({
 							</span>
 						</div>
 					</div>
-					<Button
-						variant="ghost"
-						size="icon"
-						className="!h-5 !w-5 !p-0 hover:bg-transparent opacity-50 group-hover:opacity-100 transition-opacity shrink-0"
-					>
-						{expanded ? (
-							<ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
-						) : (
-							<ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+					<div className="flex items-center gap-1.5 shrink-0">
+						{resultLineCount > 0 && (
+							<span
+								className="text-[10px] text-muted-foreground font-mono"
+								onClick={(e) => e.stopPropagation()}
+							>
+								{t("logs.lines.custom", { count: resultLineCount })}
+							</span>
 						)}
-					</Button>
+						{resultOutputText.trim().length > 0 && (
+							<Button
+								variant="ghost"
+								size="icon"
+								className="!h-5 !w-5 !p-0 hover:bg-transparent opacity-50 group-hover:opacity-100 transition-opacity"
+								onClick={(e) => {
+									e.stopPropagation();
+									copyText(resultOutputText);
+								}}
+								title={t("logs.copy")}
+							>
+								<Copy className="h-3.5 w-3.5 text-muted-foreground" />
+								<span className="sr-only">{t("logs.copy")}</span>
+							</Button>
+						)}
+						<Button
+							variant="ghost"
+							size="icon"
+							className="!h-5 !w-5 !p-0 hover:bg-transparent opacity-50 group-hover:opacity-100 transition-opacity"
+						>
+							{expanded ? (
+								<ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+							) : (
+								<ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+							)}
+						</Button>
+					</div>
 				</div>
 
 				{!expanded && (
 					<div className="mt-1 text-[10px] text-muted-foreground font-mono break-words [overflow-wrap:anywhere]">
 						<div className="opacity-75 truncate mb-0.5">
-							{JSON.stringify(parsedArgs)}
+							{typeof parsedArgs === "string"
+								? parsedArgs
+								: JSON.stringify(parsedArgs)}
 						</div>
 						{resultPreview.length > 0 && <div>{resultPreview}</div>}
 					</div>
@@ -409,25 +482,79 @@ export function ToolCallBlock({
 
 				{expanded && (
 					<div className="mt-2 space-y-2 pt-2 border-t border-border/50">
-							<div className="space-y-1">
+						<div className="space-y-1">
+							<div className="flex items-center justify-between gap-2">
 								<span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
 									{t("ai.toolCall.parameters")}
 								</span>
-								<div className="max-w-full rounded bg-muted/50 p-2 font-mono text-[10px] border border-border/50 max-h-[300px] overflow-y-auto">
-									<pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-										{JSON.stringify(parsedArgs, null, 2)}
+								<div
+									className="flex items-center gap-1.5 shrink-0"
+									onClick={(e) => e.stopPropagation()}
+								>
+									{paramsLineCount > 0 && (
+										<span className="text-[10px] text-muted-foreground font-mono">
+											{t("logs.lines.custom", { count: paramsLineCount })}
+										</span>
+									)}
+									{paramsText.trim().length > 0 && (
+										<Button
+											variant="ghost"
+											size="icon"
+											className="!h-5 !w-5 !p-0 hover:bg-transparent opacity-60 hover:opacity-100 transition-opacity"
+											onClick={(e) => {
+												e.stopPropagation();
+												copyText(paramsText);
+											}}
+											title={t("logs.copy")}
+										>
+											<Copy className="h-3.5 w-3.5 text-muted-foreground" />
+											<span className="sr-only">{t("logs.copy")}</span>
+										</Button>
+									)}
+								</div>
+							</div>
+							<div className="max-w-full rounded bg-muted/50 p-2 font-mono text-[11px] border border-border/50 overflow-hidden">
+								<pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+									{paramsText}
 								</pre>
 							</div>
 						</div>
 
-							{result && (
-								<div className="space-y-1">
+						{result && (
+							<div className="space-y-1">
+								<div className="flex items-center justify-between gap-2">
 									<span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
 										{t("ai.toolCall.result")}
 									</span>
 									<div
-										className={cn(
-											"max-w-full rounded p-2 border text-[10px] max-h-[300px] overflow-y-auto",
+										className="flex items-center gap-1.5 shrink-0"
+										onClick={(e) => e.stopPropagation()}
+									>
+										{resultLineCount > 0 && (
+											<span className="text-[10px] text-muted-foreground font-mono">
+												{t("logs.lines.custom", { count: resultLineCount })}
+											</span>
+										)}
+										{resultOutputText.trim().length > 0 && (
+											<Button
+												variant="ghost"
+												size="icon"
+												className="!h-5 !w-5 !p-0 hover:bg-transparent opacity-60 hover:opacity-100 transition-opacity"
+												onClick={(e) => {
+													e.stopPropagation();
+													copyText(resultOutputText);
+												}}
+												title={t("logs.copy")}
+											>
+												<Copy className="h-3.5 w-3.5 text-muted-foreground" />
+												<span className="sr-only">{t("logs.copy")}</span>
+											</Button>
+										)}
+									</div>
+								</div>
+								<div
+									className={cn(
+										"max-w-full rounded p-2 border text-[11px] overflow-hidden",
 										isUnknownToolError
 											? "bg-amber-500/5 border-amber-500/20 text-amber-900 dark:text-amber-200"
 											: result.success
@@ -451,7 +578,7 @@ export function ToolCallBlock({
 										)}
 									{result.data != null && (
 										<pre className="font-mono opacity-90 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-											{JSON.stringify(result.data, null, 2)}
+											{toPrettyText(result.data)}
 										</pre>
 									)}
 									{result.error && (

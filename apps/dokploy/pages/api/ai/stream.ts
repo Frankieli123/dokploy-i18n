@@ -133,7 +133,16 @@ export default async function handler(
 		safeWrite("ping", { ts: Date.now() });
 	}, 15000);
 
-	safeWrite("start", { conversationId: parsed.data.conversationId });
+	let sentStart = false;
+	const sendStart = (assistantMessageId: string, userMessageId?: string) => {
+		if (sentStart) return;
+		sentStart = true;
+		safeWrite("start", {
+			conversationId: parsed.data.conversationId,
+			assistantMessageId,
+			userMessageId: userMessageId ?? "",
+		});
+	};
 
 	let textChunks = 0;
 	let reasoningChunks = 0;
@@ -152,6 +161,9 @@ export default async function handler(
 			},
 			{
 				abortSignal: abortController.signal,
+				onStart: (info) => {
+					sendStart(info.assistantMessageId, info.userMessageId);
+				},
 				onTextDelta: (delta) => {
 					if (typeof delta !== "string" || delta.length === 0) return;
 					textChunks++;

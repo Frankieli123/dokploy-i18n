@@ -26,6 +26,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -41,8 +48,12 @@ type McpTestResult = {
 type McpServerRow = {
 	mcpServerId: string;
 	name: string;
-	serverUrl: string;
+	transportType?: string | null;
+	serverUrl?: string | null;
 	headers?: Record<string, string> | null;
+	command?: string | null;
+	env?: Record<string, string> | null;
+	cwd?: string | null;
 	isEnabled: boolean;
 };
 
@@ -109,8 +120,14 @@ export function McpControlDialog() {
 		api.ai.mcpServers.update.useMutation();
 
 	const [formName, setFormName] = useState("");
+	const [formTransportType, setFormTransportType] = useState<"http" | "stdio">(
+		"http",
+	);
 	const [formUrl, setFormUrl] = useState("");
 	const [formHeaders, setFormHeaders] = useState("");
+	const [formCommand, setFormCommand] = useState("");
+	const [formEnv, setFormEnv] = useState("");
+	const [formCwd, setFormCwd] = useState("");
 	const [formEnabled, setFormEnabled] = useState(true);
 	const [editingServerId, setEditingServerId] = useState<string | null>(null);
 
@@ -126,8 +143,12 @@ export function McpControlDialog() {
 		return servers.map((s) => ({
 			mcpServerId: s.mcpServerId,
 			name: s.name,
-			serverUrl: s.serverUrl,
-			headers: s.headers,
+			transportType: (s as any).transportType ?? null,
+			serverUrl: (s as any).serverUrl ?? null,
+			headers: (s as any).headers ?? null,
+			command: (s as any).command ?? null,
+			env: (s as any).env ?? null,
+			cwd: (s as any).cwd ?? null,
 			isEnabled: s.isEnabled,
 		}));
 	}, [servers]);
@@ -140,8 +161,12 @@ export function McpControlDialog() {
 	const isSavingServer = isCreatingServer || isUpdatingServer;
 	const resetForm = useCallback(() => {
 		setFormName("");
+		setFormTransportType("http");
 		setFormUrl("");
 		setFormHeaders("");
+		setFormCommand("");
+		setFormEnv("");
+		setFormCwd("");
 		setFormEnabled(true);
 		setEditingServerId(null);
 	}, []);
@@ -223,32 +248,70 @@ export function McpControlDialog() {
 	};
 
 	const startEdit = (server: McpServerRow) => {
+		const transportType = server.transportType === "stdio" ? "stdio" : "http";
 		setEditingServerId(server.mcpServerId);
 		setFormName(server.name);
-		setFormUrl(server.serverUrl);
-		setFormHeaders(formatHeadersInput(server.headers));
+		setFormTransportType(transportType);
+		if (transportType === "stdio") {
+			setFormCommand(String(server.command ?? ""));
+			setFormEnv(formatHeadersInput(server.env));
+			setFormCwd(String(server.cwd ?? ""));
+			setFormUrl("");
+			setFormHeaders("");
+		} else {
+			setFormUrl(String(server.serverUrl ?? ""));
+			setFormHeaders(formatHeadersInput(server.headers));
+			setFormCommand("");
+			setFormEnv("");
+			setFormCwd("");
+		}
 		setFormEnabled(server.isEnabled);
 		setView("edit");
 	};
 
 	const submitAdd = async () => {
 		const name = formName.trim();
-		const serverUrl = formUrl.trim();
-		if (!name || !serverUrl) return;
-
-		const headers = safeJsonParseObject(formHeaders);
-		if (headers === null) {
-			toast.error(t("ai.chat.mcp.form.headersInvalid"));
-			return;
-		}
+		const transportType = formTransportType;
+		if (!name) return;
 
 		try {
-			const created = await createServer({
-				name,
-				serverUrl,
-				headers,
-				isEnabled: formEnabled,
-			});
+			const created =
+				transportType === "stdio"
+					? await (async () => {
+							const command = formCommand.trim();
+							if (!command) return null;
+							const env = safeJsonParseObject(formEnv);
+							if (env === null) {
+								toast.error(t("ai.chat.mcp.form.envInvalid"));
+								return null;
+							}
+							const cwd = formCwd.trim();
+							return await createServer({
+								transportType: "stdio",
+								name,
+								command,
+								env,
+								cwd: cwd.length > 0 ? cwd : null,
+								isEnabled: formEnabled,
+							});
+						})()
+					: await (async () => {
+							const serverUrl = formUrl.trim();
+							if (!serverUrl) return null;
+							const headers = safeJsonParseObject(formHeaders);
+							if (headers === null) {
+								toast.error(t("ai.chat.mcp.form.headersInvalid"));
+								return null;
+							}
+							return await createServer({
+								transportType: "http",
+								name,
+								serverUrl,
+								headers,
+								isEnabled: formEnabled,
+							});
+						})();
+			if (!created) return;
 			await utils.ai.mcpServers.list.invalidate();
 			resetForm();
 			setView("list");
@@ -266,23 +329,43 @@ export function McpControlDialog() {
 	const submitEdit = async () => {
 		const mcpServerId = String(editingServerId ?? "").trim();
 		const name = formName.trim();
-		const serverUrl = formUrl.trim();
-		if (!mcpServerId || !name || !serverUrl) return;
-
-		const headers = safeJsonParseObject(formHeaders);
-		if (headers === null) {
-			toast.error(t("ai.chat.mcp.form.headersInvalid"));
-			return;
-		}
+		const transportType = formTransportType;
+		if (!mcpServerId || !name) return;
 
 		try {
-			await updateServer({
-				mcpServerId,
-				name,
-				serverUrl,
-				headers,
-				isEnabled: formEnabled,
-			});
+			if (transportType === "stdio") {
+				const command = formCommand.trim();
+				if (!command) return;
+				const env = safeJsonParseObject(formEnv);
+				if (env === null) {
+					toast.error(t("ai.chat.mcp.form.envInvalid"));
+					return;
+				}
+				const cwd = formCwd.trim();
+				await updateServer({
+					mcpServerId,
+					name,
+					command,
+					env,
+					cwd: cwd.length > 0 ? cwd : null,
+					isEnabled: formEnabled,
+				});
+			} else {
+				const serverUrl = formUrl.trim();
+				if (!serverUrl) return;
+				const headers = safeJsonParseObject(formHeaders);
+				if (headers === null) {
+					toast.error(t("ai.chat.mcp.form.headersInvalid"));
+					return;
+				}
+				await updateServer({
+					mcpServerId,
+					name,
+					serverUrl,
+					headers,
+					isEnabled: formEnabled,
+				});
+			}
 			await utils.ai.mcpServers.list.invalidate();
 			resetForm();
 			setView("list");
@@ -377,42 +460,110 @@ export function McpControlDialog() {
 									: t("ai.chat.mcp.form.addTitle")}
 							</div>
 
-							<div className="space-y-2">
-								<Label htmlFor="mcp-name">
-									{t("ai.chat.mcp.form.nameLabel")}
-								</Label>
+								<div className="space-y-2">
+									<Label htmlFor="mcp-name">
+										{t("ai.chat.mcp.form.nameLabel")}
+									</Label>
 								<Input
 									id="mcp-name"
 									value={formName}
 									placeholder={t("ai.chat.mcp.form.namePlaceholder")}
 									onChange={(e) => setFormName(e.target.value)}
-								/>
-							</div>
+									/>
+								</div>
 
-							<div className="space-y-2">
-								<Label htmlFor="mcp-url">
-									{t("ai.chat.mcp.form.urlLabel")}
-								</Label>
-								<Input
-									id="mcp-url"
-									value={formUrl}
-									placeholder={t("ai.chat.mcp.form.urlPlaceholder")}
-									onChange={(e) => setFormUrl(e.target.value)}
-								/>
-							</div>
+								<div className="space-y-2">
+									<Label htmlFor="mcp-transport">
+										{t("ai.chat.mcp.form.transportLabel")}
+									</Label>
+									<Select
+										value={formTransportType}
+										onValueChange={(v) =>
+											setFormTransportType(v as "http" | "stdio")
+										}
+										disabled={isSavingServer || isEditing}
+									>
+										<SelectTrigger id="mcp-transport">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="http">
+												{t("ai.chat.mcp.form.transport.http")}
+											</SelectItem>
+											<SelectItem value="stdio">
+												{t("ai.chat.mcp.form.transport.stdio")}
+											</SelectItem>
+										</SelectContent>
+									</Select>
+								</div>
 
-							<div className="space-y-2">
-								<Label htmlFor="mcp-headers">
-									{t("ai.chat.mcp.form.headersLabel")}
-								</Label>
-								<Textarea
-									id="mcp-headers"
-									value={formHeaders}
-									placeholder={t("ai.chat.mcp.form.headersPlaceholder")}
-									onChange={(e) => setFormHeaders(e.target.value)}
-									className="min-h-[96px] font-mono text-xs"
-								/>
-							</div>
+								{formTransportType === "stdio" ? (
+									<>
+										<div className="space-y-2">
+											<Label htmlFor="mcp-command">
+												{t("ai.chat.mcp.form.commandLabel")}
+											</Label>
+											<Input
+												id="mcp-command"
+												value={formCommand}
+												placeholder={t("ai.chat.mcp.form.commandPlaceholder")}
+												onChange={(e) => setFormCommand(e.target.value)}
+											/>
+										</div>
+
+										<div className="space-y-2">
+											<Label htmlFor="mcp-env">
+												{t("ai.chat.mcp.form.envLabel")}
+											</Label>
+											<Textarea
+												id="mcp-env"
+												value={formEnv}
+												placeholder={t("ai.chat.mcp.form.envPlaceholder")}
+												onChange={(e) => setFormEnv(e.target.value)}
+												className="min-h-[96px] font-mono text-xs"
+											/>
+										</div>
+
+										<div className="space-y-2">
+											<Label htmlFor="mcp-cwd">
+												{t("ai.chat.mcp.form.cwdLabel")}
+											</Label>
+											<Input
+												id="mcp-cwd"
+												value={formCwd}
+												placeholder={t("ai.chat.mcp.form.cwdPlaceholder")}
+												onChange={(e) => setFormCwd(e.target.value)}
+											/>
+										</div>
+									</>
+								) : (
+									<>
+										<div className="space-y-2">
+											<Label htmlFor="mcp-url">
+												{t("ai.chat.mcp.form.urlLabel")}
+											</Label>
+											<Input
+												id="mcp-url"
+												value={formUrl}
+												placeholder={t("ai.chat.mcp.form.urlPlaceholder")}
+												onChange={(e) => setFormUrl(e.target.value)}
+											/>
+										</div>
+
+										<div className="space-y-2">
+											<Label htmlFor="mcp-headers">
+												{t("ai.chat.mcp.form.headersLabel")}
+											</Label>
+											<Textarea
+												id="mcp-headers"
+												value={formHeaders}
+												placeholder={t("ai.chat.mcp.form.headersPlaceholder")}
+												onChange={(e) => setFormHeaders(e.target.value)}
+												className="min-h-[96px] font-mono text-xs"
+											/>
+										</div>
+									</>
+								)}
 
 							<div className="flex items-center justify-between rounded-lg border bg-muted/10 p-3">
 								<div className="text-sm">
@@ -442,13 +593,15 @@ export function McpControlDialog() {
 									type="button"
 									className="h-8"
 									onClick={() => void submitForm()}
-									disabled={
-										isSavingServer ||
-										(isEditing && !editingServerId) ||
-										formName.trim().length === 0 ||
-										formUrl.trim().length === 0
-									}
-								>
+										disabled={
+											isSavingServer ||
+											(isEditing && !editingServerId) ||
+											formName.trim().length === 0 ||
+											(formTransportType === "http"
+												? formUrl.trim().length === 0
+												: formCommand.trim().length === 0)
+										}
+									>
 									{isSavingServer && (
 										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
 									)}
@@ -486,18 +639,24 @@ export function McpControlDialog() {
 						</div>
 					) : (
 						<div className="space-y-2">
-							{serverRows.map((server) => {
-								const result = testResults[server.mcpServerId];
-								const status = result?.status ?? "unknown";
-								const toolCount =
-									status === "ok" && typeof result?.toolCount === "number"
-										? result.toolCount
-										: null;
-								const isTesting = testing[server.mcpServerId] === true;
+								{serverRows.map((server) => {
+									const result = testResults[server.mcpServerId];
+									const status = result?.status ?? "unknown";
+									const toolCount =
+										status === "ok" && typeof result?.toolCount === "number"
+											? result.toolCount
+											: null;
+									const isTesting = testing[server.mcpServerId] === true;
+									const transportType =
+										server.transportType === "stdio" ? "stdio" : "http";
+									const subtitle =
+										transportType === "stdio"
+											? String(server.command ?? "")
+											: String(server.serverUrl ?? "");
 
-								const statusIcon = isTesting ? (
-									<Loader2 className="h-3 w-3 animate-spin" />
-								) : status === "ok" ? (
+									const statusIcon = isTesting ? (
+										<Loader2 className="h-3 w-3 animate-spin" />
+									) : status === "ok" ? (
 									<CheckCircle2 className="h-3 w-3" />
 								) : status === "error" ? (
 									<XCircle className="h-3 w-3" />
@@ -520,13 +679,19 @@ export function McpControlDialog() {
 										<div className="min-w-0 flex-1">
 											<div className="flex items-center gap-2 min-w-0">
 												<Server className="h-4 w-4 text-muted-foreground shrink-0" />
-												<span className="text-sm font-medium truncate">
-													{server.name}
-												</span>
-												<Badge
-													variant={statusVariant}
-													className="h-5 px-2 text-[10px] gap-1 tabular-nums"
-												>
+													<span className="text-sm font-medium truncate">
+														{server.name}
+													</span>
+													<Badge
+														variant="blank"
+														className="h-5 px-2 text-[10px] uppercase"
+													>
+														{transportType}
+													</Badge>
+													<Badge
+														variant={statusVariant}
+														className="h-5 px-2 text-[10px] gap-1 tabular-nums"
+													>
 													{statusIcon}
 													{toolCount == null
 														? t("ai.chat.mcp.server.toolsUnknown")
@@ -535,12 +700,12 @@ export function McpControlDialog() {
 															})}
 												</Badge>
 											</div>
-											<div
-												className="mt-1 text-xs text-muted-foreground truncate"
-												title={server.serverUrl}
-											>
-												{server.serverUrl}
-											</div>
+												<div
+													className="mt-1 text-xs text-muted-foreground truncate"
+													title={subtitle}
+												>
+													{subtitle}
+												</div>
 											{status === "error" && result?.error && (
 												<div
 													className="mt-1 text-[10px] text-destructive truncate"

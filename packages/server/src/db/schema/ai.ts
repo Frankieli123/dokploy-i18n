@@ -160,8 +160,13 @@ export const aiMcpServers = pgTable("ai_mcp_server", {
 		.notNull()
 		.references(() => organization.id, { onDelete: "cascade" }),
 	name: text("name").notNull(),
-	serverUrl: text("serverUrl").notNull(),
+	transportType: text("transportType").notNull().default("http"),
+	serverUrl: text("serverUrl"),
 	headers: jsonb("headers").$type<Record<string, string>>(),
+	command: text("command"),
+	args: jsonb("args").$type<string[]>(),
+	env: jsonb("env").$type<Record<string, string>>(),
+	cwd: text("cwd"),
 	isEnabled: boolean("isEnabled").notNull().default(true),
 	createdAt: text("createdAt")
 		.notNull()
@@ -193,13 +198,31 @@ export const apiListAiMcpServers = z.object({
 });
 
 export const apiCreateAiMcpServer = z
-	.object({
-		name: z.string().min(1),
-		serverUrl: z.string().url(),
-		headers: z.record(z.string()).optional().default({}),
-		isEnabled: z.boolean().optional().default(true),
-	})
-	.required();
+	.union([
+		z.object({
+			name: z.string().min(1),
+			serverUrl: z.string().url(),
+			headers: z.record(z.string()).optional().default({}),
+			isEnabled: z.boolean().optional().default(true),
+		}),
+		z.object({
+			transportType: z.literal("http"),
+			name: z.string().min(1),
+			serverUrl: z.string().url(),
+			headers: z.record(z.string()).optional().default({}),
+			isEnabled: z.boolean().optional().default(true),
+		}),
+		z.object({
+			transportType: z.literal("stdio"),
+			name: z.string().min(1),
+			command: z.string().min(1),
+			args: z.array(z.string()).optional().default([]),
+			env: z.record(z.string()).optional().default({}),
+			cwd: z.string().optional().nullable(),
+			isEnabled: z.boolean().optional().default(true),
+			}),
+		])
+	;
 
 export const apiUpdateAiMcpServer = z
 	.object({
@@ -207,6 +230,10 @@ export const apiUpdateAiMcpServer = z
 		name: z.string().min(1).optional(),
 		serverUrl: z.string().url().optional(),
 		headers: z.record(z.string()).optional(),
+		command: z.string().min(1).optional(),
+		args: z.array(z.string()).optional(),
+		env: z.record(z.string()).optional(),
+		cwd: z.string().optional().nullable(),
 		isEnabled: z.boolean().optional(),
 	})
 	.strict();

@@ -14,7 +14,9 @@ const mcpServerList: Tool<
 	Array<{
 		mcpServerId: string;
 		name: string;
-		serverUrl: string;
+		transportType: string;
+		serverUrl: string | null;
+		command: string | null;
 		isEnabled: boolean;
 		headersCount: number;
 	}>
@@ -45,7 +47,9 @@ const mcpServerList: Tool<
 			data: filtered.map((r) => ({
 				mcpServerId: r.mcpServerId,
 				name: r.name,
-				serverUrl: r.serverUrl,
+				transportType: (r as any).transportType ?? "http",
+				serverUrl: (r as any).serverUrl ?? null,
+				command: (r as any).command ?? null,
 				isEnabled: r.isEnabled,
 				headersCount:
 					r.headers && typeof r.headers === "object"

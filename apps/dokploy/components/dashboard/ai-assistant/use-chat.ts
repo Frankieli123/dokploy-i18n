@@ -198,7 +198,73 @@ function areAttachmentsEqual(
 	left: Message["attachments"],
 	right: Message["attachments"],
 ) {
-	return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+	type NormalizedAttachment = {
+		type: "image";
+		mediaType: string;
+		data: string;
+		name: string;
+		size: number | null;
+	};
+
+	const normalize = (
+		input: Message["attachments"],
+	): NormalizedAttachment[] => {
+		if (!Array.isArray(input) || input.length === 0) return [];
+		const out: NormalizedAttachment[] = [];
+		for (const attachment of input) {
+			if (!attachment || attachment.type !== "image") continue;
+			const mediaType =
+				typeof attachment.mediaType === "string" ? attachment.mediaType.trim() : "";
+			if (!mediaType) continue;
+			const data = typeof attachment.data === "string" ? attachment.data.trim() : "";
+			const name = typeof attachment.name === "string" ? attachment.name : "";
+			const size =
+				typeof attachment.size === "number" && Number.isFinite(attachment.size)
+					? attachment.size
+					: null;
+			out.push({ type: "image", mediaType, data, name, size });
+		}
+		return out;
+	};
+
+	const leftList = normalize(left);
+	const rightList = normalize(right);
+	if (leftList.length === 0 && rightList.length === 0) return true;
+	if (leftList.length !== rightList.length) return false;
+
+	const matches = (a: NormalizedAttachment, b: NormalizedAttachment) => {
+		if (a.type !== b.type) return false;
+		if (a.mediaType !== b.mediaType) return false;
+		if (a.size !== null && b.size !== null && a.size !== b.size) return false;
+		const aHasData = a.data.length > 0;
+		const bHasData = b.data.length > 0;
+		if (aHasData && bHasData) return a.data === b.data;
+		if (!aHasData && !bHasData) {
+			if (a.name && b.name) return a.name === b.name;
+			return true;
+		}
+		if (a.size !== null && b.size !== null && a.size === b.size) {
+			if (a.name && b.name) return a.name === b.name;
+			return true;
+		}
+		return false;
+	};
+
+	const used = new Array(rightList.length).fill(false);
+	for (const leftAttachment of leftList) {
+		let found = false;
+		for (let index = 0; index < rightList.length; index++) {
+			if (used[index]) continue;
+			const rightAttachment = rightList[index];
+			if (!rightAttachment) continue;
+			if (!matches(leftAttachment, rightAttachment)) continue;
+			used[index] = true;
+			found = true;
+			break;
+		}
+		if (!found) return false;
+	}
+	return true;
 }
 
 function getMessageRoleRank(role: Message["role"]): number {
@@ -386,19 +452,6 @@ type RetryContext = {
 	removeMessageIds: Set<string>;
 };
 
-type AgentReplayState = {
-	runId: string;
-	createdAt: string;
-	endAt: string;
-	content: string;
-	toolCalls: ToolCall[];
-	toolCallIndexById: Map<string, number>;
-	hasSummary: boolean;
-	status: "running" | "completed" | "failed" | "cancelled";
-	lastOutputText?: string;
-	lastReasoningText?: string;
-};
-
 function parseAgentPayload(
 	content: string | null,
 ): Record<string, unknown> | null {
@@ -409,95 +462,6 @@ function parseAgentPayload(
 	} catch {
 		return null;
 	}
-}
-
-function normalizeAgentToolCallId(params: {
-	executionId?: unknown;
-	stepId?: unknown;
-	messageId?: string;
-	toolName?: unknown;
-}) {
-	const executionId =
-		typeof params.executionId === "string" ? params.executionId.trim() : "";
-	if (executionId.length > 0) return executionId;
-	const stepId = typeof params.stepId === "string" ? params.stepId.trim() : "";
-	if (stepId.length > 0) return stepId;
-	const messageId =
-		typeof params.messageId === "string" ? params.messageId.trim() : "";
-	if (messageId.length > 0) return `agent-${messageId}`;
-	const toolName =
-		typeof params.toolName === "string" && params.toolName.trim().length > 0
-			? params.toolName.trim()
-			: "tool";
-	return `agent-${toolName}`;
-}
-
-function parsePreviewToData(preview: unknown): unknown {
-	if (typeof preview !== "string") return undefined;
-	const trimmed = preview.trim();
-	if (trimmed.length === 0) return undefined;
-	try {
-		return JSON.parse(trimmed);
-	} catch {
-		return trimmed;
-	}
-}
-
-function upsertReplayToolCall(
-	state: AgentReplayState,
-	params: {
-		toolCallId: string;
-		toolName?: string;
-		executionId?: string;
-		status?: ToolCall["status"];
-		argumentsText?: string;
-		result?: ToolCall["result"];
-	},
-) {
-	const existingIndex = state.toolCallIndexById.get(params.toolCallId);
-	const nextToolCall: ToolCall = {
-		id: params.toolCallId,
-		type: "function",
-		executionId:
-			typeof params.executionId === "string" &&
-			params.executionId.trim().length > 0
-				? params.executionId.trim()
-				: undefined,
-		status: params.status,
-		result: params.result,
-		function: {
-			name:
-				typeof params.toolName === "string" && params.toolName.trim().length > 0
-					? params.toolName.trim()
-					: "tool",
-			arguments:
-				typeof params.argumentsText === "string" &&
-				params.argumentsText.trim().length > 0
-					? params.argumentsText
-					: "{}",
-		},
-	};
-
-	if (typeof existingIndex === "number") {
-		const existing = state.toolCalls[existingIndex];
-		if (!existing) return;
-		state.toolCalls[existingIndex] = {
-			...existing,
-			...nextToolCall,
-			function: {
-				name: nextToolCall.function.name || existing.function.name || "tool",
-				arguments:
-					nextToolCall.function.arguments ||
-					existing.function.arguments ||
-					"{}",
-			},
-			result: nextToolCall.result ?? existing.result,
-		};
-		return;
-	}
-
-	state.toolCallIndexById.set(params.toolCallId, state.toolCalls.length);
-	state.toolCalls.push(nextToolCall);
 }
 
 function buildServerDisplayMessages(serverMessages: Message[]): Message[] {
@@ -523,360 +487,15 @@ function buildServerDisplayMessages(serverMessages: Message[]): Message[] {
 		})
 		.map(({ message }) => message);
 
-	const baseMessages: Message[] = [];
-	const runStates = new Map<string, AgentReplayState>();
-	for (const message of sorted) {
-		if (message.role !== "system") {
-			baseMessages.push(message);
-			continue;
-		}
-		const payload = parseAgentPayload(message.content);
-		if (!payload) continue;
-		const type = typeof payload.type === "string" ? payload.type : "";
-		if (!type.startsWith("agent.")) continue;
-		const runId = typeof payload.runId === "string" ? payload.runId.trim() : "";
-		if (runId.length === 0) continue;
+	const activeRunId = getMostRecentActiveAgentRunId(sorted) ?? "";
+	const activeAssistantMessageId = activeRunId ? `agent-run-${activeRunId}` : "";
+	if (!activeAssistantMessageId) return sorted;
 
-		const existing =
-			runStates.get(runId) ??
-			(() => {
-				const initialState: AgentReplayState = {
-					runId,
-					createdAt: message.createdAt,
-					endAt: message.createdAt,
-					content: "",
-					toolCalls: [],
-					toolCallIndexById: new Map(),
-					hasSummary: false,
-					status: "running",
-					lastOutputText: "",
-					lastReasoningText: "",
-				};
-				runStates.set(runId, initialState);
-				return initialState;
-			})();
-		existing.endAt = message.createdAt;
-
-		if (type === "agent.output.delta") {
-			const text = typeof payload.delta === "string" ? payload.delta : "";
-			const previous = existing.lastOutputText ?? "";
-			if (text.length > 0 && text !== previous) {
-				existing.lastOutputText = text;
-				const delta = text.startsWith(previous)
-					? text.slice(previous.length)
-					: text;
-				if (delta.length > 0) {
-					existing.content += delta;
-				}
-			}
-			continue;
-		}
-
-		if (type === "agent.output.reasoning") {
-			const text =
-				typeof payload.text === "string"
-					? payload.text
-					: typeof payload.delta === "string"
-						? payload.delta
-						: "";
-			const previous = existing.lastReasoningText ?? "";
-			if (text.length > 0 && text !== previous) {
-				existing.lastReasoningText = text;
-				const delta = text.startsWith(previous)
-					? text.slice(previous.length)
-					: text;
-				if (delta.trim().length > 0) {
-					const thinkId = `agent-${message.messageId}`;
-					const marker = `\n\n<<think:${thinkId}>>\n${delta}\n<<think_end:${thinkId}>>\n\n`;
-					if (!existing.content.includes(`<<think:${thinkId}>>`)) {
-						existing.content += marker;
-					}
-				}
-			}
-			continue;
-		}
-
-		if (type === "agent.step.start") {
-			const toolName =
-				typeof payload.toolName === "string" ? payload.toolName : "tool";
-			const toolCallId = normalizeAgentToolCallId({
-				executionId: payload.executionId,
-				stepId: payload.stepId,
-				messageId: message.messageId,
-				toolName,
-			});
-			const marker = `\n\n<<tool:${toolCallId}>>\n\n`;
-			if (!existing.content.includes(marker)) {
-				existing.content += marker;
-			}
-			upsertReplayToolCall(existing, {
-				toolCallId,
-				toolName,
-				executionId:
-					typeof payload.executionId === "string"
-						? payload.executionId
-						: undefined,
-				status: "executing",
-				argumentsText:
-					typeof payload.parametersPreview === "string" &&
-					payload.parametersPreview.trim().length > 0
-						? payload.parametersPreview
-						: "{}",
-			});
-			continue;
-		}
-
-		if (type === "agent.step.result") {
-			const toolName =
-				typeof payload.toolName === "string" ? payload.toolName : "tool";
-			const toolCallId = normalizeAgentToolCallId({
-				executionId: payload.executionId,
-				stepId: payload.stepId,
-				messageId: message.messageId,
-				toolName,
-			});
-			const success = payload.success === true;
-			const summary =
-				typeof payload.summary === "string" ? payload.summary : undefined;
-			upsertReplayToolCall(existing, {
-				toolCallId,
-				toolName,
-				executionId:
-					typeof payload.executionId === "string"
-						? payload.executionId
-						: undefined,
-				status: success ? "completed" : "failed",
-				result: {
-					success,
-					message: summary,
-					data: parsePreviewToData(payload.dataPreview),
-					error: success ? undefined : summary,
-				},
-			});
-			continue;
-		}
-
-		if (type === "agent.step.wait_approval") {
-			const toolName =
-				typeof payload.toolName === "string" ? payload.toolName : "tool";
-			const toolCallId = normalizeAgentToolCallId({
-				executionId: payload.executionId,
-				stepId: payload.stepId,
-				messageId: message.messageId,
-				toolName,
-			});
-			const marker = `\n\n<<tool:${toolCallId}>>\n\n`;
-			if (!existing.content.includes(marker)) {
-				existing.content += marker;
-			}
-			upsertReplayToolCall(existing, {
-				toolCallId,
-				toolName,
-				executionId:
-					typeof payload.executionId === "string"
-						? payload.executionId
-						: undefined,
-				status: "pending",
-				argumentsText:
-					typeof payload.parametersPreview === "string" &&
-					payload.parametersPreview.trim().length > 0
-						? payload.parametersPreview
-						: "{}",
-				result: { success: false, message: "Waiting for approval" },
-			});
-			continue;
-		}
-
-		if (type === "agent.run.summary") {
-			const summary =
-				typeof payload.summary === "string" ? payload.summary.trim() : "";
-			if (summary.length > 0) {
-				if (existing.content.trim().length === 0) existing.content = summary;
-				else if (!existing.content.includes(summary)) {
-					const separator = existing.content.endsWith("\n") ? "\n" : "\n\n";
-					existing.content += `${separator}${summary}`;
-				}
-			}
-			existing.hasSummary = true;
-			continue;
-		}
-
-		if (type === "agent.run.finish") {
-			const status = typeof payload.status === "string" ? payload.status : "";
-			if (
-				status === "completed" ||
-				status === "failed" ||
-				status === "cancelled"
-			) {
-				existing.status = status;
-			}
-			if (status === "completed") {
-				existing.hasSummary = true;
-			}
-			if (status === "failed" || status === "cancelled") {
-				const errorText =
-					typeof payload.error === "string" ? payload.error.trim() : "";
-				if (errorText.length > 0) {
-					const separator =
-						existing.content.length > 0
-							? existing.content.endsWith("\n")
-								? "\n"
-								: "\n\n"
-							: "";
-					existing.content += `${separator}${errorText}`;
-				}
-			}
-		}
-	}
-
-	type RunWindow = {
-		runId: string;
-		startMs: number;
-		endMs: number;
-	};
-	const runWindows: RunWindow[] = [];
-	for (const state of runStates.values()) {
-		const startMs = Date.parse(state.createdAt ?? "");
-		const endMs = Date.parse(state.endAt ?? "");
-		if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
-		runWindows.push({ runId: state.runId, startMs, endMs });
-	}
-
-	const RUN_ASSISTANT_MATCH_EARLY_MS = 2 * 60 * 1000;
-	const RUN_ASSISTANT_MATCH_LATE_MS = 5 * 60 * 1000;
-	const assistantMessageByRunId = new Map<string, Message>();
-	if (runWindows.length > 0) {
-		for (const message of baseMessages) {
-			if (message.role !== "assistant") continue;
-			const messageMs = Date.parse(message.createdAt ?? "");
-			if (!Number.isFinite(messageMs)) continue;
-			let best: { runId: string; dist: number } | null = null;
-			for (const w of runWindows) {
-				if (
-					messageMs < w.startMs - RUN_ASSISTANT_MATCH_EARLY_MS ||
-					messageMs > w.endMs + RUN_ASSISTANT_MATCH_LATE_MS
-				) {
-					continue;
-				}
-				const dist = Math.abs(w.endMs - messageMs);
-				if (!best || dist < best.dist) best = { runId: w.runId, dist };
-			}
-			if (!best) continue;
-			const existing = assistantMessageByRunId.get(best.runId);
-			if (!existing) {
-				assistantMessageByRunId.set(best.runId, message);
-				continue;
-			}
-			const existingMs = Date.parse(existing.createdAt ?? "");
-			const existingDist = Number.isFinite(existingMs)
-				? Math.abs(
-						(runWindows.find((w) => w.runId === best.runId)?.endMs ??
-							existingMs) - existingMs,
-					)
-				: Number.POSITIVE_INFINITY;
-			if (best.dist < existingDist)
-				assistantMessageByRunId.set(best.runId, message);
-		}
-	}
-
-	const hiddenAssistantMessageIds = new Set<string>();
-	const OUTPUT_TRUNCATED_MARKER = "\n... (truncated)";
-
-	const extractThinkBlocks = (input: string) => {
-		if (!input.includes("<<think:")) return "";
-		const blocks: string[] = [];
-		const re = /<<think:[^>]+>>[\s\S]*?(?:<<think_end:[^>]+>>|$)/g;
-		let match: RegExpExecArray | null = re.exec(input);
-		while (match) {
-			blocks.push(match[0]);
-			match = re.exec(input);
-		}
-		return blocks.join("\n\n");
-	};
-
-	const replayMessages = Array.from(runStates.values())
-		.map((state): Message | null => {
-			const isFailed =
-				state.status === "failed" || state.status === "cancelled";
-			const persistedAssistant = assistantMessageByRunId.get(state.runId);
-			const persistedContent =
-				persistedAssistant && typeof persistedAssistant.content === "string"
-					? persistedAssistant.content
-					: "";
-			const toolCallsFromAssistant = Array.isArray(
-				persistedAssistant?.toolCalls,
-			)
-				? persistedAssistant.toolCalls
-				: [];
-
-			const contentBase = state.content ?? "";
-			const contentBaseIsTruncated = contentBase.includes(
-				OUTPUT_TRUNCATED_MARKER,
-			);
-			const shouldPreferPersisted =
-				contentBaseIsTruncated && persistedContent.trim().length > 0;
-
-			let contentToRender =
-				contentBase.trim().length > 0 && !shouldPreferPersisted
-					? contentBase
-					: persistedContent.trim().length > 0
-						? persistedContent
-						: contentBase;
-			const toolCallsToRender =
-				state.toolCalls.length > 0 ? state.toolCalls : toolCallsFromAssistant;
-
-			if (contentToRender === persistedContent && contentBaseIsTruncated) {
-				const thinkBlocks = extractThinkBlocks(contentBase);
-				if (
-					thinkBlocks.trim().length > 0 &&
-					!contentToRender.includes("<<think:")
-				) {
-					const separator = contentToRender.endsWith("\n") ? "\n" : "\n\n";
-					contentToRender = `${contentToRender}${separator}${thinkBlocks}`;
-				}
-			}
-
-			const isRunning = state.status === "running";
-			if (
-				contentToRender.trim().length === 0 &&
-				toolCallsToRender.length === 0 &&
-				!isRunning
-			) {
-				return null;
-			}
-			if (persistedAssistant) {
-				hiddenAssistantMessageIds.add(persistedAssistant.messageId);
-			}
-			return {
-				messageId: `agent-run-${state.runId}`,
-				role: "assistant",
-				content: contentToRender,
-				toolCalls: isFailed
-					? toolCallsToRender.map((tc) => {
-							if (
-								tc.status === "completed" ||
-								tc.status === "failed" ||
-								tc.status === "rejected"
-							) {
-								return tc;
-							}
-							return { ...tc, status: "failed" as const };
-						})
-					: toolCallsToRender,
-				createdAt: state.createdAt,
-				status: isFailed ? "error" : isRunning ? "sending" : "sent",
-			};
-		})
-		.filter((m): m is Message => m !== null);
-
-	const filteredBase = hiddenAssistantMessageIds.size
-		? baseMessages.filter(
-				(m) =>
-					m.role !== "assistant" || !hiddenAssistantMessageIds.has(m.messageId),
-			)
-		: baseMessages;
-
-	return [...filteredBase, ...replayMessages];
+	return sorted.map((m) => {
+		if (m.role !== "assistant") return m;
+		if (m.messageId !== activeAssistantMessageId) return m;
+		return m.status === "sending" ? m : { ...m, status: "sending" as const };
+	});
 }
 
 function hasActiveAgentRunInMessages(messages: Message[]): boolean {
@@ -1002,6 +621,7 @@ export function useChat(options: UseChatOptions = {}) {
 	const hasUserSetToolBudgetModeRef = useRef(false);
 	const [canContinueChat, setCanContinueChat] = useState(false);
 	const inFlightApprovalExecutionIdsRef = useRef<Set<string>>(new Set());
+	const sendInFlightRef = useRef(false);
 	const [isLoading, setIsLoading] = useState(false);
 	const [abortController, setAbortController] =
 		useState<AbortController | null>(null);
@@ -1919,11 +1539,16 @@ export function useChat(options: UseChatOptions = {}) {
 			attachments: NonNullable<Message["attachments"]> = [],
 		) => {
 			if (!content.trim() && attachments.length === 0) return;
+			if (sendInFlightRef.current) return;
+			sendInFlightRef.current = true;
+			try {
 
 			const startConversationId = normalizeConversationValue(conversationId);
 			const pendingScopeId = startConversationId || DRAFT_CONVERSATION_SCOPE_ID;
 			setConversationLoadingState(pendingScopeId, true);
 			setConversationCanContinueState(pendingScopeId, false);
+			const controller = new AbortController();
+			setConversationAbortControllerState(pendingScopeId, controller);
 
 			const timestamp = Date.now();
 			const userTempId = `temp-${timestamp}-user`;
@@ -1950,10 +1575,13 @@ export function useChat(options: UseChatOptions = {}) {
 
 			setPendingMessages((prev) => [...prev, userMessage, assistantMessage]);
 
-			const finalizeExecutingToolCalls = (errorMsg: string) => {
+			const finalizeExecutingToolCalls = (
+				assistantMessageId: string,
+				errorMsg: string,
+			) => {
 				setPendingMessages((prev) =>
 					prev.map((m) => {
-						if (m.messageId !== assistantTempId) return m;
+						if (m.messageId !== assistantMessageId) return m;
 						const toolCalls = (m.toolCalls || []).map((tc) => {
 							if (tc.status !== "executing") return tc;
 							return {
@@ -2004,6 +1632,7 @@ export function useChat(options: UseChatOptions = {}) {
 						),
 					);
 					setConversationLoadingState(pendingScopeId, false);
+					setConversationAbortControllerState(pendingScopeId, null);
 					options.onError?.(error as Error);
 					return;
 				}
@@ -2014,6 +1643,7 @@ export function useChat(options: UseChatOptions = {}) {
 			if (streamConversationId) {
 				setConversationLoadingState(streamConversationId, true);
 				setConversationCanContinueState(streamConversationId, false);
+				setConversationAbortControllerState(streamConversationId, controller);
 				if (pendingScopeId !== streamConversationId) {
 					setConversationLoadingState(pendingScopeId, false);
 					setConversationCanContinueState(pendingScopeId, false);
@@ -2032,12 +1662,10 @@ export function useChat(options: UseChatOptions = {}) {
 			let abortedBySafetyTimer = false;
 
 			if (isAgentMode) {
+				let userMessageId = userTempId;
 				let assistantMessageId = assistantTempId;
 				let stopReason: "done" | "waiting_approval" | "aborted" = "aborted";
 				try {
-					const controller = new AbortController();
-					setConversationAbortControllerState(streamConversationId, controller);
-
 					const response = await fetch("/api/ai/agent/stream", {
 						method: "POST",
 						headers: {
@@ -2053,22 +1681,57 @@ export function useChat(options: UseChatOptions = {}) {
 						signal: controller.signal,
 					});
 
-					if (!response.ok) {
-						const errorText = await response.text().catch(() => "");
-						throw new Error(errorText || `Request failed (${response.status})`);
-					}
+						if (!response.ok) {
+							const errorText = await response.text().catch(() => "");
+							throw new Error(errorText || `Request failed (${response.status})`);
+						}
 
-					if (!response.body) {
-						throw new Error("settings.ai.errors.streamingResponseNotAvailable");
-					}
+						if (!response.body) {
+							throw new Error("settings.ai.errors.streamingResponseNotAvailable");
+						}
 
-					setPendingMessages((prev) =>
-						prev.map((m) =>
-							m.messageId === userTempId
-								? { ...m, status: "sent" as const }
-								: m,
-						),
-					);
+						const headerRunId = (response.headers.get("X-Dokploy-AI-Run-Id") ?? "")
+							.trim();
+						const headerAssistantMessageId = (
+							response.headers.get("X-Dokploy-AI-Assistant-Message-Id") ?? ""
+						).trim();
+						const headerUserMessageId = (
+							response.headers.get("X-Dokploy-AI-User-Message-Id") ?? ""
+						).trim();
+						if (headerRunId.length > 0) {
+							setConversationAgentRunId(streamConversationId, headerRunId);
+						}
+						if (headerUserMessageId.length > 0 && userMessageId.startsWith("temp-")) {
+							const previousId = userMessageId;
+							const nextId = headerUserMessageId;
+							setPendingMessages((prev) =>
+								prev.map((m) =>
+									m.messageId === previousId ? { ...m, messageId: nextId } : m,
+								),
+							);
+							userMessageId = nextId;
+						}
+						if (headerRunId.length > 0 && assistantMessageId.startsWith("temp-")) {
+							const nextId =
+								headerAssistantMessageId.length > 0
+									? headerAssistantMessageId
+									: `agent-run-${headerRunId}`;
+							const previousId = assistantMessageId;
+							setPendingMessages((prev) =>
+								prev.map((m) =>
+									m.messageId === previousId ? { ...m, messageId: nextId } : m,
+								),
+							);
+							assistantMessageId = nextId;
+						}
+
+						setPendingMessages((prev) =>
+							prev.map((m) =>
+								m.messageId === userMessageId
+									? { ...m, status: "sent" as const }
+									: m,
+							),
+						);
 
 					const updateAssistantMessage = (updater: (m: Message) => Message) => {
 						const targetId = assistantMessageId;
@@ -2245,14 +1908,49 @@ export function useChat(options: UseChatOptions = {}) {
 										isRecord(started) && typeof started.runId === "string"
 											? started.runId.trim()
 											: "";
+									const startedUserMessageId =
+										isRecord(started) &&
+										typeof (started as { userMessageId?: unknown }).userMessageId ===
+											"string"
+											? String(
+													(started as { userMessageId?: unknown }).userMessageId,
+												).trim()
+											: "";
+									const startedAssistantMessageId =
+										isRecord(started) &&
+										typeof (started as {
+											assistantMessageId?: unknown;
+										}).assistantMessageId === "string"
+											? String(
+													(started as { assistantMessageId?: unknown })
+														.assistantMessageId,
+												).trim()
+											: "";
 									if (startedRunId.length > 0) {
 										setConversationAgentRunId(
 											streamConversationId,
 											startedRunId,
 										);
+										if (
+											startedUserMessageId.length > 0 &&
+											userMessageId.startsWith("temp-")
+										) {
+											const previousId = userMessageId;
+											setPendingMessages((prev) =>
+												prev.map((m) =>
+													m.messageId === previousId
+														? { ...m, messageId: startedUserMessageId }
+														: m,
+												),
+											);
+											userMessageId = startedUserMessageId;
+										}
 										if (assistantMessageId.startsWith("temp-")) {
 											flushDeltaNow();
-											const nextId = `agent-run-${startedRunId}`;
+											const nextId =
+												startedAssistantMessageId.length > 0
+													? startedAssistantMessageId
+													: `agent-run-${startedRunId}`;
 											const previousId = assistantMessageId;
 											setPendingMessages((prev) =>
 												prev.map((m) =>
@@ -2546,9 +2244,10 @@ export function useChat(options: UseChatOptions = {}) {
 					setConversationAbortControllerState(streamConversationId, null);
 					if (isAbortLikeError(error)) {
 						const assistantId = assistantMessageId;
+						const userId = userMessageId;
 						setPendingMessages((prev) =>
 							prev.map((m) =>
-								m.messageId === userTempId || m.messageId === assistantId
+								m.messageId === userId || m.messageId === assistantId
 									? { ...m, status: "sent" as const }
 									: m,
 							),
@@ -2570,7 +2269,7 @@ export function useChat(options: UseChatOptions = {}) {
 								setPendingMessages((prev) =>
 									prev.filter(
 										(m) =>
-											m.messageId !== userTempId && m.messageId !== assistantId,
+											m.messageId !== userId && m.messageId !== assistantId,
 									),
 								);
 							}
@@ -2583,9 +2282,10 @@ export function useChat(options: UseChatOptions = {}) {
 							? error.message
 							: "settings.ai.errors.unknownError";
 					const assistantId = assistantMessageId;
+					const userId = userMessageId;
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === userTempId || m.messageId === assistantId
+							m.messageId === userId || m.messageId === assistantId
 								? { ...m, status: "error" as const, error: errorMsg }
 								: m,
 						),
@@ -2595,16 +2295,17 @@ export function useChat(options: UseChatOptions = {}) {
 					return;
 				}
 
-				if (stopReason !== "done") {
-					const assistantId = assistantMessageId;
-					setPendingMessages((prev) =>
-						prev.map((m) =>
-							m.messageId === userTempId || m.messageId === assistantId
-								? { ...m, status: "sent" as const }
-								: m,
-						),
-					);
-					let didRefetch = false;
+					if (stopReason !== "done") {
+						const assistantId = assistantMessageId;
+						const userId = userMessageId;
+						setPendingMessages((prev) =>
+							prev.map((m) =>
+								m.messageId === userId || m.messageId === assistantId
+									? { ...m, status: "sent" as const }
+									: m,
+							),
+						);
+						let didRefetch = false;
 					try {
 						const refetchPromise = refetchMessages()
 							.then(() => true)
@@ -2617,18 +2318,18 @@ export function useChat(options: UseChatOptions = {}) {
 						]);
 					} finally {
 						setConversationLoadingState(streamConversationId, false);
-						setConversationAbortControllerState(streamConversationId, null);
-						if (didRefetch) {
-							setPendingMessages((prev) =>
-								prev.filter(
-									(m) =>
-										m.messageId !== userTempId && m.messageId !== assistantId,
-								),
-							);
+							setConversationAbortControllerState(streamConversationId, null);
+							if (didRefetch) {
+								setPendingMessages((prev) =>
+									prev.filter(
+										(m) =>
+											m.messageId !== userId && m.messageId !== assistantId,
+									),
+								);
+							}
 						}
+						return;
 					}
-					return;
-				}
 
 				try {
 					const refetchPromise = refetchMessages().catch(() => {});
@@ -2636,25 +2337,25 @@ export function useChat(options: UseChatOptions = {}) {
 						refetchPromise,
 						new Promise((resolve) => setTimeout(resolve, 10000)),
 					]);
-				} finally {
-					setConversationAgentRunId(streamConversationId, null);
-					const assistantId = assistantMessageId;
-					setPendingMessages((prev) =>
-						prev.filter(
-							(m) => m.messageId !== userTempId && m.messageId !== assistantId,
-						),
-					);
-					setConversationLoadingState(streamConversationId, false);
-					setConversationAbortControllerState(streamConversationId, null);
+					} finally {
+						setConversationAgentRunId(streamConversationId, null);
+						const assistantId = assistantMessageId;
+						const userId = userMessageId;
+						setPendingMessages((prev) =>
+							prev.filter(
+								(m) => m.messageId !== userId && m.messageId !== assistantId,
+							),
+						);
+						setConversationLoadingState(streamConversationId, false);
+						setConversationAbortControllerState(streamConversationId, null);
+					}
+					return;
 				}
-				return;
-			}
 
-			try {
-				const controller = new AbortController();
-				setConversationAbortControllerState(streamConversationId, controller);
-
-				const response = await fetch("/api/ai/stream", {
+				let userMessageId = userTempId;
+				let assistantMessageId = assistantTempId;
+				try {
+					const response = await fetch("/api/ai/stream", {
 					method: "POST",
 					headers: {
 						"Content-Type": "application/json",
@@ -2680,7 +2381,9 @@ export function useChat(options: UseChatOptions = {}) {
 
 				setPendingMessages((prev) =>
 					prev.map((m) =>
-						m.messageId === userTempId ? { ...m, status: "sent" as const } : m,
+						m.messageId === userMessageId
+							? { ...m, status: "sent" as const }
+							: m,
 					),
 				);
 
@@ -2720,7 +2423,7 @@ export function useChat(options: UseChatOptions = {}) {
 						deltaBufferRef.current = "";
 						setPendingMessages((prev) =>
 							prev.map((m) =>
-								m.messageId === assistantTempId
+								m.messageId === assistantMessageId
 									? {
 											...m,
 											content: (m.content ?? "") + pendingText,
@@ -2767,8 +2470,59 @@ export function useChat(options: UseChatOptions = {}) {
 				try {
 					for await (const evt of readSseStream(response.body)) {
 						if (controller.signal.aborted) break;
-						if (evt.event === "ping" || evt.event === "start") {
+						if (evt.event === "ping") {
 							lastEventTime = Date.now();
+							continue;
+						}
+						if (evt.event === "start") {
+							lastEventTime = Date.now();
+							try {
+								const payload = JSON.parse(evt.data) as {
+									userMessageId?: unknown;
+									assistantMessageId?: unknown;
+								};
+								const nextUserMessageId =
+									typeof payload.userMessageId === "string"
+										? payload.userMessageId.trim()
+										: "";
+								const nextAssistantMessageId =
+									typeof payload.assistantMessageId === "string"
+										? payload.assistantMessageId.trim()
+										: "";
+
+								if (
+									nextUserMessageId.length > 0 &&
+									userMessageId.startsWith("temp-")
+								) {
+									const previousId = userMessageId;
+									setPendingMessages((prev) =>
+										prev.map((m) =>
+											m.messageId === previousId
+												? {
+														...m,
+														messageId: nextUserMessageId,
+														status: "sent" as const,
+													}
+												: m,
+										),
+									);
+									userMessageId = nextUserMessageId;
+								}
+								if (
+									nextAssistantMessageId.length > 0 &&
+									assistantMessageId.startsWith("temp-")
+								) {
+									const previousId = assistantMessageId;
+									setPendingMessages((prev) =>
+										prev.map((m) =>
+											m.messageId === previousId
+												? { ...m, messageId: nextAssistantMessageId }
+												: m,
+										),
+									);
+									assistantMessageId = nextAssistantMessageId;
+								}
+							} catch {}
 							continue;
 						}
 						if (
@@ -2820,7 +2574,7 @@ export function useChat(options: UseChatOptions = {}) {
 							toolCallArgsById.set(payload.toolCallId, argsString);
 							setPendingMessages((prev) =>
 								prev.map((m) =>
-									m.messageId === assistantTempId
+									m.messageId === assistantMessageId
 										? {
 												...m,
 												content: (m.content ?? "") + marker,
@@ -2873,7 +2627,7 @@ export function useChat(options: UseChatOptions = {}) {
 
 							setPendingMessages((prev) =>
 								prev.map((m) => {
-									if (m.messageId !== assistantTempId) return m;
+									if (m.messageId !== assistantMessageId) return m;
 									const toolCalls = [...(m.toolCalls || [])];
 									const existingIndex = toolCalls.findIndex(
 										(tc) => tc.id === payload.toolCallId,
@@ -2980,23 +2734,28 @@ export function useChat(options: UseChatOptions = {}) {
 							receivedDone = true;
 							activeToolCallIds.clear();
 							finalizeExecutingToolCalls(
+								assistantMessageId,
 								"settings.ai.errors.toolExecutionDidNotReturnResult",
 							);
 							setPendingMessages((prev) =>
 								prev.map((m) =>
-									m.messageId === userTempId || m.messageId === assistantTempId
+									m.messageId === userMessageId ||
+									m.messageId === assistantMessageId
 										? { ...m, status: "sent" as const }
 										: m,
 								),
 							);
-							if (realId) {
+							if (realId && realId !== assistantMessageId) {
+								const previousId = assistantMessageId;
+								const nextId = realId;
 								setPendingMessages((prev) =>
 									prev.map((m) =>
-										m.messageId === assistantTempId
-											? { ...m, messageId: realId, status: "sent" as const }
+										m.messageId === previousId
+											? { ...m, messageId: nextId, status: "sent" as const }
 											: m,
 									),
 								);
+								assistantMessageId = nextId;
 							}
 							break;
 						}
@@ -3026,13 +2785,13 @@ export function useChat(options: UseChatOptions = {}) {
 					const errorMsg = abortedBySafetyTimer
 						? "settings.ai.errors.streamingError"
 						: "settings.ai.errors.streamingAborted";
-					finalizeExecutingToolCalls(errorMsg);
+					finalizeExecutingToolCalls(assistantMessageId, errorMsg);
 					if (abortedBySafetyTimer) {
 						setPendingMessages((prev) =>
 							prev
-								.filter((m) => m.messageId !== userTempId)
+								.filter((m) => m.messageId !== userMessageId)
 								.map((m) =>
-									m.messageId === assistantTempId
+									m.messageId === assistantMessageId
 										? { ...m, status: "error" as const, error: errorMsg }
 										: m,
 								),
@@ -3044,7 +2803,8 @@ export function useChat(options: UseChatOptions = {}) {
 					}
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === userTempId || m.messageId === assistantTempId
+							m.messageId === userMessageId ||
+							m.messageId === assistantMessageId
 								? { ...m, status: "sent" as const }
 								: m,
 						),
@@ -3053,10 +2813,14 @@ export function useChat(options: UseChatOptions = {}) {
 
 				if (!controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
-					finalizeExecutingToolCalls("settings.ai.errors.streamingError");
+					finalizeExecutingToolCalls(
+						assistantMessageId,
+						"settings.ai.errors.streamingError",
+					);
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === userTempId || m.messageId === assistantTempId
+							m.messageId === userMessageId ||
+							m.messageId === assistantMessageId
 								? { ...m, status: "sent" as const }
 								: m,
 						),
@@ -3070,13 +2834,13 @@ export function useChat(options: UseChatOptions = {}) {
 					const errorMsg = abortedBySafetyTimer
 						? "settings.ai.errors.streamingError"
 						: "settings.ai.errors.streamingAborted";
-					finalizeExecutingToolCalls(errorMsg);
+					finalizeExecutingToolCalls(assistantMessageId, errorMsg);
 					if (abortedBySafetyTimer) {
 						setPendingMessages((prev) =>
 							prev
-								.filter((m) => m.messageId !== userTempId)
+								.filter((m) => m.messageId !== userMessageId)
 								.map((m) =>
-									m.messageId === assistantTempId
+									m.messageId === assistantMessageId
 										? { ...m, status: "error" as const, error: errorMsg }
 										: m,
 								),
@@ -3087,7 +2851,8 @@ export function useChat(options: UseChatOptions = {}) {
 					}
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === userTempId || m.messageId === assistantTempId
+							m.messageId === userMessageId ||
+							m.messageId === assistantMessageId
 								? { ...m, status: "sent" as const }
 								: m,
 						),
@@ -3097,10 +2862,11 @@ export function useChat(options: UseChatOptions = {}) {
 						error instanceof Error
 							? error.message
 							: "settings.ai.errors.unknownError";
-					finalizeExecutingToolCalls(errorMsg);
+					finalizeExecutingToolCalls(assistantMessageId, errorMsg);
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === userTempId || m.messageId === assistantTempId
+							m.messageId === userMessageId ||
+							m.messageId === assistantMessageId
 								? { ...m, status: "error" as const, error: errorMsg }
 								: m,
 						),
@@ -3111,21 +2877,32 @@ export function useChat(options: UseChatOptions = {}) {
 				}
 			}
 
+			let didRefetch = false;
 			try {
-				const refetchPromise = refetchMessages().catch(() => {});
-				await Promise.race([
+				const refetchPromise = refetchMessages()
+					.then(() => true)
+					.catch(() => false);
+				didRefetch = await Promise.race([
 					refetchPromise,
-					new Promise((resolve) => setTimeout(resolve, 10000)),
+					new Promise<boolean>((resolve) =>
+						setTimeout(() => resolve(false), 10000),
+					),
 				]);
 			} finally {
-				setPendingMessages((prev) =>
-					prev.filter(
-						(m) =>
-							m.messageId !== userTempId && m.messageId !== assistantTempId,
-					),
-				);
+				if (didRefetch) {
+					const userId = userMessageId;
+					const assistantId = assistantMessageId;
+					setPendingMessages((prev) =>
+						prev.filter(
+							(m) => m.messageId !== userId && m.messageId !== assistantId,
+						),
+					);
+				}
 				setConversationLoadingState(streamConversationId, false);
 			}
+		} finally {
+			sendInFlightRef.current = false;
+		}
 		},
 		[
 			conversationId,
@@ -3155,6 +2932,7 @@ export function useChat(options: UseChatOptions = {}) {
 
 			const timestamp = Date.now();
 			const assistantTempId = `temp-${timestamp}-assistant-continue`;
+			let assistantMessageId = assistantTempId;
 
 			const assistantMessage: Message = {
 				messageId: assistantTempId,
@@ -3168,10 +2946,13 @@ export function useChat(options: UseChatOptions = {}) {
 
 			setPendingMessages((prev) => [...prev, assistantMessage]);
 
-			const finalizeExecutingToolCalls = (errorMsg: string) => {
+			const finalizeExecutingToolCalls = (
+				assistantId: string,
+				errorMsg: string,
+			) => {
 				setPendingMessages((prev) =>
 					prev.map((m) => {
-						if (m.messageId !== assistantTempId) return m;
+						if (m.messageId !== assistantId) return m;
 						const toolCalls = (m.toolCalls || []).map((tc) => {
 							if (tc.status !== "executing") return tc;
 							return {
@@ -3264,7 +3045,7 @@ export function useChat(options: UseChatOptions = {}) {
 					deltaBufferRef.current = "";
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === assistantTempId
+							m.messageId === assistantMessageId
 								? {
 										...m,
 										content: (m.content ?? "") + pendingText,
@@ -3303,8 +3084,35 @@ export function useChat(options: UseChatOptions = {}) {
 
 				try {
 					for await (const evt of readSseStream(response.body)) {
-						if (evt.event === "ping" || evt.event === "start") {
+						if (evt.event === "ping") {
 							lastEventTime = Date.now();
+							continue;
+						}
+						if (evt.event === "start") {
+							lastEventTime = Date.now();
+							try {
+								const payload = JSON.parse(evt.data) as {
+									assistantMessageId?: unknown;
+								};
+								const nextAssistantMessageId =
+									typeof payload.assistantMessageId === "string"
+										? payload.assistantMessageId.trim()
+										: "";
+								if (
+									nextAssistantMessageId.length > 0 &&
+									assistantMessageId.startsWith("temp-")
+								) {
+									const previousId = assistantMessageId;
+									setPendingMessages((prev) =>
+										prev.map((m) =>
+											m.messageId === previousId
+												? { ...m, messageId: nextAssistantMessageId }
+												: m,
+										),
+									);
+									assistantMessageId = nextAssistantMessageId;
+								}
+							} catch {}
 							continue;
 						}
 
@@ -3363,7 +3171,7 @@ export function useChat(options: UseChatOptions = {}) {
 
 							setPendingMessages((prev) =>
 								prev.map((m) => {
-									if (m.messageId !== assistantTempId) return m;
+									if (m.messageId !== assistantMessageId) return m;
 									const existingContent = m.content ?? "";
 									const content = existingContent.includes(marker)
 										? existingContent
@@ -3445,7 +3253,7 @@ export function useChat(options: UseChatOptions = {}) {
 
 							setPendingMessages((prev) =>
 								prev.map((m) => {
-									if (m.messageId !== assistantTempId) return m;
+									if (m.messageId !== assistantMessageId) return m;
 									const toolCalls = [...(m.toolCalls || [])];
 									const existingIndex = toolCalls.findIndex(
 										(tc) => tc.id === payload.toolCallId,
@@ -3557,23 +3365,27 @@ export function useChat(options: UseChatOptions = {}) {
 							receivedDone = true;
 							activeToolCallIds.clear();
 							finalizeExecutingToolCalls(
+								assistantMessageId,
 								"settings.ai.errors.toolExecutionDidNotReturnResult",
 							);
 							setPendingMessages((prev) =>
 								prev.map((m) =>
-									m.messageId === assistantTempId
+									m.messageId === assistantMessageId
 										? { ...m, status: "sent" as const }
 										: m,
 								),
 							);
-							if (realId) {
+							if (realId && realId !== assistantMessageId) {
+								const previousId = assistantMessageId;
+								const nextId = realId;
 								setPendingMessages((prev) =>
 									prev.map((m) =>
-										m.messageId === assistantTempId
-											? { ...m, messageId: realId, status: "sent" as const }
+										m.messageId === previousId
+											? { ...m, messageId: nextId, status: "sent" as const }
 											: m,
 									),
 								);
+								assistantMessageId = nextId;
 							}
 							break;
 						}
@@ -3603,11 +3415,11 @@ export function useChat(options: UseChatOptions = {}) {
 					const errorMsg = abortedBySafetyTimer
 						? "settings.ai.errors.streamingError"
 						: "settings.ai.errors.streamingAborted";
-					finalizeExecutingToolCalls(errorMsg);
+					finalizeExecutingToolCalls(assistantMessageId, errorMsg);
 					if (abortedBySafetyTimer) {
 						setPendingMessages((prev) =>
 							prev.map((m) =>
-								m.messageId === assistantTempId
+								m.messageId === assistantMessageId
 									? { ...m, status: "error" as const, error: errorMsg }
 									: m,
 							),
@@ -3619,7 +3431,7 @@ export function useChat(options: UseChatOptions = {}) {
 					}
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === assistantTempId
+							m.messageId === assistantMessageId
 								? { ...m, status: "sent" as const }
 								: m,
 						),
@@ -3628,10 +3440,13 @@ export function useChat(options: UseChatOptions = {}) {
 
 				if (!controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
-					finalizeExecutingToolCalls("settings.ai.errors.streamingError");
+					finalizeExecutingToolCalls(
+						assistantMessageId,
+						"settings.ai.errors.streamingError",
+					);
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === assistantTempId
+							m.messageId === assistantMessageId
 								? { ...m, status: "sent" as const }
 								: m,
 						),
@@ -3645,11 +3460,11 @@ export function useChat(options: UseChatOptions = {}) {
 					const errorMsg = abortedBySafetyTimer
 						? "settings.ai.errors.streamingError"
 						: "settings.ai.errors.streamingAborted";
-					finalizeExecutingToolCalls(errorMsg);
+					finalizeExecutingToolCalls(assistantMessageId, errorMsg);
 					if (abortedBySafetyTimer) {
 						setPendingMessages((prev) =>
 							prev.map((m) =>
-								m.messageId === assistantTempId
+								m.messageId === assistantMessageId
 									? { ...m, status: "error" as const, error: errorMsg }
 									: m,
 							),
@@ -3660,7 +3475,7 @@ export function useChat(options: UseChatOptions = {}) {
 					}
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === assistantTempId
+							m.messageId === assistantMessageId
 								? { ...m, status: "sent" as const }
 								: m,
 						),
@@ -3672,7 +3487,7 @@ export function useChat(options: UseChatOptions = {}) {
 							: "settings.ai.errors.unknownError";
 					setPendingMessages((prev) =>
 						prev.map((m) =>
-							m.messageId === assistantTempId
+							m.messageId === assistantMessageId
 								? { ...m, status: "error" as const, error: errorMsg }
 								: m,
 						),
@@ -3683,16 +3498,24 @@ export function useChat(options: UseChatOptions = {}) {
 				}
 			}
 
+			let didRefetch = false;
 			try {
-				const refetchPromise = refetchMessages().catch(() => {});
-				await Promise.race([
+				const refetchPromise = refetchMessages()
+					.then(() => true)
+					.catch(() => false);
+				didRefetch = await Promise.race([
 					refetchPromise,
-					new Promise((resolve) => setTimeout(resolve, 10000)),
+					new Promise<boolean>((resolve) =>
+						setTimeout(() => resolve(false), 10000),
+					),
 				]);
 			} finally {
-				setPendingMessages((prev) =>
-					prev.filter((m) => m.messageId !== assistantTempId),
-				);
+				if (didRefetch) {
+					const assistantId = assistantMessageId;
+					setPendingMessages((prev) =>
+						prev.filter((m) => m.messageId !== assistantId),
+					);
+				}
 				setConversationLoadingState(streamConversationId, false);
 			}
 		},

@@ -1727,6 +1727,7 @@ export const getAgentEventMessages = async (params: {
 };
 
 export const saveMessage = async (params: {
+	messageId?: string;
 	conversationId: string;
 	role: "user" | "assistant" | "system" | "tool";
 	content?: string;
@@ -1743,6 +1744,44 @@ export const saveMessage = async (params: {
 	completionTokens?: number;
 }) => {
 	const [message] = await db.insert(aiMessages).values(params).returning();
+
+	// Update conversation timestamp
+	await db
+		.update(aiConversations)
+		.set({ updatedAt: new Date().toISOString() })
+		.where(eq(aiConversations.conversationId, params.conversationId));
+
+	return message;
+};
+
+export const updateMessage = async (params: {
+	messageId: string;
+	conversationId: string;
+	role?: "user" | "assistant" | "system" | "tool";
+	content?: string | null;
+	attachments?: AiMessageRow["attachments"] | null;
+	toolCalls?: AiMessageRow["toolCalls"] | null;
+	toolCallId?: string | null;
+	toolName?: string | null;
+	promptTokens?: number | null;
+	completionTokens?: number | null;
+}) => {
+	const update: Record<string, unknown> = {};
+	if (typeof params.role === "string") update.role = params.role;
+	if (params.content !== undefined) update.content = params.content;
+	if (params.attachments !== undefined) update.attachments = params.attachments;
+	if (params.toolCalls !== undefined) update.toolCalls = params.toolCalls;
+	if (params.toolCallId !== undefined) update.toolCallId = params.toolCallId;
+	if (params.toolName !== undefined) update.toolName = params.toolName;
+	if (params.promptTokens !== undefined) update.promptTokens = params.promptTokens;
+	if (params.completionTokens !== undefined)
+		update.completionTokens = params.completionTokens;
+
+	const [message] = await db
+		.update(aiMessages)
+		.set(update)
+		.where(eq(aiMessages.messageId, params.messageId))
+		.returning();
 
 	// Update conversation timestamp
 	await db
@@ -3930,14 +3969,14 @@ export const chat = async ({
 						...messages,
 					]
 				: messages;
-		return await generateText({
-			model,
-			system: systemMode === "system" ? effectiveSystemPrompt : undefined,
-			messages: nextMessages,
-			tools: withTools ? tools : undefined,
-			stopWhen: stepCountIs(toolStepBudget),
-		});
-	};
+			return await generateText({
+				model,
+				system: systemMode === "system" ? effectiveSystemPrompt : undefined,
+				messages: nextMessages,
+				tools: withTools ? tools : undefined,
+				stopWhen: stepCountIs(toolStepBudget),
+			});
+		};
 
 	type GeneratedTurn = Awaited<ReturnType<typeof generateText>>;
 
@@ -3959,14 +3998,14 @@ export const chat = async ({
 		overrideSystemPrompt?: string,
 	): Promise<GeneratedTurn> => {
 		let result: GeneratedTurn;
-		try {
-			result = await runGenerate(true, initialSystemMode, overrideSystemPrompt);
-		} catch (error) {
-			const aborted = false;
-			if (isSystemMessagePlacementError(error) && !aborted) {
 				try {
-					result = await runGenerate(true, "inline", overrideSystemPrompt);
-				} catch (retryError) {
+					result = await runGenerate(true, initialSystemMode, overrideSystemPrompt);
+				} catch (error) {
+					const aborted = false;
+					if (isSystemMessagePlacementError(error) && !aborted) {
+						try {
+							result = await runGenerate(true, "inline", overrideSystemPrompt);
+						} catch (retryError) {
 					if (isMissingToolUseIdError(retryError)) {
 						result = await runGenerate(false, "inline", overrideSystemPrompt);
 					} else {
@@ -4253,6 +4292,7 @@ export const chat = async ({
 
 export type ChatStreamOptions = {
 	abortSignal?: AbortSignal;
+	onStart?: (info: { assistantMessageId: string; userMessageId?: string }) => void;
 	onTextDelta?: (delta: string) => void;
 	onReasoningDelta?: (delta: string) => void;
 	onToolCall?: (toolCallId: string, toolName: string, args: unknown) => void;
@@ -4360,6 +4400,111 @@ export const chatStream = async (
 		});
 	}
 
+	const assistantMessage = await saveMessage({
+		conversationId,
+		role: "assistant",
+		content: "",
+	});
+	if (!assistantMessage) {
+		throw new TRPCError({
+			code: "INTERNAL_SERVER_ERROR",
+			message: "Failed to save assistant message",
+		});
+	}
+	const assistantMessageId = assistantMessage.messageId;
+	try {
+		options.onStart?.({ assistantMessageId, userMessageId });
+	} catch {}
+
+	let assistantDisplayContent = "";
+	let activeThinkId: string | null = null;
+
+	let persistTimer: ReturnType<typeof setTimeout> | null = null;
+	let lastPersistedLength = 0;
+	let persistChain: Promise<unknown> = Promise.resolve();
+
+	const enqueuePersist = (content: string) => {
+		persistChain = persistChain
+			.then(() =>
+				updateMessage({
+					messageId: assistantMessageId,
+					conversationId,
+					content,
+				}),
+			)
+			.catch(() => undefined);
+	};
+
+	const schedulePersist = () => {
+		if (persistTimer) return;
+		persistTimer = setTimeout(() => {
+			persistTimer = null;
+			const content = assistantDisplayContent;
+			if (content.length === lastPersistedLength) return;
+			lastPersistedLength = content.length;
+			enqueuePersist(content);
+		}, 300);
+	};
+
+	const flushPersist = async () => {
+		if (persistTimer) {
+			clearTimeout(persistTimer);
+			persistTimer = null;
+		}
+		const content = assistantDisplayContent;
+		if (content.length !== lastPersistedLength) {
+			lastPersistedLength = content.length;
+			enqueuePersist(content);
+		}
+		try {
+			await persistChain;
+		} catch {}
+	};
+
+	const ensureThinkStarted = () => {
+		if (activeThinkId) return;
+		activeThinkId = `think-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+		assistantDisplayContent += `\n\n<<think:${activeThinkId}>>\n`;
+	};
+
+	const closeThinkIfOpen = () => {
+		if (!activeThinkId) return;
+		assistantDisplayContent += `\n<<think_end:${activeThinkId}>>\n\n`;
+		activeThinkId = null;
+	};
+
+	const emitTextDelta = (delta: string) => {
+		if (typeof delta !== "string" || delta.length === 0) return;
+		closeThinkIfOpen();
+		assistantDisplayContent += delta;
+		schedulePersist();
+		try {
+			options.onTextDelta?.(delta);
+		} catch {
+			// Ignore callback errors (e.g., client disconnected)
+		}
+	};
+
+	const emitReasoningDelta = (delta: string) => {
+		if (typeof delta !== "string" || delta.length === 0) return;
+		ensureThinkStarted();
+		assistantDisplayContent += delta;
+		schedulePersist();
+		try {
+			options.onReasoningDelta?.(delta);
+		} catch {
+			// Ignore callback errors (e.g., client disconnected)
+		}
+	};
+
+	const emitToolMarker = (toolCallId: string) => {
+		if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) return;
+		closeThinkIfOpen();
+		assistantDisplayContent += `\n\n<<tool:${toolCallId}>>\n\n`;
+		schedulePersist();
+	};
+
+	try {
 		const provider = selectAIProvider(aiSettings);
 		const model = provider(aiSettings.model);
 
@@ -4497,11 +4642,11 @@ export const chatStream = async (
 		return trimmed.length > 0 ? trimmed.slice(0, 200) : "backup";
 	};
 
-	const runStream = async (
-		withTools: boolean,
-		systemMode: "system" | "inline" = "system",
-		overrideSystemPrompt?: string,
-	) => {
+		const runStream = async (
+			withTools: boolean,
+			systemMode: "system" | "inline" = "system",
+			overrideSystemPrompt?: string,
+		) => {
 		const stopWhen = stepCountIs(toolStepBudget);
 		const effectiveSystemPrompt = overrideSystemPrompt ?? systemPrompt;
 		const nextMessages =
@@ -4544,34 +4689,27 @@ export const chatStream = async (
 		let streamError: string | null = null;
 		let hasAnyOutput = false;
 
-		try {
-			for await (const chunk of stream.fullStream) {
-				if (chunk.type === "text-delta") {
-					const delta = typeof chunk.text === "string" ? chunk.text : "";
-					if (delta.length === 0) continue;
-					hasAnyOutput = true;
+			try {
+				for await (const chunk of stream.fullStream) {
+					if (chunk.type === "text-delta") {
+						const delta = typeof chunk.text === "string" ? chunk.text : "";
+						if (delta.length === 0) continue;
+						hasAnyOutput = true;
 
-					fullText += delta;
-					try {
-						options.onTextDelta?.(delta);
-					} catch {
-						// Ignore callback errors (e.g., client disconnected)
-					}
-				} else if (chunk.type === "reasoning-delta") {
-					const delta = typeof chunk.text === "string" ? chunk.text : "";
-					if (delta.length === 0) continue;
-					hasAnyOutput = true;
-					try {
-						options.onReasoningDelta?.(delta);
-					} catch {
-						// Ignore callback errors (e.g., client disconnected)
-					}
-				} else if (chunk.type === "tool-call") {
-					hasAnyOutput = true;
-					const args = (chunk as { input: unknown }).input;
-					const normalizedToolName = (() => {
-						if (chunk.toolName !== "tool_call") return chunk.toolName;
-						if (!args || typeof args !== "object" || Array.isArray(args)) {
+						fullText += delta;
+						emitTextDelta(delta);
+					} else if (chunk.type === "reasoning-delta") {
+						const delta = typeof chunk.text === "string" ? chunk.text : "";
+						if (delta.length === 0) continue;
+						hasAnyOutput = true;
+						emitReasoningDelta(delta);
+					} else if (chunk.type === "tool-call") {
+						hasAnyOutput = true;
+						emitToolMarker(chunk.toolCallId);
+						const args = (chunk as { input: unknown }).input;
+						const normalizedToolName = (() => {
+							if (chunk.toolName !== "tool_call") return chunk.toolName;
+							if (!args || typeof args !== "object" || Array.isArray(args)) {
 							return chunk.toolName;
 						}
 						const value = (args as { toolName?: unknown }).toolName;
@@ -4606,12 +4744,13 @@ export const chatStream = async (
 					} catch {
 						// Ignore callback errors
 					}
-				} else if (chunk.type === "tool-result") {
-					hasAnyOutput = true;
-					const toolResult =
-						(chunk as unknown as { result?: unknown }).result ??
-						(chunk as unknown as { output?: unknown }).output ??
-						chunk;
+					} else if (chunk.type === "tool-result") {
+						hasAnyOutput = true;
+						closeThinkIfOpen();
+						const toolResult =
+							(chunk as unknown as { result?: unknown }).result ??
+							(chunk as unknown as { output?: unknown }).output ??
+							chunk;
 					const resolvedToolName = (() => {
 						const current =
 							toolNameByToolCallId.get(chunk.toolCallId) ?? chunk.toolName;
@@ -4653,10 +4792,10 @@ export const chatStream = async (
 					} catch {
 						// Ignore callback errors
 					}
-				} else if (chunk.type === "finish") {
-					const usageObj = (chunk as { totalUsage?: unknown }).totalUsage as
-						| { inputTokens?: number; outputTokens?: number }
-						| undefined;
+					} else if (chunk.type === "finish") {
+						const usageObj = (chunk as { totalUsage?: unknown }).totalUsage as
+							| { inputTokens?: number; outputTokens?: number }
+							| undefined;
 					usage = {
 						promptTokens: usageObj?.inputTokens,
 						completionTokens: usageObj?.outputTokens,
@@ -4679,24 +4818,20 @@ export const chatStream = async (
 
 		if (streamError != null && !options.abortSignal?.aborted && !hasAnyOutput) {
 			throw new Error(streamError);
-		}
-
-		if (
-			!hasAnyOutput &&
-			fullText.length === 0 &&
-			!options.abortSignal?.aborted
-		) {
-			fullText = buildEmptyModelOutputFallback(message, effectiveUiLocale);
-			hasAnyOutput = true;
-			try {
-				options.onTextDelta?.(fullText);
-			} catch {
-				// Ignore callback errors
 			}
-		}
 
-		return { fullText, toolCalls, toolResults, usage, streamError, finishReason };
-	};
+			if (
+				!hasAnyOutput &&
+				fullText.length === 0 &&
+				!options.abortSignal?.aborted
+			) {
+				fullText = buildEmptyModelOutputFallback(message, effectiveUiLocale);
+				hasAnyOutput = true;
+				emitTextDelta(fullText);
+			}
+
+			return { fullText, toolCalls, toolResults, usage, streamError, finishReason };
+		};
 
 	type StreamedTurn = Awaited<ReturnType<typeof runStream>>;
 
@@ -4896,14 +5031,13 @@ export const chatStream = async (
 		});
 
 		if (summary.length > 0) {
-			try {
-				options.onTextDelta?.(summary);
-			} catch {
-				// Ignore callback errors
-			}
+			emitTextDelta(summary);
 			fullText = summary;
 		}
 	}
+
+	closeThinkIfOpen();
+	await flushPersist();
 
 	const executionIdByToolCallId = new Map<string, string>();
 	const invokedToolNameByToolCallId = new Map<string, string>();
@@ -4938,9 +5072,7 @@ export const chatStream = async (
 		}
 	}
 
-	const toolCallsToPersist = allToolCalls
-		.filter((tc) => tc.sourceToolName === "tool_call")
-		.map((tc) => {
+	const toolCallsToPersist = allToolCalls.map((tc) => {
 			const toolName =
 				invokedToolNameByToolCallId.get(tc.id) || tc.function.name || "tool_call";
 			return {
@@ -4954,13 +5086,21 @@ export const chatStream = async (
 			};
 		});
 
-	const assistantMessage = await saveMessage({
+	if (options.abortSignal?.aborted && assistantDisplayContent.trim().length === 0) {
+		assistantDisplayContent = "Cancelled.";
+	}
+
+	const persistedContent =
+		assistantDisplayContent.trim().length > 0 ? assistantDisplayContent : fullText;
+
+	const updatedAssistantMessage = await updateMessage({
+		messageId: assistantMessageId,
 		conversationId,
 		role: "assistant",
-		content: fullText,
-		toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : undefined,
-		promptTokens: aggregatedUsage.promptTokens,
-		completionTokens: aggregatedUsage.completionTokens,
+		content: persistedContent,
+		toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : null,
+		promptTokens: aggregatedUsage.promptTokens ?? null,
+		completionTokens: aggregatedUsage.completionTokens ?? null,
 	});
 
 	const usage: ChatUsage | undefined =
@@ -4994,12 +5134,39 @@ export const chatStream = async (
 	}
 
 	return {
-		message: assistantMessage,
+		message: updatedAssistantMessage ?? assistantMessage,
 		usage,
 		toolResults: [],
 		needsContinue,
 		finishReason: lastFinishReason ?? undefined,
 	};
+	} catch (error) {
+		closeThinkIfOpen();
+		try {
+			await flushPersist();
+		} catch {}
+
+		if (assistantDisplayContent.trim().length === 0) {
+			const aborted = options.abortSignal?.aborted;
+			const errorText = aborted ? "Cancelled." : getProviderErrorText(error);
+			assistantDisplayContent = errorText || "Streaming failed.";
+		}
+
+		try {
+			await updateMessage({
+				messageId: assistantMessageId,
+				conversationId,
+				role: "assistant",
+				content: assistantDisplayContent,
+			});
+		} catch {}
+		throw error;
+	} finally {
+		if (persistTimer) {
+			clearTimeout(persistTimer);
+			persistTimer = null;
+		}
+	}
 };
 
 	type PlaybookStep = {
@@ -5464,11 +5631,91 @@ export const updateRun = async (
 	return updated;
 };
 
+const agentRunAbortControllers = new Map<string, AbortController>();
+
+function getOrCreateAgentRunAbortController(runId: string): AbortController {
+	const normalized = typeof runId === "string" ? runId.trim() : "";
+	const existing = normalized ? agentRunAbortControllers.get(normalized) : undefined;
+	if (existing && !existing.signal.aborted) return existing;
+	const controller = new AbortController();
+	if (normalized) agentRunAbortControllers.set(normalized, controller);
+	return controller;
+}
+
+function abortAgentRun(runId: string) {
+	const normalized = typeof runId === "string" ? runId.trim() : "";
+	if (!normalized) return;
+	const controller = agentRunAbortControllers.get(normalized);
+	if (!controller || controller.signal.aborted) return;
+	try {
+		controller.abort();
+	} catch {}
+}
+
+function clearAgentRunAbortController(runId: string) {
+	const normalized = typeof runId === "string" ? runId.trim() : "";
+	if (!normalized) return;
+	agentRunAbortControllers.delete(normalized);
+}
+
+function isAbortLikeError(error: unknown): boolean {
+	if (!error || typeof error !== "object") return false;
+	return "name" in error && (error as { name?: unknown }).name === "AbortError";
+}
+
 export const cancelRun = async (runId: string) => {
-	return updateRun(runId, {
+	const normalized = typeof runId === "string" ? runId.trim() : "";
+	if (!normalized) return null;
+
+	abortAgentRun(normalized);
+
+	const run = await db.query.aiRuns.findFirst({
+		where: eq(aiRuns.runId, normalized),
+		columns: { conversationId: true },
+	});
+	const conversationId = typeof run?.conversationId === "string" ? run.conversationId : "";
+	const updated = await updateRun(normalized, {
 		status: "cancelled",
 		completedAt: new Date().toISOString(),
 	});
+
+	if (conversationId) {
+		try {
+			const assistantMessageId = buildAgentRunAssistantMessageId(normalized);
+			const existingAssistant = assistantMessageId
+				? await db.query.aiMessages.findFirst({
+						where: eq(aiMessages.messageId, assistantMessageId),
+						columns: { content: true },
+					})
+				: null;
+			const current =
+				typeof existingAssistant?.content === "string"
+					? existingAssistant.content
+					: "";
+			if (current.trim().length === 0) {
+				await ensureAgentAssistantMessage({ conversationId, runId: normalized });
+				await updateMessage({
+					messageId: assistantMessageId,
+					conversationId,
+					role: "assistant",
+					content: "Cancelled",
+				});
+			}
+		} catch {}
+
+		try {
+			await saveAgentEventMessage({
+				conversationId,
+				payload: { type: "agent.run.finish", runId: normalized, status: "cancelled" },
+			});
+			await saveAgentEventMessage({
+				conversationId,
+				payload: { type: "agent.run.summary", runId: normalized, summary: "Cancelled" },
+			});
+		} catch {}
+	}
+
+	return updated;
 };
 
 const saveAgentEventMessage = async (params: {
@@ -5481,6 +5728,126 @@ const saveAgentEventMessage = async (params: {
 		content: JSON.stringify(params.payload),
 	});
 };
+
+function buildAgentRunAssistantMessageId(runId: string): string {
+	const normalized = typeof runId === "string" ? runId.trim() : "";
+	return normalized.length > 0 ? `agent-run-${normalized}` : "";
+}
+
+async function ensureAgentAssistantMessage(params: {
+	conversationId: string;
+	runId: string;
+}): Promise<string> {
+	const messageId = buildAgentRunAssistantMessageId(params.runId);
+	if (!messageId) return "";
+	try {
+		const existing = await db.query.aiMessages.findFirst({
+			where: eq(aiMessages.messageId, messageId),
+			columns: { messageId: true },
+		});
+		if (existing?.messageId) return messageId;
+	} catch {}
+	try {
+		await saveMessage({
+			messageId,
+			conversationId: params.conversationId,
+			role: "assistant",
+			content: "",
+		});
+	} catch {}
+	return messageId;
+}
+
+function buildPersistedToolCallsFromResults(params: {
+	toolCalls: unknown[];
+	toolResults: unknown[];
+}): Array<{
+	id: string;
+	type: "function";
+	executionId?: string;
+	function: { name: string; arguments: string };
+}> {
+	const executionIdByToolCallId = new Map<string, string>();
+	const invokedToolNameByToolCallId = new Map<string, string>();
+	for (const tr of params.toolResults) {
+		if (!tr || typeof tr !== "object") continue;
+		const resultValue = (tr as { result?: unknown }).result;
+		if (!resultValue || typeof resultValue !== "object") continue;
+
+		const toolCallId =
+			(tr as { toolCallId?: unknown }).toolCallId ?? (tr as { id?: unknown }).id;
+		if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) continue;
+		const toolCallIdKey = toolCallId.trim();
+
+		const invokedTool =
+			(resultValue as { invokedTool?: unknown }).invokedTool ??
+			(resultValue as { toolName?: unknown }).toolName;
+		if (typeof invokedTool === "string" && invokedTool.trim().length > 0) {
+			invokedToolNameByToolCallId.set(toolCallIdKey, invokedTool.trim());
+		}
+
+		const executionId = (resultValue as { executionId?: unknown }).executionId;
+		const nestedExecutionId =
+			(resultValue as { data?: unknown }).data &&
+			typeof (resultValue as { data?: unknown }).data === "object"
+				? ((resultValue as { data?: { executionId?: unknown } }).data
+						?.executionId as unknown)
+				: undefined;
+		const picked =
+			typeof executionId === "string"
+				? executionId
+				: typeof nestedExecutionId === "string"
+					? nestedExecutionId
+					: "";
+		if (picked.trim().length > 0) {
+			executionIdByToolCallId.set(toolCallIdKey, picked.trim());
+		}
+	}
+
+	const out: Array<{
+		id: string;
+		type: "function";
+		executionId?: string;
+		function: { name: string; arguments: string };
+	}> = [];
+	const seen = new Set<string>();
+
+	for (const tc of params.toolCalls) {
+		if (!tc || typeof tc !== "object") continue;
+		if ((tc as any).toolName !== "tool_call") continue;
+		const toolCallId =
+			typeof (tc as any).toolCallId === "string" ? (tc as any).toolCallId.trim() : "";
+		if (!toolCallId) continue;
+		if (seen.has(toolCallId)) continue;
+		seen.add(toolCallId);
+
+		const rawArgs = (tc as any).args ?? (tc as any).input ?? {};
+		const toolNameFromArgs =
+			rawArgs &&
+			typeof rawArgs === "object" &&
+			"toolName" in rawArgs &&
+			typeof (rawArgs as any).toolName === "string"
+				? String((rawArgs as any).toolName)
+				: (tc as any).toolName;
+		const toolName =
+			invokedToolNameByToolCallId.get(toolCallId) ?? String(toolNameFromArgs ?? "tool");
+		const toolParams =
+			rawArgs && typeof rawArgs === "object" && "params" in rawArgs
+				? (rawArgs as any).params
+				: rawArgs;
+		out.push({
+			id: toolCallId,
+			type: "function" as const,
+			executionId: executionIdByToolCallId.get(toolCallId),
+			function: {
+				name: toolName,
+				arguments: JSON.stringify(toolParams ?? {}),
+			},
+		});
+	}
+
+	return out;
+}
 
 const AGENT_RUN_MAX_CONCURRENCY = Math.max(
 	1,
@@ -5523,6 +5890,8 @@ function enqueueAgentRun(runId: string, task: () => Promise<void>) {
 async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 	initializeTools();
 
+	const runAbortController = getOrCreateAgentRunAbortController(runId);
+	try {
 	const run = await db.query.aiRuns.findFirst({
 		where: eq(aiRuns.runId, runId),
 	});
@@ -5539,6 +5908,10 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		});
 	}
 	const uiLocale = getUiLocaleFromMetadata(conversation.metadata);
+	const assistantMessageId = await ensureAgentAssistantMessage({
+		conversationId: run.conversationId,
+		runId,
+	});
 
 	const conversationAiId =
 		typeof conversation.aiId === "string" ? conversation.aiId.trim() : "";
@@ -5557,6 +5930,16 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			conversationId: run.conversationId,
 			payload: { type: "agent.run.summary", runId, summary: msg },
 		});
+		if (assistantMessageId) {
+			try {
+				await updateMessage({
+					messageId: assistantMessageId,
+					conversationId: run.conversationId,
+					role: "assistant",
+					content: msg,
+				});
+			} catch {}
+		}
 		return;
 	}
 
@@ -5576,6 +5959,16 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			conversationId: run.conversationId,
 			payload: { type: "agent.run.summary", runId, summary: msg },
 		});
+		if (assistantMessageId) {
+			try {
+				await updateMessage({
+					messageId: assistantMessageId,
+					conversationId: run.conversationId,
+					role: "assistant",
+					content: msg,
+				});
+			} catch {}
+		}
 		return;
 	}
 
@@ -5585,13 +5978,13 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 	const toolBudgetMode = getToolBudgetModeFromMetadata(conversation.metadata);
 	const toolStepBudget = getToolStepBudget(toolBudgetMode);
 	const agenticEnabled = toolApprovalsDisabled;
-	const tools = buildChatTools({
-		conversationId: run.conversationId,
-		runId,
-		toolContext: ctx,
-		messageId: undefined,
-		toolApprovalsDisabled,
-	});
+		const tools = buildChatTools({
+			conversationId: run.conversationId,
+			runId,
+			toolContext: ctx,
+			messageId: assistantMessageId || undefined,
+			toolApprovalsDisabled,
+		});
 
 	const provider = selectAIProvider(aiSettings);
 	const model = provider(aiSettings.model);
@@ -5665,12 +6058,22 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 					conversationId: run.conversationId,
 					payload: { type: "agent.run.finish", runId, status: "failed" },
 				});
-				await saveAgentEventMessage({
-					conversationId: run.conversationId,
-					payload: { type: "agent.run.summary", runId, summary: errorMessage },
-				});
-				return;
-			}
+					await saveAgentEventMessage({
+						conversationId: run.conversationId,
+						payload: { type: "agent.run.summary", runId, summary: errorMessage },
+					});
+					if (assistantMessageId) {
+						try {
+							await updateMessage({
+								messageId: assistantMessageId,
+								conversationId: run.conversationId,
+								role: "assistant",
+								content: errorMessage,
+							});
+						} catch {}
+					}
+					return;
+				}
 
 			const result = normalizeToolResultForStorage(rawResult);
 			await updateToolExecution(exec.executionId, {
@@ -5704,14 +6107,24 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 					conversationId: run.conversationId,
 					payload: { type: "agent.run.finish", runId, status: "failed" },
 				});
-				await saveAgentEventMessage({
-					conversationId: run.conversationId,
-					payload: { type: "agent.run.summary", runId, summary: errorMessage },
-				});
-				return;
+					await saveAgentEventMessage({
+						conversationId: run.conversationId,
+						payload: { type: "agent.run.summary", runId, summary: errorMessage },
+					});
+					if (assistantMessageId) {
+						try {
+							await updateMessage({
+								messageId: assistantMessageId,
+								conversationId: run.conversationId,
+								role: "assistant",
+								content: errorMessage,
+							});
+						} catch {}
+					}
+					return;
+				}
 			}
 		}
-	}
 
 	const history = await getMessages({ conversationId: run.conversationId, limit: 20 });
 	let messages: CoreMessage[] = history
@@ -5878,6 +6291,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 	});
 
 	for (let turn = 0; turn < maxTurns; turn++) {
+		if (runAbortController.signal.aborted) return;
 		const refreshed = await db.query.aiRuns.findFirst({
 			where: eq(aiRuns.runId, runId),
 			columns: { status: true },
@@ -5962,17 +6376,36 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			(typeof result.text === "string" ? result.text : "").trim(),
 			4000,
 		);
-		if (assistantSnippet.length > 0 && assistantSnippet !== lastOutputDelta) {
-			lastOutputDelta = assistantSnippet;
-			await saveAgentEventMessage({
-				conversationId: run.conversationId,
-				payload: {
-					type: "agent.output.delta",
-					runId,
-					delta: assistantSnippet,
-				},
-			});
-		}
+			if (assistantSnippet.length > 0 && assistantSnippet !== lastOutputDelta) {
+				lastOutputDelta = assistantSnippet;
+				await saveAgentEventMessage({
+					conversationId: run.conversationId,
+					payload: {
+						type: "agent.output.delta",
+						runId,
+						delta: assistantSnippet,
+					},
+				});
+			}
+
+			if (assistantMessageId) {
+				const toolCallsToPersistNow = buildPersistedToolCallsFromResults({
+					toolCalls: allToolCalls,
+					toolResults: allToolResults,
+				});
+				if (finalText.trim().length > 0 || toolCallsToPersistNow.length > 0) {
+					try {
+						await updateMessage({
+							messageId: assistantMessageId,
+							conversationId: run.conversationId,
+							role: "assistant",
+							content: finalText.trim().length > 0 ? finalText : "",
+							toolCalls:
+								toolCallsToPersistNow.length > 0 ? toolCallsToPersistNow : null,
+						});
+					} catch {}
+				}
+			}
 
 			const retryable = getRetryableToolCallFailures(turnToolResults);
 			if (retryable.hasPendingApproval) {
@@ -6027,23 +6460,33 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			(tc) => tc.toolName === "tool_call",
 		).length;
 		platformToolCalls += platformThisTurn;
-		if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls) {
-			const msg = "Agent tool call budget exceeded";
-			await updateRun(runId, {
-				status: "failed",
-				error: msg,
-				completedAt: new Date().toISOString(),
-			});
-			await saveAgentEventMessage({
-				conversationId: run.conversationId,
-				payload: { type: "agent.run.finish", runId, status: "failed" },
-			});
-			await saveAgentEventMessage({
-				conversationId: run.conversationId,
-				payload: { type: "agent.run.summary", runId, summary: msg },
-			});
-			return;
-		}
+			if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls) {
+				const msg = "Agent tool call budget exceeded";
+				await updateRun(runId, {
+					status: "failed",
+					error: msg,
+					completedAt: new Date().toISOString(),
+				});
+				await saveAgentEventMessage({
+					conversationId: run.conversationId,
+					payload: { type: "agent.run.finish", runId, status: "failed" },
+				});
+				await saveAgentEventMessage({
+					conversationId: run.conversationId,
+					payload: { type: "agent.run.summary", runId, summary: msg },
+				});
+				if (assistantMessageId) {
+					try {
+						await updateMessage({
+							messageId: assistantMessageId,
+							conversationId: run.conversationId,
+							role: "assistant",
+							content: msg,
+						});
+					} catch {}
+				}
+				return;
+			}
 
 		{
 			const executionIds = Array.from(
@@ -6188,85 +6631,46 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		finalText = buildEmptyModelOutputFallback(goal, uiLocale);
 	}
 
-	{
-		const executionIdByToolCallId = new Map<string, string>();
-		const invokedToolNameByToolCallId = new Map<string, string>();
-		for (const tr of allToolResults) {
-			if (!tr || typeof tr !== "object") continue;
-			const resultValue = (tr as { result?: unknown }).result;
-			if (!resultValue || typeof resultValue !== "object") continue;
-
-			const toolCallId =
-				(tr as { toolCallId?: unknown }).toolCallId ?? (tr as { id?: unknown }).id;
-			if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) continue;
-			const toolCallIdKey = toolCallId.trim();
-
-			const invokedTool =
-				(resultValue as { invokedTool?: unknown }).invokedTool ??
-				(resultValue as { toolName?: unknown }).toolName;
-			if (typeof invokedTool === "string" && invokedTool.trim().length > 0) {
-				invokedToolNameByToolCallId.set(toolCallIdKey, invokedTool.trim());
-			}
-
-			const executionId = (resultValue as { executionId?: unknown }).executionId;
-			const nestedExecutionId =
-				(resultValue as { data?: unknown }).data &&
-				typeof (resultValue as { data?: unknown }).data === "object"
-					? ((resultValue as { data?: { executionId?: unknown } }).data
-							?.executionId as unknown)
-					: undefined;
-			const picked =
-				typeof executionId === "string"
-					? executionId
-					: typeof nestedExecutionId === "string"
-						? nestedExecutionId
-						: "";
-			if (picked.trim().length > 0) {
-				executionIdByToolCallId.set(toolCallIdKey, picked.trim());
-			}
-		}
-
-		const toolCallsToPersist = (allToolCalls ?? [])
-			.filter((tc) => tc.toolName === "tool_call")
-			.map((tc) => {
-				const rawArgs =
-					(tc as unknown as { args?: unknown; input?: unknown }).args ??
-					(tc as unknown as { args?: unknown; input?: unknown }).input ??
-					{};
-				const toolNameFromArgs =
-					rawArgs &&
-					typeof rawArgs === "object" &&
-					"toolName" in (rawArgs as any) &&
-					typeof (rawArgs as any).toolName === "string"
-						? String((rawArgs as any).toolName)
-						: tc.toolName;
-				const toolName =
-					invokedToolNameByToolCallId.get(tc.toolCallId.trim()) ??
-					toolNameFromArgs;
-				const toolParams =
-					rawArgs && typeof rawArgs === "object" && "params" in (rawArgs as any)
-						? (rawArgs as any).params
-						: rawArgs;
-				return {
-					id: tc.toolCallId,
-					type: "function" as const,
-					executionId: executionIdByToolCallId.get(tc.toolCallId),
-					function: {
-						name: toolName,
-						arguments: JSON.stringify(toolParams ?? {}),
-					},
-				};
+		{
+			const toolCallsToPersist = buildPersistedToolCallsFromResults({
+				toolCalls: allToolCalls,
+				toolResults: allToolResults,
 			});
 
-		await saveMessage({
-			conversationId: run.conversationId,
-			role: "assistant",
-			content: finalText,
-			toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : undefined,
-			promptTokens: aggregatedUsage.inputTokens,
-			completionTokens: aggregatedUsage.outputTokens,
-		});
-	}
+			if (assistantMessageId) {
+				try {
+					await updateMessage({
+						messageId: assistantMessageId,
+						conversationId: run.conversationId,
+						role: "assistant",
+						content: finalText,
+						toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : null,
+						promptTokens: aggregatedUsage.inputTokens ?? null,
+						completionTokens: aggregatedUsage.outputTokens ?? null,
+					});
+				} catch {
+					await saveMessage({
+						messageId: assistantMessageId,
+						conversationId: run.conversationId,
+						role: "assistant",
+						content: finalText,
+						toolCalls:
+							toolCallsToPersist.length > 0 ? toolCallsToPersist : undefined,
+						promptTokens: aggregatedUsage.inputTokens,
+						completionTokens: aggregatedUsage.outputTokens,
+					});
+				}
+			} else {
+				await saveMessage({
+					conversationId: run.conversationId,
+					role: "assistant",
+					content: finalText,
+					toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : undefined,
+					promptTokens: aggregatedUsage.inputTokens,
+					completionTokens: aggregatedUsage.outputTokens,
+				});
+			}
+		}
 
 	await updateRun(runId, {
 		status: "completed",
@@ -6299,7 +6703,15 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 					finalSummary: finalText,
 				});
 			})().catch(() => {});
+	} catch (error) {
+		if (runAbortController.signal.aborted || isAbortLikeError(error)) {
+			return;
 		}
+		throw error;
+	} finally {
+		clearAgentRunAbortController(runId);
+	}
+}
 
 export const startAgentRun = async (params: {
 	conversationId: string;
@@ -6351,15 +6763,23 @@ export const startAgentRun = async (params: {
 
 	const normalizedAttachments = normalizeMessageAttachments(params.attachments);
 
+	let userMessageId = "";
 	try {
-		await saveMessage({
+		const saved = await saveMessage({
 			conversationId: params.conversationId,
 			role: "user",
 			content: params.goal,
 			attachments:
 				normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
 		});
+		userMessageId =
+			typeof saved?.messageId === "string" ? saved.messageId : "";
 	} catch {}
+
+	const assistantMessageId = await ensureAgentAssistantMessage({
+		conversationId: params.conversationId,
+		runId: run.runId,
+	});
 
 	if (conversation.title === "New Conversation") {
 		const nextTitle = String(params.goal ?? "")
@@ -6428,7 +6848,7 @@ export const startAgentRun = async (params: {
 		}
 	});
 
-	return run;
+	return { ...run, userMessageId, assistantMessageId };
 };
 
 export const resumeAgentRun = async (params: {

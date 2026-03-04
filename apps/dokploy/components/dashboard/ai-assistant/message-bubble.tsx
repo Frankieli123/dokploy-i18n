@@ -7,14 +7,18 @@ import {
 	Brain,
 	ChevronDown,
 	ChevronRight,
+	Copy,
 	Loader2,
 	RotateCcw,
 	Sparkles,
 	User,
 } from "lucide-react";
+import copyToClipboard from "copy-to-clipboard";
 import { useTranslation } from "next-i18next";
-import { useEffect, useState } from "react";
+import { Children, isValidElement, useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { translateErrorMessage } from "@/utils/error-translation";
@@ -23,6 +27,134 @@ import type { Message, ToolCall } from "./use-chat";
 
 const assistantHeadingClassName =
 	"break-words [overflow-wrap:anywhere] text-sm font-semibold leading-relaxed mb-2 mt-3 first:mt-0";
+
+const codeBlockCollapseThresholdLines = 10;
+
+function countLines(text: string): number {
+	const normalized = String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const trimmed = normalized.replace(/\n+$/, "");
+	if (trimmed.length === 0) return 0;
+	return trimmed.split("\n").length;
+}
+
+function getLanguageFromClassName(className?: string): string {
+	if (typeof className !== "string") return "";
+	const match = className.match(/language-([^\s]+)/i);
+	return match?.[1] ?? "";
+}
+
+function getTextFromChildren(children: unknown): string {
+	if (typeof children === "string") return children;
+	if (Array.isArray(children)) {
+		return children.filter((c): c is string => typeof c === "string").join("");
+	}
+	return "";
+}
+
+function MarkdownCodeBlock({
+	code,
+	language,
+}: {
+	code: string;
+	language?: string;
+}) {
+	const { t } = useTranslation("common");
+	const normalized = String(code ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const displayCode = normalized.replace(/\n+$/, "");
+	const totalLines = countLines(displayCode);
+	const canCollapse = totalLines >= codeBlockCollapseThresholdLines;
+	const [isOpen, setIsOpen] = useState(() => !canCollapse);
+
+	useEffect(() => {
+		if (!canCollapse) setIsOpen(true);
+	}, [canCollapse]);
+
+	const title = (language?.trim().length ? language : "CODE").toUpperCase();
+
+	const handleCopy = () => {
+		if (displayCode.trim().length === 0) return;
+		const ok = copyToClipboard(displayCode);
+		if (ok) toast.success(t("common.copiedToClipboard"));
+		else toast.error(t("common.unknownError"));
+	};
+
+	return (
+		<div className="my-2 max-w-full overflow-hidden rounded-md border border-border/50 bg-background/40">
+			<div
+				className={cn(
+					"flex items-center justify-between gap-2 px-2 py-1.5 border-b border-border/30 bg-muted/20",
+					canCollapse &&
+						"cursor-pointer select-none hover:bg-muted/30 transition-colors",
+				)}
+				onClick={() => {
+					if (!canCollapse) return;
+					setIsOpen((v) => !v);
+				}}
+			>
+				<div className="flex items-center gap-1.5 min-w-0">
+					{canCollapse && (
+						<span className="text-muted-foreground">
+							{isOpen ? (
+								<ChevronDown className="h-4 w-4" />
+							) : (
+								<ChevronRight className="h-4 w-4" />
+							)}
+						</span>
+					)}
+					<span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground truncate">
+						{title}
+					</span>
+				</div>
+				<div className="flex items-center gap-1.5 shrink-0">
+					{totalLines > 0 && (
+						<span className="text-[10px] text-muted-foreground font-mono">
+							{t("logs.lines.custom", { count: totalLines })}
+						</span>
+					)}
+					<Button
+						variant="ghost"
+						size="icon"
+						className="!h-5 !w-5 !p-0 hover:bg-transparent opacity-60 hover:opacity-100 transition-opacity"
+						onClick={(e) => {
+							e.stopPropagation();
+							handleCopy();
+						}}
+						title={t("logs.copy")}
+					>
+						<Copy className="h-3.5 w-3.5 text-muted-foreground" />
+						<span className="sr-only">{t("logs.copy")}</span>
+					</Button>
+				</div>
+			</div>
+			{isOpen && (
+				<pre className="p-2 text-xs leading-relaxed font-mono whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+					{displayCode}
+				</pre>
+			)}
+		</div>
+	);
+}
+
+function AssistantMarkdownPre({ children }: { children?: ReactNode }) {
+	const childArray = Children.toArray(children);
+	const codeElement = childArray.find((el) => isValidElement(el));
+
+	if (!codeElement || !isValidElement(codeElement)) {
+		return (
+			<pre className="my-2 max-w-full overflow-x-hidden rounded-md border border-border/50 bg-background/40 p-2 text-xs leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+				{children}
+			</pre>
+		);
+	}
+
+	const className = (codeElement.props as { className?: unknown }).className;
+	const language = getLanguageFromClassName(
+		typeof className === "string" ? className : undefined,
+	);
+	const code = getTextFromChildren((codeElement.props as any).children);
+
+	return <MarkdownCodeBlock code={code} language={language} />;
+}
 
 const assistantMarkdownComponents: Components = {
 	p: ({ children }) => (
@@ -70,12 +202,7 @@ const assistantMarkdownComponents: Components = {
 		</a>
 	),
 	code: ({ className, children }) => {
-		const text =
-			typeof children === "string"
-				? children
-				: Array.isArray(children)
-					? children.filter((c): c is string => typeof c === "string").join("")
-					: "";
+		const text = getTextFromChildren(children);
 		const isProbablyBlock =
 			typeof className === "string" &&
 			className.toLowerCase().includes("language-");
@@ -104,11 +231,7 @@ const assistantMarkdownComponents: Components = {
 			</code>
 		);
 	},
-	pre: ({ children }) => (
-		<pre className="my-2 max-w-full overflow-x-hidden rounded-md border border-border/50 bg-background/40 p-2 text-xs leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-			{children}
-		</pre>
-	),
+	pre: AssistantMarkdownPre,
 	blockquote: ({ children }) => (
 		<blockquote className="border-l-2 border-border/60 pl-3 text-xs text-muted-foreground leading-relaxed mb-2 last:mb-0">
 			{children}
@@ -560,6 +683,7 @@ export function MessageBubble({
 									<ReactMarkdown
 										key={`text-${idx}`}
 										skipHtml
+										remarkPlugins={[remarkGfm]}
 										components={assistantMarkdownComponents}
 									>
 										{text}

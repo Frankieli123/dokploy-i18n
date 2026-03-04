@@ -89,11 +89,49 @@ export default async function handler(
 		return;
 	}
 
+	let runId = "";
+	let assistantMessageId = "";
+	let userMessageId = "";
+	try {
+		const run = await startAgentRun({
+			conversationId,
+			goal: parsed.data.goal,
+			aiId: parsed.data.aiId,
+			attachments: parsed.data.attachments,
+			organizationId: session.activeOrganizationId,
+			userId: user.id,
+			uiLocale: req.cookies.DOKPLOY_LOCALE,
+		});
+		runId = typeof run?.runId === "string" ? run.runId.trim() : "";
+		assistantMessageId =
+			typeof (run as any)?.assistantMessageId === "string"
+				? String((run as any).assistantMessageId).trim()
+				: runId
+					? `agent-run-${runId}`
+					: "";
+		userMessageId =
+			typeof (run as any)?.userMessageId === "string"
+				? String((run as any).userMessageId).trim()
+				: "";
+	} catch (error) {
+		res.status(500).json({
+			message: error instanceof Error ? error.message : String(error),
+		});
+		return;
+	}
+
 	res.writeHead(200, {
 		"Content-Type": "text/event-stream; charset=utf-8",
 		"Cache-Control": "no-cache, no-transform",
 		Connection: "keep-alive",
 		"X-Accel-Buffering": "no",
+		...(runId ? { "X-Dokploy-AI-Run-Id": runId } : {}),
+		...(assistantMessageId
+			? { "X-Dokploy-AI-Assistant-Message-Id": assistantMessageId }
+			: {}),
+		...(userMessageId
+			? { "X-Dokploy-AI-User-Message-Id": userMessageId }
+			: {}),
 	});
 	try {
 		(res as any).flushHeaders?.();
@@ -120,24 +158,15 @@ export default async function handler(
 	let cursorCreatedAt = startedAt;
 	const seenMessageIds = new Set<string>();
 
-	let runId = "";
 	let runFinishedAtMs: number | null = null;
 	let pollDelay = 800;
 
 	try {
-		const run = await startAgentRun({
-			conversationId,
-			goal: parsed.data.goal,
-			aiId: parsed.data.aiId,
-			attachments: parsed.data.attachments,
-			organizationId: session.activeOrganizationId,
-			userId: user.id,
-			uiLocale: req.cookies.DOKPLOY_LOCALE,
-		});
-		runId = typeof run?.runId === "string" ? run.runId : "";
 		writeSseEvent(res, "start", {
 			conversationId,
 			runId: runId.trim(),
+			assistantMessageId,
+			userMessageId,
 		});
 
 		while (!abortController.signal.aborted) {

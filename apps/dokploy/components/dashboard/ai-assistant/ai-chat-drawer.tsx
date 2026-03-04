@@ -79,6 +79,7 @@ export function AIChatDrawer({
 	const [selectedAiId, setSelectedAiId] = useState<string>("");
 	const [isAgentMode, setIsAgentMode] = useState(false);
 	const viewportRef = useRef<HTMLDivElement>(null);
+	const messagesContainerRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		if (!isOpen) return;
@@ -88,6 +89,7 @@ export function AIChatDrawer({
 	}, [isOpen, utils]);
 	const isNearBottomRef = useRef(true);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
+	const sendInFlightRef = useRef(false);
 	const [draftImages, setDraftImages] = useState<DraftImage[]>([]);
 	const draftImagesRef = useRef<DraftImage[]>([]);
 	const fileInputRef = useRef<HTMLInputElement>(null);
@@ -257,7 +259,7 @@ export function AIChatDrawer({
 	const handleViewportScroll = useCallback(
 		(e: React.UIEvent<HTMLDivElement>) => {
 			const target = e.currentTarget;
-			const threshold = 100;
+			const threshold = 40;
 			isNearBottomRef.current =
 				target.scrollHeight - target.scrollTop - target.clientHeight <
 				threshold;
@@ -274,9 +276,38 @@ export function AIChatDrawer({
 	// Smart auto-scroll - only if near bottom
 	useEffect(() => {
 		if (viewportRef.current && isNearBottomRef.current) {
-			viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
+			const viewport = viewportRef.current;
+			const raf = requestAnimationFrame(() => {
+				viewport.scrollTop = viewport.scrollHeight;
+			});
+			return () => cancelAnimationFrame(raf);
 		}
 	}, [messages]);
+
+	useEffect(() => {
+		if (!isOpen) return;
+		const viewport = viewportRef.current;
+		const container = messagesContainerRef.current;
+		if (!viewport || !container) return;
+		if (typeof ResizeObserver === "undefined") return;
+
+		let raf: number | null = null;
+		const observer = new ResizeObserver(() => {
+			if (!isNearBottomRef.current) return;
+			if (raf != null) cancelAnimationFrame(raf);
+			raf = requestAnimationFrame(() => {
+				const next = viewportRef.current;
+				if (!next) return;
+				next.scrollTop = next.scrollHeight;
+			});
+		});
+
+		observer.observe(container);
+		return () => {
+			if (raf != null) cancelAnimationFrame(raf);
+			observer.disconnect();
+		};
+	}, [conversationId, isOpen]);
 
 	useEffect(() => {
 		if (!isOpen) return;
@@ -425,6 +456,8 @@ export function AIChatDrawer({
 		}
 
 		if (!selectedAiId || isLoading) return;
+		if (sendInFlightRef.current) return;
+		sendInFlightRef.current = true;
 
 		type ImageAttachment = {
 			type: "image";
@@ -434,49 +467,53 @@ export function AIChatDrawer({
 			size: number;
 		};
 
-		const toDataUrl = (file: File) =>
-			new Promise<string>((resolve, reject) => {
-				const reader = new FileReader();
-				reader.onload = () => resolve(String(reader.result ?? ""));
-				reader.onerror = () => reject(new Error("Failed to read image"));
-				reader.readAsDataURL(file);
-			});
+		try {
+			const toDataUrl = (file: File) =>
+				new Promise<string>((resolve, reject) => {
+					const reader = new FileReader();
+					reader.onload = () => resolve(String(reader.result ?? ""));
+					reader.onerror = () => reject(new Error("Failed to read image"));
+					reader.readAsDataURL(file);
+				});
 
-		const parseBase64DataUrl = (
-			dataUrl: string,
-		): { mediaType: string; data: string } | null => {
-			const match = /^data:([^;]+);base64,(.*)$/i.exec(dataUrl.trim());
-			if (!match) return null;
-			return { mediaType: match[1] ?? "", data: match[2] ?? "" };
-		};
+			const parseBase64DataUrl = (
+				dataUrl: string,
+			): { mediaType: string; data: string } | null => {
+				const match = /^data:([^;]+);base64,(.*)$/i.exec(dataUrl.trim());
+				if (!match) return null;
+				return { mediaType: match[1] ?? "", data: match[2] ?? "" };
+			};
 
-		const maybeAttachments = await Promise.all(
-			draftImages.map(async (img) => {
-				try {
-					const parsed = parseBase64DataUrl(await toDataUrl(img.file));
-					if (!parsed) return null;
-					if (!parsed.mediaType.startsWith("image/")) return null;
-					if (!parsed.data) return null;
-					return {
-						type: "image",
-						data: parsed.data,
-						mediaType: parsed.mediaType,
-						name: img.file.name,
-						size: img.file.size,
-					} satisfies ImageAttachment;
-				} catch {
-					return null;
-				}
-			}),
-		);
-		const attachments = maybeAttachments.filter(
-			(att): att is ImageAttachment => att != null,
-		);
+			const maybeAttachments = await Promise.all(
+				draftImages.map(async (img) => {
+					try {
+						const parsed = parseBase64DataUrl(await toDataUrl(img.file));
+						if (!parsed) return null;
+						if (!parsed.mediaType.startsWith("image/")) return null;
+						if (!parsed.data) return null;
+						return {
+							type: "image",
+							data: parsed.data,
+							mediaType: parsed.mediaType,
+							name: img.file.name,
+							size: img.file.size,
+						} satisfies ImageAttachment;
+					} catch {
+						return null;
+					}
+				}),
+			);
+			const attachments = maybeAttachments.filter(
+				(att): att is ImageAttachment => att != null,
+			);
 
-		const message = trimmedInput;
-		setInput("");
-		clearDraftImages();
-		await send(message, selectedAiId, isAgentMode, attachments);
+			const message = trimmedInput;
+			setInput("");
+			clearDraftImages();
+			await send(message, selectedAiId, isAgentMode, attachments);
+		} finally {
+			sendInFlightRef.current = false;
+		}
 	};
 
 	const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -582,7 +619,7 @@ export function AIChatDrawer({
 
 				<ScrollArea
 					className="flex-1 min-h-0"
-					viewPortClassName="p-4 overflow-x-hidden min-w-0 max-w-full [&>div]:!block [&>div]:!w-full [&>div]:!min-w-0 [&>div]:!max-w-full"
+					viewPortClassName="p-4 overflow-x-hidden min-w-0 max-w-full [scrollbar-gutter:stable] [&>div]:!block [&>div]:!w-full [&>div]:!min-w-0 [&>div]:!max-w-full"
 					viewportRef={viewportRef}
 					onViewportScroll={handleViewportScroll}
 					role="log"
@@ -617,7 +654,7 @@ export function AIChatDrawer({
 							</div>
 						</div>
 					) : (
-						<div className="space-y-1">
+						<div ref={messagesContainerRef} className="space-y-1">
 							{messages.map((message, index) => (
 								<div key={message.messageId}>
 									<MessageBubble
