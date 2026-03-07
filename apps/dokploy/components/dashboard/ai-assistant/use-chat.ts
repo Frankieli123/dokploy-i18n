@@ -167,6 +167,99 @@ export interface Message {
 	error?: string;
 }
 
+function extractToolCallIdsFromContent(
+	content: string | null | undefined,
+): string[] {
+	const text = typeof content === "string" ? content : "";
+	if (text.length === 0) return [];
+
+	const markerRegex = /<<tool:([^>]+)>>/g;
+	const ids: string[] = [];
+	const seen = new Set<string>();
+
+	while (true) {
+		const match = markerRegex.exec(text);
+		if (match === null) break;
+		const id = match[1]?.trim() ?? "";
+		if (id.length === 0 || seen.has(id)) continue;
+		seen.add(id);
+		ids.push(id);
+	}
+
+	return ids;
+}
+
+function mergeToolCallSnapshot(primary: ToolCall, fallback: ToolCall): ToolCall {
+	const primaryFunction = primary.function ?? { name: "", arguments: "{}" };
+	const fallbackFunction = fallback.function ?? { name: "", arguments: "{}" };
+
+	return {
+		...fallback,
+		...primary,
+		status: primary.status ?? fallback.status,
+		executionId: primary.executionId ?? fallback.executionId,
+		result: primary.result ?? fallback.result,
+		function: {
+			...fallbackFunction,
+			...primaryFunction,
+			name: primaryFunction.name || fallbackFunction.name,
+			arguments:
+				primaryFunction.arguments || fallbackFunction.arguments || "{}",
+		},
+	};
+}
+
+function areToolCallSnapshotsEqual(left: ToolCall, right: ToolCall): boolean {
+	return (
+		left.id === right.id &&
+		left.status === right.status &&
+		left.executionId === right.executionId &&
+		left.function.name === right.function.name &&
+		left.function.arguments === right.function.arguments &&
+		JSON.stringify(left.result ?? null) === JSON.stringify(right.result ?? null)
+	);
+}
+
+function rehydrateToolCallsFromCatalog(params: {
+	content: string | null | undefined;
+	toolCalls: Message["toolCalls"];
+	catalog: Record<string, ToolCall>;
+}): Message["toolCalls"] {
+	const existing = Array.isArray(params.toolCalls)
+		? params.toolCalls.filter(
+			(tc): tc is ToolCall => typeof tc?.id === "string" && tc.id.length > 0,
+		)
+		: [];
+	const markerIds = extractToolCallIdsFromContent(params.content);
+
+	if (existing.length === 0 && markerIds.length === 0) {
+		return params.toolCalls ?? null;
+	}
+
+	const byId = new Map(existing.map((tc) => [tc.id, tc] as const));
+	const merged: ToolCall[] = [];
+	const seen = new Set<string>();
+
+	for (const toolCallId of markerIds) {
+		const current = byId.get(toolCallId);
+		const snapshot = params.catalog[toolCallId];
+		const next = current && snapshot
+			? mergeToolCallSnapshot(current, snapshot)
+			: current ?? snapshot;
+		if (!next) continue;
+		merged.push(next);
+		seen.add(toolCallId);
+	}
+
+	for (const toolCall of existing) {
+		if (seen.has(toolCall.id)) continue;
+		merged.push(toolCall);
+		seen.add(toolCall.id);
+	}
+
+	return merged.length > 0 ? merged : params.toolCalls ?? null;
+}
+
 export type ToolOutcome = {
 	toolCallId: string;
 	toolName: string;
@@ -609,6 +702,9 @@ export function useChat(options: UseChatOptions = {}) {
 	);
 	const [pendingMessages, setPendingMessages] = useState<Message[]>([]);
 	const [toolOutcomes, setToolOutcomes] = useState<ToolOutcome[]>([]);
+	const [toolCallCatalog, setToolCallCatalog] = useState<Record<string, ToolCall>>(
+		{},
+	);
 	const [toolCallMeta, setToolCallMeta] = useState<
 		Record<string, Pick<ToolCall, "status" | "executionId" | "result">>
 	>({});
@@ -1063,11 +1159,45 @@ export function useChat(options: UseChatOptions = {}) {
 		});
 	}, [conversationId, pendingMessages]);
 
+	useEffect(() => {
+		const sources = conversationId
+			? [...serverDisplayMessages, ...pendingMessagesForConversation]
+			: pendingMessagesForConversation;
+		const toolCalls = sources.flatMap((message) => message.toolCalls || []);
+		if (toolCalls.length === 0) return;
+
+		setToolCallCatalog((prev) => {
+			let changed = false;
+			const next = { ...prev };
+
+			for (const toolCall of toolCalls) {
+				if (!toolCall?.id) continue;
+				const existing = next[toolCall.id];
+				const merged = existing
+					? mergeToolCallSnapshot(toolCall, existing)
+					: toolCall;
+				if (!existing || !areToolCallSnapshotsEqual(existing, merged)) {
+					next[toolCall.id] = merged;
+					changed = true;
+				}
+			}
+
+			return changed ? next : prev;
+		});
+	}, [conversationId, pendingMessagesForConversation, serverDisplayMessages]);
+
 	const executionHydrationTargets = useMemo(() => {
 		const messageSources: Message[] = conversationId
 			? [...serverDisplayMessages, ...pendingMessagesForConversation]
 			: pendingMessagesForConversation;
-		const toolCalls = messageSources.flatMap((m) => m.toolCalls || []);
+		const toolCalls = messageSources.flatMap(
+			(m) =>
+				rehydrateToolCallsFromCatalog({
+					content: m.content,
+					toolCalls: m.toolCalls,
+					catalog: toolCallCatalog,
+				}) || [],
+		);
 
 		const toolCallIdsByExecutionId = new Map<string, string[]>();
 		const executionIds: string[] = [];
@@ -1100,6 +1230,7 @@ export function useChat(options: UseChatOptions = {}) {
 		conversationId,
 		pendingMessagesForConversation,
 		serverDisplayMessages,
+		toolCallCatalog,
 		toolCallMeta,
 	]);
 
@@ -1164,10 +1295,15 @@ export function useChat(options: UseChatOptions = {}) {
 
 	const messages = useMemo(() => {
 		const applyMeta = (msg: Message): Message => {
-			if (!msg.toolCalls || msg.toolCalls.length === 0) return msg;
+			const toolCalls = rehydrateToolCallsFromCatalog({
+				content: msg.content,
+				toolCalls: msg.toolCalls,
+				catalog: toolCallCatalog,
+			});
+			if (!toolCalls || toolCalls.length === 0) return msg;
 			return {
 				...msg,
-				toolCalls: msg.toolCalls.map((tc) => ({
+				toolCalls: toolCalls.map((tc) => ({
 					...tc,
 					...(toolCallMeta[tc.id] ?? {}),
 				})),
@@ -1185,6 +1321,7 @@ export function useChat(options: UseChatOptions = {}) {
 		conversationId,
 		pendingMessagesForConversation,
 		serverDisplayMessages,
+		toolCallCatalog,
 		toolCallMeta,
 	]);
 
