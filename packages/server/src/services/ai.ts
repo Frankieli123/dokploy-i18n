@@ -4689,6 +4689,24 @@ export const chatStream = async (
 		let streamError: string | null = null;
 		let hasAnyOutput = false;
 
+		const persistAssistantProgress = () => {
+			const toolCallsToPersist = buildPersistedToolCallsFromStreamState(
+				[...allToolCalls, ...toolCalls],
+				[...allToolResults, ...toolResults],
+			);
+			persistChain = persistChain
+				.then(() =>
+					updateMessage({
+						messageId: assistantMessageId,
+						conversationId,
+						content: assistantDisplayContent,
+						toolCalls:
+							toolCallsToPersist.length > 0 ? toolCallsToPersist : null,
+					}),
+				)
+				.catch(() => undefined);
+		};
+
 			try {
 				for await (const chunk of stream.fullStream) {
 					if (chunk.type === "text-delta") {
@@ -4744,6 +4762,7 @@ export const chatStream = async (
 					} catch {
 						// Ignore callback errors
 					}
+					persistAssistantProgress();
 					} else if (chunk.type === "tool-result") {
 						hasAnyOutput = true;
 						closeThinkIfOpen();
@@ -4792,6 +4811,7 @@ export const chatStream = async (
 					} catch {
 						// Ignore callback errors
 					}
+					persistAssistantProgress();
 					} else if (chunk.type === "finish") {
 						const usageObj = (chunk as { totalUsage?: unknown }).totalUsage as
 							| { inputTokens?: number; outputTokens?: number }
@@ -4834,6 +4854,58 @@ export const chatStream = async (
 		};
 
 	type StreamedTurn = Awaited<ReturnType<typeof runStream>>;
+
+	const buildPersistedToolCallsFromStreamState = (
+		toolCalls: StreamedTurn["toolCalls"],
+		toolResults: StreamedTurn["toolResults"],
+	) => {
+		const executionIdByToolCallId = new Map<string, string>();
+		const invokedToolNameByToolCallId = new Map<string, string>();
+
+		for (const tr of toolResults) {
+			if (!tr || typeof tr !== "object") continue;
+			const resultValue = (tr as { result?: unknown }).result;
+			if (!resultValue || typeof resultValue !== "object") continue;
+
+			const invokedTool =
+				(resultValue as { invokedTool?: unknown }).invokedTool ??
+				(resultValue as { toolName?: unknown }).toolName;
+			if (typeof invokedTool === "string" && invokedTool.trim().length > 0) {
+				invokedToolNameByToolCallId.set(tr.toolCallId, invokedTool.trim());
+			}
+
+			const executionId = (resultValue as { executionId?: unknown }).executionId;
+			const nestedExecutionId =
+				(resultValue as { data?: unknown }).data &&
+				typeof (resultValue as { data?: unknown }).data === "object"
+					? ((resultValue as { data?: { executionId?: unknown } }).data
+							?.executionId as unknown)
+					: undefined;
+			const picked =
+				typeof executionId === "string"
+					? executionId
+					: typeof nestedExecutionId === "string"
+						? nestedExecutionId
+						: "";
+			if (picked.trim().length > 0) {
+				executionIdByToolCallId.set(tr.toolCallId, picked.trim());
+			}
+		}
+
+		return toolCalls.map((tc) => {
+			const toolName =
+				invokedToolNameByToolCallId.get(tc.id) || tc.function.name || "tool_call";
+			return {
+				id: tc.id,
+				type: "function" as const,
+				executionId: executionIdByToolCallId.get(tc.id),
+				function: {
+					name: toolName,
+					arguments: tc.function.arguments,
+				},
+			};
+		});
+	};
 
 	const buildAgentContinuePrompt = () => {
 		const clipped = safeTruncateString(message.trim(), 500);
@@ -5039,52 +5111,10 @@ export const chatStream = async (
 	closeThinkIfOpen();
 	await flushPersist();
 
-	const executionIdByToolCallId = new Map<string, string>();
-	const invokedToolNameByToolCallId = new Map<string, string>();
-	for (const tr of allToolResults) {
-		if (!tr || typeof tr !== "object") continue;
-		const resultValue = (tr as { result?: unknown }).result;
-		if (resultValue && typeof resultValue === "object") {
-			const invokedTool =
-				(resultValue as { invokedTool?: unknown }).invokedTool ??
-				(resultValue as { toolName?: unknown }).toolName;
-			if (typeof invokedTool === "string" && invokedTool.trim().length > 0) {
-				invokedToolNameByToolCallId.set(tr.toolCallId, invokedTool.trim());
-			}
-
-			const executionId = (resultValue as { executionId?: unknown })
-				.executionId;
-			const nestedExecutionId =
-				(resultValue as { data?: unknown }).data &&
-				typeof (resultValue as { data?: unknown }).data === "object"
-					? ((resultValue as { data?: { executionId?: unknown } }).data
-							?.executionId as unknown)
-					: undefined;
-			const picked =
-				typeof executionId === "string"
-					? executionId
-					: typeof nestedExecutionId === "string"
-						? nestedExecutionId
-						: "";
-			if (picked.trim().length > 0) {
-				executionIdByToolCallId.set(tr.toolCallId, picked.trim());
-			}
-		}
-	}
-
-	const toolCallsToPersist = allToolCalls.map((tc) => {
-			const toolName =
-				invokedToolNameByToolCallId.get(tc.id) || tc.function.name || "tool_call";
-			return {
-				id: tc.id,
-				type: "function" as const,
-				executionId: executionIdByToolCallId.get(tc.id),
-				function: {
-					name: toolName,
-					arguments: tc.function.arguments,
-				},
-			};
-		});
+	const toolCallsToPersist = buildPersistedToolCallsFromStreamState(
+		allToolCalls,
+		allToolResults,
+	);
 
 	if (options.abortSignal?.aborted && assistantDisplayContent.trim().length === 0) {
 		assistantDisplayContent = "Cancelled.";
