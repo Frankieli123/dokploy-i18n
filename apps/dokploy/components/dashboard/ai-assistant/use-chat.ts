@@ -316,16 +316,84 @@ function buildServerDisplayMessages(serverMessages: Message[]): Message[] {
 		.map(({ message }) => message);
 }
 
+function mergeToolCalls(
+	serverToolCalls: Message["toolCalls"],
+	pendingToolCalls: Message["toolCalls"],
+): Message["toolCalls"] {
+	if (!Array.isArray(serverToolCalls) || serverToolCalls.length === 0) {
+		return Array.isArray(pendingToolCalls) && pendingToolCalls.length > 0
+			? pendingToolCalls
+			: null;
+	}
+	if (!Array.isArray(pendingToolCalls) || pendingToolCalls.length === 0) {
+		return serverToolCalls;
+	}
+	const merged = new Map(serverToolCalls.map((toolCall) => [toolCall.id, toolCall] as const));
+	for (const toolCall of pendingToolCalls) {
+		const existing = merged.get(toolCall.id);
+		if (!existing) {
+			merged.set(toolCall.id, toolCall);
+			continue;
+		}
+		merged.set(toolCall.id, {
+			...existing,
+			status: existing.status ?? toolCall.status,
+			executionId: existing.executionId ?? toolCall.executionId,
+			result: existing.result ?? toolCall.result,
+			function: existing.function ?? toolCall.function,
+		});
+	}
+	return Array.from(merged.values());
+}
+
+function mergeServerAndPendingMessage(serverMessage: Message, pendingMessage: Message): Message {
+	return {
+		...serverMessage,
+		conversationId: serverMessage.conversationId ?? pendingMessage.conversationId,
+		sourceMessageId: serverMessage.sourceMessageId ?? pendingMessage.sourceMessageId,
+		runId: serverMessage.runId ?? pendingMessage.runId,
+		kind: serverMessage.kind ?? pendingMessage.kind,
+		content:
+			serverMessage.content != null && serverMessage.content.length > 0
+				? serverMessage.content
+				: pendingMessage.content,
+		reasoning:
+			serverMessage.reasoning != null && serverMessage.reasoning.length > 0
+				? serverMessage.reasoning
+				: pendingMessage.reasoning,
+		attachments: areAttachmentsEqual(serverMessage.attachments, null)
+			? pendingMessage.attachments
+			: serverMessage.attachments,
+		toolCalls: mergeToolCalls(serverMessage.toolCalls, pendingMessage.toolCalls),
+		status: serverMessage.status ?? pendingMessage.status,
+		error:
+			typeof serverMessage.error === "string" && serverMessage.error.length > 0
+				? serverMessage.error
+				: pendingMessage.error,
+		updatedAt: serverMessage.updatedAt ?? pendingMessage.updatedAt,
+	};
+}
+
 function mergeServerAndPendingMessages(
 	serverMessages: Message[],
 	pendingMessages: Message[],
 ): Message[] {
 	if (pendingMessages.length === 0) return buildServerDisplayMessages(serverMessages);
-	const serverIds = new Set(serverMessages.map((message) => message.messageId));
-	return buildServerDisplayMessages([
-		...serverMessages,
-		...pendingMessages.filter((message) => !serverIds.has(message.messageId)),
-	]);
+	const mergedById = new Map(
+		serverMessages.map((message) => [message.messageId, message] as const),
+	);
+	for (const pendingMessage of pendingMessages) {
+		const existing = mergedById.get(pendingMessage.messageId);
+		if (!existing) {
+			mergedById.set(pendingMessage.messageId, pendingMessage);
+			continue;
+		}
+		mergedById.set(
+			pendingMessage.messageId,
+			mergeServerAndPendingMessage(existing, pendingMessage),
+		);
+	}
+	return buildServerDisplayMessages(Array.from(mergedById.values()));
 }
 
 function hasActiveAgentRunInMessages(messages: Message[]): boolean {

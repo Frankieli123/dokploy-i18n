@@ -1,4 +1,4 @@
-﻿-- Persist authoritative AI display snapshots
+-- Persist authoritative AI display snapshots
 
 CREATE TABLE IF NOT EXISTS "ai_display_message" (
     "messageId" text PRIMARY KEY NOT NULL,

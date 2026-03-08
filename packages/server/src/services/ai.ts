@@ -49,6 +49,10 @@ import {
 	toolRegistry,
 } from "./ai-tools";
 import { selectRelevantTools } from "./ai-tools/selector";
+import {
+	type ParsedAgentEventMessage,
+	buildAgentDisplayMessageFromEvents,
+} from "./ai/agent-display-replay";
 import { findServerById } from "./server";
 
 type AiMessageRow = typeof aiMessages.$inferSelect;
@@ -1701,34 +1705,57 @@ export const getDisplayMessages = async (params: {
 			didRepair = true;
 			continue;
 		}
+		const repairedToolCalls = buildDisplayToolCalls({
+			toolCalls: rawMessage.toolCalls,
+		});
+		const normalizedContent =
+			normalizeAssistantMessageContent(rawMessage.role, rawMessage.content ?? null) ?? null;
+		const needsKindRepair =
+			inferredIdentity.kind === "agent" && existing.kind !== inferredIdentity.kind;
+		const needsRunIdRepair =
+			inferredIdentity.kind === "agent" &&
+			normalizeDisplayMessageRunId(existing.runId) !== inferredIdentity.runId;
+		const needsSourceMessageRepair =
+			typeof existing.sourceMessageId !== "string" ||
+			existing.sourceMessageId.trim().length === 0;
+		const needsToolCallsRepair =
+			(!Array.isArray(existing.toolCalls) || existing.toolCalls.length === 0) &&
+			Array.isArray(repairedToolCalls) &&
+			repairedToolCalls.length > 0;
+		const needsContentRepair =
+			rawMessage.role === "assistant" && normalizedContent !== (existing.content ?? null);
 		if (
-			inferredIdentity.kind !== "agent" ||
-			(existing.kind === "agent" &&
-				normalizeDisplayMessageRunId(existing.runId) === inferredIdentity.runId)
+			!needsKindRepair &&
+			!needsRunIdRepair &&
+			!needsSourceMessageRepair &&
+			!needsToolCallsRepair &&
+			!needsContentRepair
 		) {
 			continue;
 		}
 		const repaired = await upsertDisplayMessageSnapshot({
 			messageId: existing.messageId,
 			conversationId: rawMessage.conversationId,
-			sourceMessageId: rawMessage.messageId,
-			runId: inferredIdentity.runId,
 			role: rawMessage.role,
-			kind: inferredIdentity.kind,
-			content: rawMessage.content ?? null,
-			reasoning: existing.reasoning ?? null,
-			attachments: rawMessage.attachments ?? null,
-			toolCalls:
-				existing.toolCalls ?? buildDisplayToolCalls({ toolCalls: rawMessage.toolCalls }),
-			status: existing.status,
-			error: existing.error ?? null,
+			...(needsSourceMessageRepair
+				? { sourceMessageId: rawMessage.messageId }
+				: {}),
+			...(needsRunIdRepair ? { runId: inferredIdentity.runId } : {}),
+			...(needsKindRepair ? { kind: inferredIdentity.kind } : {}),
+			...(needsToolCallsRepair ? { toolCalls: repairedToolCalls } : {}),
+			...(needsContentRepair ? { content: normalizedContent } : {}),
 			createdAt: rawMessage.createdAt,
 		});
 		if (!repaired) continue;
 		mergedById.set(repaired.messageId, repaired);
 		didRepair = true;
 	}
-	if (!didRepair) return messages.reverse();
+	const didRepairFromEvents = await repairAgentDisplayMessagesFromEvents({
+		conversationId: params.conversationId,
+		rawMessages,
+		mergedById,
+	});
+	if (!didRepair && !didRepairFromEvents) return messages.reverse();
 
 	return Array.from(mergedById.values()).sort((left, right) => {
 		const leftTime = Date.parse(left.createdAt ?? "");
@@ -1828,6 +1855,76 @@ type DisplayMessageKind = "message" | "agent";
 type DisplayToolCall = NonNullable<AiDisplayMessageRow["toolCalls"]>[number];
 type DisplayToolCallResult = DisplayToolCall["result"];
 
+async function listAgentEventPayloads(params: {
+	conversationId: string;
+	runId: string;
+	maxEvents?: number;
+}): Promise<ParsedAgentEventMessage[]> {
+	const runId = params.runId.trim();
+	if (runId.length === 0) return [];
+	const maxEvents = Math.max(1, Math.min(params.maxEvents ?? 2000, 5000));
+	const batchSize = Math.min(500, Math.max(100, Math.min(maxEvents, 500)));
+	let before: string | undefined;
+	let beforeMessageId = "";
+	const matchedDesc: ParsedAgentEventMessage[] = [];
+
+	for (let page = 0; page < 30 && matchedDesc.length < maxEvents; page++) {
+		const conditions: Array<ReturnType<typeof eq> | undefined> = [
+			eq(aiMessages.conversationId, params.conversationId),
+			eq(aiMessages.role, "system"),
+		];
+		if (before) {
+			if (beforeMessageId.length > 0) {
+				conditions.push(
+					or(
+						lt(aiMessages.createdAt, before),
+						and(eq(aiMessages.createdAt, before), lt(aiMessages.messageId, beforeMessageId)),
+					),
+				);
+			} else {
+				conditions.push(lt(aiMessages.createdAt, before));
+			}
+		}
+
+		const batch = await db.query.aiMessages.findMany({
+			where: and(...conditions),
+			orderBy: [desc(aiMessages.createdAt), desc(aiMessages.messageId)],
+			limit: batchSize,
+		});
+		if (batch.length === 0) break;
+
+		for (const msg of batch) {
+			if (matchedDesc.length >= maxEvents) break;
+			const content = typeof msg.content === "string" ? msg.content : "";
+			if (!content) continue;
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(content);
+			} catch {
+				continue;
+			}
+			if (!isRecord(parsed)) continue;
+			const type = typeof parsed.type === "string" ? parsed.type : "";
+			if (!type.startsWith("agent.")) continue;
+			const messageRunId = typeof parsed.runId === "string" ? parsed.runId.trim() : "";
+			if (messageRunId != runId) continue;
+			matchedDesc.push({
+				messageId: msg.messageId,
+				createdAt: msg.createdAt,
+				payload: parsed,
+			});
+		}
+
+		const last = batch[batch.length - 1];
+		if (!last) break;
+		before = last.createdAt;
+		beforeMessageId = last.messageId;
+		if (batch.length < batchSize) break;
+	}
+
+	return matchedDesc.reverse();
+}
+
 function normalizeDisplayMessageRunId(value: string | null | undefined): string | null {
 	const normalized = typeof value === "string" ? value.trim() : "";
 	return normalized.length > 0 ? normalized : null;
@@ -1862,6 +1959,47 @@ function inferDisplayMessageIdentity(
 	}
 	return { kind: "message", runId: null };
 }
+const ASSISTANT_TOOL_MARKER_PREFIX = "<<tool:";
+const ASSISTANT_TOOL_MARKER_SUFFIX = ">>";
+
+function stripAssistantToolMarkers(value: string): string {
+	if (value.length === 0) return value;
+	let output = "";
+	let cursor = 0;
+	while (cursor < value.length) {
+		const markerIndex = value.indexOf(ASSISTANT_TOOL_MARKER_PREFIX, cursor);
+		if (markerIndex === -1) {
+			output += value.slice(cursor);
+			break;
+		}
+		output += value.slice(cursor, markerIndex);
+		const markerEnd = value.indexOf(
+			ASSISTANT_TOOL_MARKER_SUFFIX,
+			markerIndex + ASSISTANT_TOOL_MARKER_PREFIX.length,
+		);
+		if (markerEnd === -1) break;
+		cursor = markerEnd + ASSISTANT_TOOL_MARKER_SUFFIX.length;
+	}
+	const maxPrefixLength = Math.min(
+		output.length,
+		ASSISTANT_TOOL_MARKER_PREFIX.length - 1,
+	);
+	for (let len = maxPrefixLength; len >= 2; len--) {
+		if (!ASSISTANT_TOOL_MARKER_PREFIX.startsWith(output.slice(-len))) continue;
+		return output.slice(0, -len);
+	}
+	return output;
+}
+
+function normalizeAssistantMessageContent(
+	role: "user" | "assistant" | "system" | "tool" | undefined,
+	content: string | null | undefined,
+): string | null | undefined {
+	if (role !== "assistant") return content;
+	if (typeof content !== "string") return content;
+	return stripAssistantToolMarkers(content);
+}
+
 function extractExecutionIdFromToolResultValue(value: unknown): string {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return "";
 	const direct = (value as { executionId?: unknown }).executionId;
@@ -1994,25 +2132,32 @@ async function upsertDisplayMessageSnapshot(params: {
 				: now,
 		updatedAt: now,
 	};
+	const updateValue = {
+		conversationId: insertValue.conversationId,
+		role: insertValue.role,
+		updatedAt: insertValue.updatedAt,
+		...(params.sourceMessageId !== undefined
+			? { sourceMessageId: insertValue.sourceMessageId }
+			: {}),
+		...(params.runId !== undefined ? { runId: insertValue.runId } : {}),
+		...(params.kind !== undefined ? { kind: insertValue.kind } : {}),
+		...(params.content !== undefined ? { content: insertValue.content } : {}),
+		...(params.reasoning !== undefined
+			? { reasoning: insertValue.reasoning }
+			: {}),
+		...(params.attachments !== undefined
+			? { attachments: insertValue.attachments }
+			: {}),
+		...(params.toolCalls !== undefined ? { toolCalls: insertValue.toolCalls } : {}),
+		...(params.status !== undefined ? { status: insertValue.status } : {}),
+		...(params.error !== undefined ? { error: insertValue.error } : {}),
+	};
 	const [snapshot] = await db
 		.insert(aiDisplayMessages)
 		.values(insertValue)
 		.onConflictDoUpdate({
 			target: aiDisplayMessages.messageId,
-			set: {
-				conversationId: insertValue.conversationId,
-				sourceMessageId: insertValue.sourceMessageId,
-				runId: insertValue.runId,
-				role: insertValue.role,
-				kind: insertValue.kind,
-				content: insertValue.content,
-				reasoning: insertValue.reasoning,
-				attachments: insertValue.attachments,
-				toolCalls: insertValue.toolCalls,
-				status: insertValue.status,
-				error: insertValue.error,
-				updatedAt: insertValue.updatedAt,
-			},
+			set: updateValue,
 		})
 		.returning();
 	return snapshot;
@@ -2038,7 +2183,7 @@ async function syncDisplayMessageFromRawMessage(
 		runId: identity.runId,
 		role: message.role,
 		kind: identity.kind,
-		content: message.content ?? null,
+		content: normalizeAssistantMessageContent(message.role, message.content ?? null) ?? null,
 		reasoning: overrides.reasoning ?? null,
 		attachments: message.attachments ?? null,
 		toolCalls: buildDisplayToolCalls({
@@ -2049,6 +2194,113 @@ async function syncDisplayMessageFromRawMessage(
 		error: overrides.error ?? null,
 		createdAt: message.createdAt,
 	});
+}
+
+async function repairAgentDisplayMessagesFromEvents(params: {
+	conversationId: string;
+	rawMessages: AiMessageRow[];
+	mergedById: Map<string, AiDisplayMessageRow>;
+}): Promise<boolean> {
+	const candidates = Array.from(params.mergedById.values()).filter((message) => {
+		if (message.role !== "assistant") return false;
+		if (message.kind !== "agent") return false;
+		return normalizeDisplayMessageRunId(message.runId) !== null;
+	});
+	if (candidates.length === 0) return false;
+
+	const runIds = Array.from(
+		new Set(
+			candidates
+				.map((message) => normalizeDisplayMessageRunId(message.runId))
+				.filter((runId): runId is string => typeof runId === "string" && runId.length > 0),
+		),
+	);
+	if (runIds.length === 0) return false;
+
+	const eventEntries = await Promise.all(
+		runIds.map(async (runId) => {
+			const events = await listAgentEventPayloads({
+				conversationId: params.conversationId,
+				runId,
+				maxEvents: 2000,
+			});
+			return [runId, events] as const;
+		}),
+	);
+	const eventMessagesByRunId = new Map(eventEntries);
+	const rawMessagesById = new Map(
+		params.rawMessages.map((message) => [message.messageId, message] as const),
+	);
+
+	let didRepair = false;
+	for (const message of candidates) {
+		const runId = normalizeDisplayMessageRunId(message.runId);
+		if (!runId) continue;
+		const eventMessages = eventMessagesByRunId.get(runId) ?? [];
+		if (eventMessages.length === 0) continue;
+		const rawMessage = rawMessagesById.get(message.messageId);
+		const replayed = buildAgentDisplayMessageFromEvents({
+			baseMessage: message,
+			sourceMessageId:
+				rawMessage?.messageId ?? message.sourceMessageId ?? message.messageId,
+			eventMessages,
+		});
+		if (!replayed) continue;
+
+		const currentSource =
+			typeof message.sourceMessageId === "string" && message.sourceMessageId.trim().length > 0
+				? message.sourceMessageId.trim()
+				: null;
+		const nextSource =
+			typeof replayed.sourceMessageId === "string" && replayed.sourceMessageId.trim().length > 0
+				? replayed.sourceMessageId.trim()
+				: null;
+		const currentContent = message.content ?? null;
+		const nextContent = replayed.content ?? null;
+		const currentReasoning = message.reasoning ?? null;
+		const nextReasoning = replayed.reasoning ?? null;
+		const currentToolCallsJson = JSON.stringify(message.toolCalls ?? null);
+		const nextToolCallsJson = JSON.stringify(replayed.toolCalls ?? null);
+		const currentError = message.error ?? null;
+		const nextError = replayed.error ?? null;
+
+		const needsSourceRepair = currentSource !== nextSource;
+		const needsContentRepair = currentContent !== nextContent;
+		const needsReasoningRepair = currentReasoning !== nextReasoning;
+		const needsToolCallsRepair = currentToolCallsJson !== nextToolCallsJson;
+		const needsStatusRepair = message.status !== replayed.status;
+		const needsErrorRepair = currentError !== nextError;
+		if (
+			!needsSourceRepair &&
+			!needsContentRepair &&
+			!needsReasoningRepair &&
+			!needsToolCallsRepair &&
+			!needsStatusRepair &&
+			!needsErrorRepair
+		) {
+			continue;
+		}
+
+		const repaired = await upsertDisplayMessageSnapshot({
+			messageId: message.messageId,
+			conversationId: message.conversationId,
+			role: message.role,
+			kind: "agent",
+			runId,
+			...(needsSourceRepair ? { sourceMessageId: nextSource } : {}),
+			...(needsContentRepair ? { content: nextContent } : {}),
+			...(needsReasoningRepair ? { reasoning: nextReasoning } : {}),
+			...(needsToolCallsRepair ? { toolCalls: replayed.toolCalls ?? null } : {}),
+			...(needsStatusRepair ? { status: replayed.status } : {}),
+			...(needsErrorRepair ? { error: nextError } : {}),
+			createdAt: message.createdAt,
+		});
+		if (!repaired) continue;
+		params.mergedById.set(repaired.messageId, repaired);
+		didRepair = true;
+	}
+
+	return didRepair;
 }
 
 export const saveMessage = async (params: {
@@ -2068,7 +2320,11 @@ export const saveMessage = async (params: {
 	promptTokens?: number;
 	completionTokens?: number;
 }) => {
-	const [message] = await db.insert(aiMessages).values(params).returning();
+	const insertValue = {
+		...params,
+		content: normalizeAssistantMessageContent(params.role, params.content),
+	};
+	const [message] = await db.insert(aiMessages).values(insertValue).returning();
 
 	// Update conversation timestamp
 	await db
@@ -2095,7 +2351,12 @@ export const updateMessage = async (params: {
 }) => {
 	const update: Record<string, unknown> = {};
 	if (typeof params.role === "string") update.role = params.role;
-	if (params.content !== undefined) update.content = params.content;
+	if (params.content !== undefined) {
+		update.content = normalizeAssistantMessageContent(
+			params.role ?? "assistant",
+			params.content,
+		);
+	}
 	if (params.attachments !== undefined) update.attachments = params.attachments;
 	if (params.toolCalls !== undefined) update.toolCalls = params.toolCalls;
 	if (params.toolCallId !== undefined) update.toolCallId = params.toolCallId;
@@ -2184,7 +2445,8 @@ function messageToCoreMessage(
 ): CoreMessage | null {
 	if (msg.role !== "user" && msg.role !== "assistant") return null;
 
-	const content = typeof msg.content === "string" ? msg.content.trim() : "";
+	const normalizedContent = normalizeAssistantMessageContent(msg.role, msg.content);
+	const content = typeof normalizedContent === "string" ? normalizedContent.trim() : "";
 	const attachments = Array.isArray(msg.attachments) ? msg.attachments : [];
 
 	if (msg.role === "user" && attachments.length > 0) {
@@ -4407,7 +4669,12 @@ export const chat = async ({
 			}
 		}
 
-		finalText += typeof result.text === "string" ? result.text : "";
+		const turnText =
+			normalizeAssistantMessageContent(
+				"assistant",
+				typeof result.text === "string" ? result.text : "",
+			) ?? "";
+		finalText += turnText;
 		if (Array.isArray(result.toolCalls)) allToolCalls.push(...result.toolCalls);
 		const toolResults = (result as unknown as { toolResults?: unknown }).toolResults;
 		if (Array.isArray(toolResults)) allToolResults.push(...toolResults);
@@ -4429,10 +4696,7 @@ export const chat = async ({
 		if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls)
 			break;
 
-		const assistantSnippet = safeTruncateString(
-			(typeof result.text === "string" ? result.text : "").trim(),
-			4000,
-		);
+		const assistantSnippet = safeTruncateString(turnText.trim(), 4000);
 		if (assistantSnippet.length > 0) {
 			messages = messages.concat({ role: "assistant", content: assistantSnippet });
 		}
@@ -4695,6 +4959,7 @@ export const chatStream = async (
 		createdAt: assistantMessage.createdAt,
 	});
 
+	let assistantRawTextContent = "";
 	let assistantTextContent = "";
 	let assistantReasoning = "";
 	let latestToolCallsSnapshot: AiMessageRow["toolCalls"] | null | undefined = null;
@@ -4757,10 +5022,16 @@ export const chatStream = async (
 
 	const emitTextDelta = (delta: string) => {
 		if (typeof delta !== "string" || delta.length === 0) return;
-		assistantTextContent += delta;
+		assistantRawTextContent += delta;
+		const nextVisibleText = stripAssistantToolMarkers(assistantRawTextContent);
+		const visibleDelta = nextVisibleText.startsWith(assistantTextContent)
+			? nextVisibleText.slice(assistantTextContent.length)
+			: "";
+		assistantTextContent = nextVisibleText;
 		schedulePersist();
+		if (visibleDelta.length === 0) return;
 		try {
-			options.onTextDelta?.(delta);
+			options.onTextDelta?.(visibleDelta);
 		} catch {
 			// Ignore callback errors (e.g., client disconnected)
 		}
@@ -5137,7 +5408,14 @@ export const chatStream = async (
 			}
 
 
-			return { fullText, toolCalls, toolResults, usage, streamError, finishReason };
+			return {
+				fullText: stripAssistantToolMarkers(fullText),
+				toolCalls,
+				toolResults,
+				usage,
+				streamError,
+				finishReason,
+			};
 		};
 
 	type StreamedTurn = Awaited<ReturnType<typeof runStream>>;
@@ -5374,8 +5652,9 @@ export const chatStream = async (
 	latestToolCallsSnapshot = toolCallsToPersist;
 	latestToolResultsSnapshot = allToolResults;
 
-	const persistedContent =
-		assistantTextContent.trim().length > 0 ? assistantTextContent : fullText;
+	const persistedContent = stripAssistantToolMarkers(
+		assistantTextContent.length > 0 ? assistantTextContent : fullText,
+	);
 
 	const updatedAssistantMessage = await updateMessage({
 		messageId: assistantMessageId,
@@ -6699,7 +6978,12 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		const turnToolCalls: NonNullable<GeneratedTurn["toolCalls"]> = [];
 		const turnToolResults: unknown[] = [];
 		for (const r of turnResults) {
-			finalText += typeof r.text === "string" ? r.text : "";
+			const turnText =
+				normalizeAssistantMessageContent(
+					"assistant",
+					typeof r.text === "string" ? r.text : "",
+				) ?? "";
+			finalText += turnText;
 			if (Array.isArray(r.toolCalls)) {
 				allToolCalls.push(...r.toolCalls);
 				turnToolCalls.push(...r.toolCalls);
@@ -6716,7 +7000,12 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		}
 
 		const assistantSnippet = safeTruncateString(
-			(typeof result.text === "string" ? result.text : "").trim(),
+			(
+				normalizeAssistantMessageContent(
+					"assistant",
+					typeof result.text === "string" ? result.text : "",
+				) ?? ""
+			).trim(),
 			4000,
 		);
 			if (assistantSnippet.length > 0 && assistantSnippet !== lastOutputDelta) {
@@ -7537,7 +7826,11 @@ async function autoContinueAfterApprovedToolExecution(params: {
 		} else throw error;
 	}
 
-	let finalText = typeof result.text === "string" ? result.text : "";
+	let finalText =
+		normalizeAssistantMessageContent(
+			"assistant",
+			typeof result.text === "string" ? result.text : "",
+		) ?? "";
 
 	const executionIdByToolCallId = new Map<string, string>();
 	const invokedToolNameByToolCallId = new Map<string, string>();
