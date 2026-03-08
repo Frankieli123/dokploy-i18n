@@ -342,14 +342,6 @@ export async function orchestrateRun(
 				status: "failed",
 			},
 		});
-		await saveAgentEventMessage({
-			conversationId: run.conversationId,
-			payload: {
-				type: "agent.run.summary",
-				runId,
-				summary: "Run plan is missing or empty",
-			},
-		});
 		return { state: "FAILED", runId, error: "Run plan is missing or empty" };
 	}
 
@@ -401,14 +393,6 @@ export async function orchestrateRun(
 					type: "agent.run.finish",
 					runId,
 					status: "cancelled",
-				},
-			});
-			await saveAgentEventMessage({
-				conversationId: run.conversationId,
-				payload: {
-					type: "agent.run.summary",
-					runId,
-					summary: "Cancelled",
 				},
 			});
 			return { state: "CANCELLED", runId };
@@ -516,14 +500,6 @@ export async function orchestrateRun(
 					status: "cancelled",
 				},
 			});
-			await saveAgentEventMessage({
-				conversationId: run.conversationId,
-				payload: {
-					type: "agent.run.summary",
-					runId,
-					summary: `Execution rejected: ${exec.executionId}`,
-				},
-			});
 			return { state: "CANCELLED", runId };
 		}
 
@@ -550,14 +526,6 @@ export async function orchestrateRun(
 					type: "agent.run.finish",
 					runId,
 					status: "failed",
-				},
-			});
-			await saveAgentEventMessage({
-				conversationId: run.conversationId,
-				payload: {
-					type: "agent.run.summary",
-					runId,
-					summary: exec.error || `Execution failed: ${exec.executionId}`,
 				},
 			});
 			return {
@@ -689,14 +657,6 @@ export async function orchestrateRun(
 						status: "failed",
 					},
 				});
-				await saveAgentEventMessage({
-					conversationId: run.conversationId,
-					payload: {
-						type: "agent.run.summary",
-						runId,
-						summary: errorMessage,
-					},
-				});
 				return { state: "FAILED", runId, error: errorMessage };
 			}
 
@@ -754,14 +714,6 @@ export async function orchestrateRun(
 					status: "failed",
 				},
 			});
-			await saveAgentEventMessage({
-				conversationId: run.conversationId,
-				payload: {
-					type: "agent.run.summary",
-					runId,
-					summary: result.error || result.message || "Tool execution failed",
-				},
-			});
 			return {
 				state: "FAILED",
 				runId,
@@ -795,14 +747,6 @@ export async function orchestrateRun(
 				type: "agent.run.finish",
 				runId,
 				status: "completed",
-			},
-		});
-		await saveAgentEventMessage({
-			conversationId: run.conversationId,
-			payload: {
-				type: "agent.run.summary",
-				runId,
-				summary: `Completed ${plan.steps.length} step(s)`,
 			},
 		});
 	}

@@ -6,6 +6,7 @@ import {
 	aiConversations,
 	aiMcpServers,
 	aiMessages,
+	aiDisplayMessages,
 	aiRuns,
 	aiToolExecutions,
 } from "@dokploy/server/db/schema";
@@ -51,6 +52,7 @@ import { selectRelevantTools } from "./ai-tools/selector";
 import { findServerById } from "./server";
 
 type AiMessageRow = typeof aiMessages.$inferSelect;
+type AiDisplayMessageRow = typeof aiDisplayMessages.$inferSelect;
 type AiMessageAttachment = NonNullable<AiMessageRow["attachments"]>[number];
 
 type ToolPromptInfo = {
@@ -1651,6 +1653,93 @@ export const getMessages = async (params: {
 	return messages.reverse();
 };
 
+export const getDisplayMessages = async (params: {
+	conversationId: string;
+	limit?: number;
+	before?: string;
+	beforeMessageId?: string;
+}) => {
+	const conditions: Array<ReturnType<typeof eq> | undefined> = [
+		eq(aiDisplayMessages.conversationId, params.conversationId),
+	];
+	if (params.before) {
+		const beforeMessageId =
+			typeof params.beforeMessageId === "string" ? params.beforeMessageId.trim() : "";
+		if (beforeMessageId.length > 0) {
+			conditions.push(
+				or(
+					lt(aiDisplayMessages.createdAt, params.before),
+					and(
+						eq(aiDisplayMessages.createdAt, params.before),
+						lt(aiDisplayMessages.messageId, beforeMessageId),
+					),
+				),
+			);
+		} else {
+			conditions.push(lt(aiDisplayMessages.createdAt, params.before));
+		}
+	}
+
+	const messages = await db.query.aiDisplayMessages.findMany({
+		where: and(...conditions),
+		orderBy: [desc(aiDisplayMessages.createdAt), desc(aiDisplayMessages.messageId)],
+		limit: params.limit || 50,
+	});
+	const rawMessages = await getMessages(params);
+	if (rawMessages.length === 0) return messages.reverse();
+
+	const mergedById = new Map(messages.map((message) => [message.messageId, message] as const));
+	let didRepair = false;
+	for (const rawMessage of rawMessages) {
+		if (rawMessage.role === "system") continue;
+		const inferredIdentity = inferDisplayMessageIdentity(rawMessage);
+		const existing = mergedById.get(rawMessage.messageId);
+		if (!existing) {
+			const snapshot = await syncDisplayMessageFromRawMessage(rawMessage, inferredIdentity);
+			if (!snapshot) continue;
+			mergedById.set(snapshot.messageId, snapshot);
+			didRepair = true;
+			continue;
+		}
+		if (
+			inferredIdentity.kind !== "agent" ||
+			(existing.kind === "agent" &&
+				normalizeDisplayMessageRunId(existing.runId) === inferredIdentity.runId)
+		) {
+			continue;
+		}
+		const repaired = await upsertDisplayMessageSnapshot({
+			messageId: existing.messageId,
+			conversationId: rawMessage.conversationId,
+			sourceMessageId: rawMessage.messageId,
+			runId: inferredIdentity.runId,
+			role: rawMessage.role,
+			kind: inferredIdentity.kind,
+			content: rawMessage.content ?? null,
+			reasoning: existing.reasoning ?? null,
+			attachments: rawMessage.attachments ?? null,
+			toolCalls:
+				existing.toolCalls ?? buildDisplayToolCalls({ toolCalls: rawMessage.toolCalls }),
+			status: existing.status,
+			error: existing.error ?? null,
+			createdAt: rawMessage.createdAt,
+		});
+		if (!repaired) continue;
+		mergedById.set(repaired.messageId, repaired);
+		didRepair = true;
+	}
+	if (!didRepair) return messages.reverse();
+
+	return Array.from(mergedById.values()).sort((left, right) => {
+		const leftTime = Date.parse(left.createdAt ?? "");
+		const rightTime = Date.parse(right.createdAt ?? "");
+		if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+			return leftTime - rightTime;
+		}
+		return left.messageId.localeCompare(right.messageId);
+	});
+};
+
 export const getAgentEventMessages = async (params: {
 	conversationId: string;
 	runId: string;
@@ -1726,6 +1815,242 @@ export const getAgentEventMessages = async (params: {
 	return { messages: matchedDesc.reverse(), nextCursor };
 };
 
+type DisplayToolCallStatus =
+	| "pending"
+	| "approved"
+	| "rejected"
+	| "executing"
+	| "completed"
+	| "failed";
+
+type DisplayMessageStatus = "sending" | "sent" | "error";
+type DisplayMessageKind = "message" | "agent";
+type DisplayToolCall = NonNullable<AiDisplayMessageRow["toolCalls"]>[number];
+type DisplayToolCallResult = DisplayToolCall["result"];
+
+function normalizeDisplayMessageRunId(value: string | null | undefined): string | null {
+	const normalized = typeof value === "string" ? value.trim() : "";
+	return normalized.length > 0 ? normalized : null;
+}
+
+function inferAgentRunIdFromMessageId(messageId: string): string | null {
+	const normalized = typeof messageId === "string" ? messageId.trim() : "";
+	const prefix = "agent-run-";
+	if (!normalized.startsWith(prefix)) return null;
+	const runId = normalized.slice(prefix.length).trim();
+	return runId.length > 0 ? runId : null;
+}
+
+function inferDisplayMessageIdentity(
+	message: Pick<AiMessageRow, "messageId" | "role">,
+	overrides: { kind?: DisplayMessageKind; runId?: string | null } = {},
+): { kind: DisplayMessageKind; runId: string | null } {
+	const explicitRunId = normalizeDisplayMessageRunId(overrides.runId);
+	const inferredRunId =
+		message.role === "assistant"
+			? inferAgentRunIdFromMessageId(message.messageId)
+			: null;
+	if (overrides.kind) {
+		return {
+			kind: overrides.kind,
+			runId: explicitRunId ?? (overrides.kind === "agent" ? inferredRunId : null),
+		};
+	}
+	const runId = explicitRunId ?? inferredRunId;
+	if (runId) {
+		return { kind: "agent", runId };
+	}
+	return { kind: "message", runId: null };
+}
+function extractExecutionIdFromToolResultValue(value: unknown): string {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+	const direct = (value as { executionId?: unknown }).executionId;
+	if (typeof direct === "string" && direct.trim().length > 0) {
+		return direct.trim();
+	}
+	const nested = (value as { data?: unknown }).data;
+	if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+		const inner = (nested as { executionId?: unknown }).executionId;
+		if (typeof inner === "string" && inner.trim().length > 0) {
+			return inner.trim();
+		}
+	}
+	return "";
+}
+
+function buildDisplayToolCalls(params: {
+	toolCalls: AiMessageRow["toolCalls"] | null | undefined;
+	toolResults?: unknown[];
+}): AiDisplayMessageRow["toolCalls"] {
+	const toolCalls = Array.isArray(params.toolCalls) ? params.toolCalls : [];
+	const toolResults = Array.isArray(params.toolResults) ? params.toolResults : [];
+	if (toolCalls.length === 0) return null;
+
+	const resultByToolCallId = new Map<string, unknown>();
+	for (const entry of toolResults) {
+		if (!entry || typeof entry !== "object") continue;
+		const toolCallId =
+			(entry as { toolCallId?: unknown }).toolCallId ?? (entry as { id?: unknown }).id;
+		if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) continue;
+		const resultValue =
+			(entry as { result?: unknown }).result ??
+			(entry as { output?: unknown }).output ??
+			entry;
+		resultByToolCallId.set(toolCallId.trim(), resultValue);
+	}
+
+	return toolCalls.map((toolCall) => {
+		const resultValue = resultByToolCallId.get(toolCall.id);
+		let status: DisplayToolCallStatus | undefined = resultValue ? "completed" : "executing";
+		let executionId =
+			typeof toolCall.executionId === "string" ? toolCall.executionId.trim() : "";
+		let result: DisplayToolCallResult | undefined;
+
+		if (resultValue && typeof resultValue === "object" && !Array.isArray(resultValue)) {
+			const record = resultValue as {
+				success?: unknown;
+				message?: unknown;
+				data?: unknown;
+				error?: unknown;
+				status?: unknown;
+			};
+			const nextExecutionId = extractExecutionIdFromToolResultValue(record);
+			if (nextExecutionId.length > 0) executionId = nextExecutionId;
+			if (
+				record.status === "pending_approval" &&
+				extractExecutionIdFromToolResultValue(record).length > 0
+			) {
+				status = "pending";
+				result = {
+					success: true,
+					message: typeof record.message === "string" ? record.message : undefined,
+					data: record.data,
+				};
+			} else if (typeof record.success === "boolean") {
+				status = record.success ? "completed" : "failed";
+				result = {
+					success: record.success,
+					message: typeof record.message === "string" ? record.message : undefined,
+					data: record.data,
+					error: typeof record.error === "string" ? record.error : undefined,
+				};
+			}
+		}
+
+		return {
+			id: toolCall.id,
+			type: toolCall.type,
+			status,
+			executionId: executionId || undefined,
+			result,
+			function: toolCall.function,
+		};
+	});
+}
+
+async function upsertDisplayMessageSnapshot(params: {
+	messageId: string;
+	conversationId: string;
+	role: "user" | "assistant" | "system" | "tool";
+	content?: string | null;
+	reasoning?: string | null;
+	attachments?: AiDisplayMessageRow["attachments"] | null;
+	toolCalls?: AiDisplayMessageRow["toolCalls"] | null;
+	status?: DisplayMessageStatus;
+	error?: string | null;
+	kind?: DisplayMessageKind;
+	runId?: string | null;
+	sourceMessageId?: string | null;
+	createdAt?: string;
+}) {
+	if (params.role === "system") return null;
+	const messageId = typeof params.messageId === "string" ? params.messageId.trim() : "";
+	const conversationId =
+		typeof params.conversationId === "string" ? params.conversationId.trim() : "";
+	if (messageId.length === 0 || conversationId.length === 0) return null;
+	const now = new Date().toISOString();
+	const insertValue = {
+		messageId,
+		conversationId,
+		sourceMessageId:
+			typeof params.sourceMessageId === "string" && params.sourceMessageId.trim().length > 0
+				? params.sourceMessageId.trim()
+				: null,
+		runId:
+			typeof params.runId === "string" && params.runId.trim().length > 0
+				? params.runId.trim()
+				: null,
+		role: params.role,
+		kind: params.kind ?? "message",
+		content: params.content ?? null,
+		reasoning: params.reasoning ?? null,
+		attachments: params.attachments ?? null,
+		toolCalls: params.toolCalls ?? null,
+		status: params.status ?? "sent",
+		error: params.error ?? null,
+		createdAt:
+			typeof params.createdAt === "string" && params.createdAt.trim().length > 0
+				? params.createdAt
+				: now,
+		updatedAt: now,
+	};
+	const [snapshot] = await db
+		.insert(aiDisplayMessages)
+		.values(insertValue)
+		.onConflictDoUpdate({
+			target: aiDisplayMessages.messageId,
+			set: {
+				conversationId: insertValue.conversationId,
+				sourceMessageId: insertValue.sourceMessageId,
+				runId: insertValue.runId,
+				role: insertValue.role,
+				kind: insertValue.kind,
+				content: insertValue.content,
+				reasoning: insertValue.reasoning,
+				attachments: insertValue.attachments,
+				toolCalls: insertValue.toolCalls,
+				status: insertValue.status,
+				error: insertValue.error,
+				updatedAt: insertValue.updatedAt,
+			},
+		})
+		.returning();
+	return snapshot;
+}
+
+async function syncDisplayMessageFromRawMessage(
+	message: AiMessageRow | undefined,
+	overrides: {
+		reasoning?: string | null;
+		status?: DisplayMessageStatus;
+		error?: string | null;
+		kind?: DisplayMessageKind;
+		runId?: string | null;
+		toolResults?: unknown[];
+	} = {},
+) {
+	if (!message || message.role === "system") return null;
+	const identity = inferDisplayMessageIdentity(message, overrides);
+	return upsertDisplayMessageSnapshot({
+		messageId: message.messageId,
+		conversationId: message.conversationId,
+		sourceMessageId: message.messageId,
+		runId: identity.runId,
+		role: message.role,
+		kind: identity.kind,
+		content: message.content ?? null,
+		reasoning: overrides.reasoning ?? null,
+		attachments: message.attachments ?? null,
+		toolCalls: buildDisplayToolCalls({
+			toolCalls: message.toolCalls,
+			toolResults: overrides.toolResults,
+		}),
+		status: overrides.status ?? "sent",
+		error: overrides.error ?? null,
+		createdAt: message.createdAt,
+	});
+}
+
 export const saveMessage = async (params: {
 	messageId?: string;
 	conversationId: string;
@@ -1750,6 +2075,8 @@ export const saveMessage = async (params: {
 		.update(aiConversations)
 		.set({ updatedAt: new Date().toISOString() })
 		.where(eq(aiConversations.conversationId, params.conversationId));
+
+	await syncDisplayMessageFromRawMessage(message);
 
 	return message;
 };
@@ -1788,6 +2115,8 @@ export const updateMessage = async (params: {
 		.update(aiConversations)
 		.set({ updatedAt: new Date().toISOString() })
 		.where(eq(aiConversations.conversationId, params.conversationId));
+
+	await syncDisplayMessageFromRawMessage(message);
 
 	return message;
 };
@@ -3517,25 +3846,6 @@ function shouldPreferChineseReply(params: {
 	return /[\u4e00-\u9fff]/.test(params.userMessage);
 }
 
-function buildEmptyModelOutputFallback(
-	userMessage: string,
-	uiLocale?: string | null,
-): string {
-	const looksChinese = shouldPreferChineseReply({
-		uiLocale: normalizeUiLocale(uiLocale),
-		userMessage,
-	});
-	if (looksChinese) {
-		return (
-			"我这次没有拿到模型的任何输出（可能是模型接口/网络波动）。\n" +
-			"请点“重试”再试一次；如果持续出现，建议切换模型或检查 AI 配置。"
-		);
-	}
-	return (
-		"I didn't receive any output from the model (provider/network hiccup).\n" +
-		"Please retry once. If it keeps happening, switch the model or check the AI configuration."
-	);
-}
 
 async function appendToolOutcomeAssistantMessage(_params: {
 	conversationId?: string | null;
@@ -3889,6 +4199,8 @@ export const chat = async ({
 	const initialSystemMode = getInitialSystemMode(aiSettings);
 
 	const isLikelyActionRequest = (text: string): boolean => {
+		void text;
+		return false;
 		const t = text.trim();
 		if (t.length === 0) return false;
 		const hasAction =
@@ -4127,51 +4439,6 @@ export const chat = async ({
 		messages = messages.concat({ role: "user", content: buildAgentContinuePrompt() });
 	}
 
-	if (
-		finalText.trim().length === 0 &&
-		Array.isArray(allToolCalls) &&
-		allToolCalls.length > 0
-	) {
-		const summary = await generateToolOutcomeSummary({
-			model,
-			userMessage: message,
-			uiLocale: effectiveUiLocale,
-			toolCalls: allToolCalls.map((tc) => ({
-				id: tc.toolCallId,
-				name: tc.toolName,
-				arguments:
-					(tc as unknown as { args?: unknown; input?: unknown }).args ??
-					(tc as unknown as { args?: unknown; input?: unknown }).input ??
-					{},
-			})),
-			toolResults: allToolResults
-				.map((tr) => {
-					const toolCallId =
-						(tr as { toolCallId?: unknown }).toolCallId ??
-						(tr as { id?: unknown }).id;
-					const toolName =
-						(tr as { toolName?: unknown }).toolName ??
-						(tr as { name?: unknown }).name;
-					const resultValue =
-						(tr as { result?: unknown }).result ??
-						(tr as { output?: unknown }).output ??
-						tr;
-					return {
-						toolCallId: typeof toolCallId === "string" ? toolCallId : "",
-						toolName: typeof toolName === "string" ? toolName : "",
-						result: resultValue,
-					};
-				})
-				.slice(0, 25),
-		});
-		finalText = summary || finalText;
-	}
-	if (
-		finalText.trim().length === 0 &&
-		(!Array.isArray(allToolCalls) || allToolCalls.length === 0)
-	) {
-		finalText = buildEmptyModelOutputFallback(message, effectiveUiLocale);
-	}
 
 	// Save assistant response
 	const executionIdByToolCallId = new Map<string, string>();
@@ -4416,22 +4683,49 @@ export const chatStream = async (
 		options.onStart?.({ assistantMessageId, userMessageId });
 	} catch {}
 
-	let assistantDisplayContent = "";
-	let activeThinkId: string | null = null;
+	await upsertDisplayMessageSnapshot({
+		messageId: assistantMessageId,
+		conversationId,
+		sourceMessageId: assistantMessageId,
+		role: "assistant",
+		kind: "message",
+		content: "",
+		reasoning: null,
+		status: "sending",
+		createdAt: assistantMessage.createdAt,
+	});
+
+	let assistantTextContent = "";
+	let assistantReasoning = "";
+	let latestToolCallsSnapshot: AiMessageRow["toolCalls"] | null | undefined = null;
+	let latestToolResultsSnapshot: unknown[] = [];
 
 	let persistTimer: ReturnType<typeof setTimeout> | null = null;
-	let lastPersistedLength = 0;
+	let lastPersistedSignature = "";
 	let persistChain: Promise<unknown> = Promise.resolve();
 
-	const enqueuePersist = (content: string) => {
+	const enqueuePersist = () => {
+		const content = assistantTextContent;
+		const reasoning = assistantReasoning;
 		persistChain = persistChain
-			.then(() =>
-				updateMessage({
+			.then(async () => {
+				await updateMessage({
 					messageId: assistantMessageId,
 					conversationId,
 					content,
-				}),
-			)
+				});
+				await upsertDisplayMessageSnapshot({
+					messageId: assistantMessageId,
+					conversationId,
+					sourceMessageId: assistantMessageId,
+					role: "assistant",
+					kind: "message",
+					content,
+					reasoning,
+					status: "sending",
+					createdAt: assistantMessage.createdAt,
+				});
+			})
 			.catch(() => undefined);
 	};
 
@@ -4439,10 +4733,10 @@ export const chatStream = async (
 		if (persistTimer) return;
 		persistTimer = setTimeout(() => {
 			persistTimer = null;
-			const content = assistantDisplayContent;
-			if (content.length === lastPersistedLength) return;
-			lastPersistedLength = content.length;
-			enqueuePersist(content);
+			const signature = `${assistantTextContent.length}:${assistantReasoning.length}`;
+			if (signature === lastPersistedSignature) return;
+			lastPersistedSignature = signature;
+			enqueuePersist();
 		}, 300);
 	};
 
@@ -4451,32 +4745,19 @@ export const chatStream = async (
 			clearTimeout(persistTimer);
 			persistTimer = null;
 		}
-		const content = assistantDisplayContent;
-		if (content.length !== lastPersistedLength) {
-			lastPersistedLength = content.length;
-			enqueuePersist(content);
+		const signature = `${assistantTextContent.length}:${assistantReasoning.length}`;
+		if (signature !== lastPersistedSignature) {
+			lastPersistedSignature = signature;
+			enqueuePersist();
 		}
 		try {
 			await persistChain;
 		} catch {}
 	};
 
-	const ensureThinkStarted = () => {
-		if (activeThinkId) return;
-		activeThinkId = `think-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-		assistantDisplayContent += `\n\n<<think:${activeThinkId}>>\n`;
-	};
-
-	const closeThinkIfOpen = () => {
-		if (!activeThinkId) return;
-		assistantDisplayContent += `\n<<think_end:${activeThinkId}>>\n\n`;
-		activeThinkId = null;
-	};
-
 	const emitTextDelta = (delta: string) => {
 		if (typeof delta !== "string" || delta.length === 0) return;
-		closeThinkIfOpen();
-		assistantDisplayContent += delta;
+		assistantTextContent += delta;
 		schedulePersist();
 		try {
 			options.onTextDelta?.(delta);
@@ -4487,8 +4768,7 @@ export const chatStream = async (
 
 	const emitReasoningDelta = (delta: string) => {
 		if (typeof delta !== "string" || delta.length === 0) return;
-		ensureThinkStarted();
-		assistantDisplayContent += delta;
+		assistantReasoning += delta;
 		schedulePersist();
 		try {
 			options.onReasoningDelta?.(delta);
@@ -4497,10 +4777,7 @@ export const chatStream = async (
 		}
 	};
 
-	const emitToolMarker = (toolCallId: string) => {
-		if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) return;
-		closeThinkIfOpen();
-		assistantDisplayContent += `\n\n<<tool:${toolCallId}>>\n\n`;
+	const emitToolMarker = (_toolCallId: string) => {
 		schedulePersist();
 	};
 
@@ -4571,6 +4848,8 @@ export const chatStream = async (
 	const initialSystemMode = getInitialSystemMode(aiSettings);
 
 	const isLikelyActionRequest = (text: string): boolean => {
+		void text;
+		return false;
 		const t = text.trim();
 		if (t.length === 0) return false;
 		const hasAction =
@@ -4690,20 +4969,38 @@ export const chatStream = async (
 		let hasAnyOutput = false;
 
 		const persistAssistantProgress = () => {
-			const toolCallsToPersist = buildPersistedToolCallsFromStreamState(
+			const mergedToolCalls = buildPersistedToolCallsFromStreamState(
 				[...allToolCalls, ...toolCalls],
 				[...allToolResults, ...toolResults],
 			);
+			const mergedToolResults = [...allToolResults, ...toolResults];
+			latestToolCallsSnapshot = mergedToolCalls;
+			latestToolResultsSnapshot = mergedToolResults;
 			persistChain = persistChain
-				.then(() =>
-					updateMessage({
+				.then(async () => {
+					await updateMessage({
 						messageId: assistantMessageId,
 						conversationId,
-						content: assistantDisplayContent,
+						content: assistantTextContent,
 						toolCalls:
-							toolCallsToPersist.length > 0 ? toolCallsToPersist : null,
-					}),
-				)
+							mergedToolCalls.length > 0 ? mergedToolCalls : null,
+					});
+					await upsertDisplayMessageSnapshot({
+						messageId: assistantMessageId,
+						conversationId,
+						sourceMessageId: assistantMessageId,
+						role: "assistant",
+						kind: "message",
+						content: assistantTextContent,
+						reasoning: assistantReasoning,
+						toolCalls: buildDisplayToolCalls({
+							toolCalls: mergedToolCalls,
+							toolResults: mergedToolResults,
+						}),
+						status: "sending",
+						createdAt: assistantMessage.createdAt,
+					});
+				})
 				.catch(() => undefined);
 		};
 
@@ -4765,7 +5062,6 @@ export const chatStream = async (
 					persistAssistantProgress();
 					} else if (chunk.type === "tool-result") {
 						hasAnyOutput = true;
-						closeThinkIfOpen();
 						const toolResult =
 							(chunk as unknown as { result?: unknown }).result ??
 							(chunk as unknown as { output?: unknown }).output ??
@@ -4840,15 +5136,6 @@ export const chatStream = async (
 			throw new Error(streamError);
 			}
 
-			if (
-				!hasAnyOutput &&
-				fullText.length === 0 &&
-				!options.abortSignal?.aborted
-			) {
-				fullText = buildEmptyModelOutputFallback(message, effectiveUiLocale);
-				hasAnyOutput = true;
-				emitTextDelta(fullText);
-			}
 
 			return { fullText, toolCalls, toolResults, usage, streamError, finishReason };
 		};
@@ -5077,51 +5364,18 @@ export const chatStream = async (
 		messages = messages.concat({ role: "user", content: buildAgentContinuePrompt() });
 	}
 
-	if (
-		fullText.trim().length === 0 &&
-		Array.isArray(allToolCalls) &&
-		allToolCalls.length > 0 &&
-		!options.abortSignal?.aborted
-	) {
-		const summary = await generateToolOutcomeSummary({
-			model,
-			userMessage: message,
-			uiLocale: effectiveUiLocale,
-			toolCalls: allToolCalls.map((tc) => ({
-				id: tc.id,
-				name: tc.function.name,
-				arguments: (() => {
-					try {
-						return JSON.parse(tc.function.arguments);
-					} catch {
-						return tc.function.arguments;
-					}
-				})(),
-			})),
-			toolResults: allToolResults,
-			streamError,
-		});
 
-		if (summary.length > 0) {
-			emitTextDelta(summary);
-			fullText = summary;
-		}
-	}
-
-	closeThinkIfOpen();
 	await flushPersist();
 
 	const toolCallsToPersist = buildPersistedToolCallsFromStreamState(
 		allToolCalls,
 		allToolResults,
 	);
-
-	if (options.abortSignal?.aborted && assistantDisplayContent.trim().length === 0) {
-		assistantDisplayContent = "Cancelled.";
-	}
+	latestToolCallsSnapshot = toolCallsToPersist;
+	latestToolResultsSnapshot = allToolResults;
 
 	const persistedContent =
-		assistantDisplayContent.trim().length > 0 ? assistantDisplayContent : fullText;
+		assistantTextContent.trim().length > 0 ? assistantTextContent : fullText;
 
 	const updatedAssistantMessage = await updateMessage({
 		messageId: assistantMessageId,
@@ -5131,6 +5385,12 @@ export const chatStream = async (
 		toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : null,
 		promptTokens: aggregatedUsage.promptTokens ?? null,
 		completionTokens: aggregatedUsage.completionTokens ?? null,
+	});
+
+	await syncDisplayMessageFromRawMessage(updatedAssistantMessage, {
+		reasoning: assistantReasoning,
+		status: "sent",
+		toolResults: allToolResults,
 	});
 
 	const usage: ChatUsage | undefined =
@@ -5171,23 +5431,32 @@ export const chatStream = async (
 		finishReason: lastFinishReason ?? undefined,
 	};
 	} catch (error) {
-		closeThinkIfOpen();
 		try {
 			await flushPersist();
 		} catch {}
-
-		if (assistantDisplayContent.trim().length === 0) {
-			const aborted = options.abortSignal?.aborted;
-			const errorText = aborted ? "Cancelled." : getProviderErrorText(error);
-			assistantDisplayContent = errorText || "Streaming failed.";
-		}
 
 		try {
 			await updateMessage({
 				messageId: assistantMessageId,
 				conversationId,
 				role: "assistant",
-				content: assistantDisplayContent,
+				content: assistantTextContent,
+			});
+			await upsertDisplayMessageSnapshot({
+				messageId: assistantMessageId,
+				conversationId,
+				sourceMessageId: assistantMessageId,
+				role: "assistant",
+				kind: "message",
+				content: assistantTextContent,
+				reasoning: assistantReasoning,
+				toolCalls: buildDisplayToolCalls({
+					toolCalls: latestToolCallsSnapshot,
+					toolResults: latestToolResultsSnapshot,
+				}),
+				status: "error",
+				error: options.abortSignal?.aborted ? null : getProviderErrorText(error),
+				createdAt: assistantMessage.createdAt,
 			});
 		} catch {}
 		throw error;
@@ -5724,23 +5993,24 @@ export const cancelRun = async (runId: string) => {
 					: "";
 			if (current.trim().length === 0) {
 				await ensureAgentAssistantMessage({ conversationId, runId: normalized });
-				await updateMessage({
-					messageId: assistantMessageId,
-					conversationId,
-					role: "assistant",
-					content: "Cancelled",
-				});
 			}
+			await upsertDisplayMessageSnapshot({
+				messageId: assistantMessageId,
+				conversationId,
+				sourceMessageId: assistantMessageId,
+				runId: normalized,
+				role: "assistant",
+				kind: "agent",
+				content: current.trim().length > 0 ? current : null,
+				status: "error",
+				error: "cancelled",
+			});
 		} catch {}
 
 		try {
 			await saveAgentEventMessage({
 				conversationId,
 				payload: { type: "agent.run.finish", runId: normalized, status: "cancelled" },
-			});
-			await saveAgentEventMessage({
-				conversationId,
-				payload: { type: "agent.run.summary", runId: normalized, summary: "Cancelled" },
 			});
 		} catch {}
 	}
@@ -5942,6 +6212,19 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		conversationId: run.conversationId,
 		runId,
 	});
+	if (assistantMessageId) {
+		await upsertDisplayMessageSnapshot({
+			messageId: assistantMessageId,
+			conversationId: run.conversationId,
+			sourceMessageId: assistantMessageId,
+			runId,
+			role: "assistant",
+			kind: "agent",
+			content: "",
+			reasoning: null,
+			status: "sending",
+		});
+	}
 
 	const conversationAiId =
 		typeof conversation.aiId === "string" ? conversation.aiId.trim() : "";
@@ -5956,10 +6239,6 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			conversationId: run.conversationId,
 			payload: { type: "agent.run.finish", runId, status: "failed" },
 		});
-		await saveAgentEventMessage({
-			conversationId: run.conversationId,
-			payload: { type: "agent.run.summary", runId, summary: msg },
-		});
 		if (assistantMessageId) {
 			try {
 				await updateMessage({
@@ -5967,6 +6246,17 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 					conversationId: run.conversationId,
 					role: "assistant",
 					content: msg,
+				});
+				await upsertDisplayMessageSnapshot({
+					messageId: assistantMessageId,
+					conversationId: run.conversationId,
+					sourceMessageId: assistantMessageId,
+					runId,
+					role: "assistant",
+					kind: "agent",
+					content: msg,
+					status: "error",
+					error: msg,
 				});
 			} catch {}
 		}
@@ -5985,10 +6275,6 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			conversationId: run.conversationId,
 			payload: { type: "agent.run.finish", runId, status: "failed" },
 		});
-		await saveAgentEventMessage({
-			conversationId: run.conversationId,
-			payload: { type: "agent.run.summary", runId, summary: msg },
-		});
 		if (assistantMessageId) {
 			try {
 				await updateMessage({
@@ -5996,6 +6282,17 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 					conversationId: run.conversationId,
 					role: "assistant",
 					content: msg,
+				});
+				await upsertDisplayMessageSnapshot({
+					messageId: assistantMessageId,
+					conversationId: run.conversationId,
+					sourceMessageId: assistantMessageId,
+					runId,
+					role: "assistant",
+					kind: "agent",
+					content: msg,
+					status: "error",
+					error: msg,
 				});
 			} catch {}
 		}
@@ -6088,10 +6385,6 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 					conversationId: run.conversationId,
 					payload: { type: "agent.run.finish", runId, status: "failed" },
 				});
-					await saveAgentEventMessage({
-						conversationId: run.conversationId,
-						payload: { type: "agent.run.summary", runId, summary: errorMessage },
-					});
 					if (assistantMessageId) {
 						try {
 							await updateMessage({
@@ -6099,6 +6392,17 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 								conversationId: run.conversationId,
 								role: "assistant",
 								content: errorMessage,
+							});
+							await upsertDisplayMessageSnapshot({
+								messageId: assistantMessageId,
+								conversationId: run.conversationId,
+								sourceMessageId: assistantMessageId,
+								runId,
+								role: "assistant",
+								kind: "agent",
+								content: errorMessage,
+								status: "error",
+								error: errorMessage,
 							});
 						} catch {}
 					}
@@ -6137,10 +6441,6 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 					conversationId: run.conversationId,
 					payload: { type: "agent.run.finish", runId, status: "failed" },
 				});
-					await saveAgentEventMessage({
-						conversationId: run.conversationId,
-						payload: { type: "agent.run.summary", runId, summary: errorMessage },
-					});
 					if (assistantMessageId) {
 						try {
 							await updateMessage({
@@ -6148,6 +6448,17 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 								conversationId: run.conversationId,
 								role: "assistant",
 								content: errorMessage,
+							});
+							await upsertDisplayMessageSnapshot({
+								messageId: assistantMessageId,
+								conversationId: run.conversationId,
+								sourceMessageId: assistantMessageId,
+								runId,
+								role: "assistant",
+								kind: "agent",
+								content: errorMessage,
+								status: "error",
+								error: errorMessage,
 							});
 						} catch {}
 					}
@@ -6278,6 +6589,8 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 	};
 
 	const isLikelyActionRequest = (text: string): boolean => {
+		void text;
+		return false;
 		const t = text.trim();
 		if (t.length === 0) return false;
 		const hasAction =
@@ -6425,13 +6738,20 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 				});
 				if (finalText.trim().length > 0 || toolCallsToPersistNow.length > 0) {
 					try {
-						await updateMessage({
+						const updatedAssistant = await updateMessage({
 							messageId: assistantMessageId,
 							conversationId: run.conversationId,
 							role: "assistant",
 							content: finalText.trim().length > 0 ? finalText : "",
 							toolCalls:
 								toolCallsToPersistNow.length > 0 ? toolCallsToPersistNow : null,
+						});
+						await syncDisplayMessageFromRawMessage(updatedAssistant, {
+							reasoning: lastReasoningDelta || null,
+							status: "sending",
+							kind: "agent",
+							runId,
+							toolResults: allToolResults,
 						});
 					} catch {}
 				}
@@ -6501,10 +6821,6 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 					conversationId: run.conversationId,
 					payload: { type: "agent.run.finish", runId, status: "failed" },
 				});
-				await saveAgentEventMessage({
-					conversationId: run.conversationId,
-					payload: { type: "agent.run.summary", runId, summary: msg },
-				});
 				if (assistantMessageId) {
 					try {
 						await updateMessage({
@@ -6512,6 +6828,17 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 							conversationId: run.conversationId,
 							role: "assistant",
 							content: msg,
+						});
+						await upsertDisplayMessageSnapshot({
+							messageId: assistantMessageId,
+							conversationId: run.conversationId,
+							sourceMessageId: assistantMessageId,
+							runId,
+							role: "assistant",
+							kind: "agent",
+							content: msg,
+							status: "error",
+							error: msg,
 						});
 					} catch {}
 				}
@@ -6623,43 +6950,6 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		messages = messages.concat({ role: "user", content: buildAgentContinuePrompt() });
 	}
 
-	if (finalText.trim().length === 0 && allToolCalls.length > 0) {
-		const summary = await generateToolOutcomeSummary({
-			model,
-			userMessage: goal,
-			uiLocale,
-			toolCalls: allToolCalls.map((tc) => ({
-				id: tc.toolCallId,
-				name: tc.toolName,
-				arguments:
-					(tc as unknown as { args?: unknown; input?: unknown }).args ??
-					(tc as unknown as { args?: unknown; input?: unknown }).input ??
-					{},
-			})),
-			toolResults: allToolResults
-				.map((tr) => {
-					const toolCallId =
-						(tr as { toolCallId?: unknown }).toolCallId ?? (tr as { id?: unknown }).id;
-					const toolName =
-						(tr as { toolName?: unknown }).toolName ?? (tr as { name?: unknown }).name;
-					const resultValue =
-						(tr as { result?: unknown }).result ??
-						(tr as { output?: unknown }).output ??
-						tr;
-					return {
-						toolCallId: typeof toolCallId === "string" ? toolCallId : "",
-						toolName: typeof toolName === "string" ? toolName : "",
-						result: resultValue,
-					};
-				})
-				.slice(0, 25),
-		});
-		finalText = summary || finalText;
-	}
-
-	if (finalText.trim().length === 0) {
-		finalText = buildEmptyModelOutputFallback(goal, uiLocale);
-	}
 
 		{
 			const toolCallsToPersist = buildPersistedToolCallsFromResults({
@@ -6669,7 +6959,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 
 			if (assistantMessageId) {
 				try {
-					await updateMessage({
+					const updatedAssistant = await updateMessage({
 						messageId: assistantMessageId,
 						conversationId: run.conversationId,
 						role: "assistant",
@@ -6678,8 +6968,15 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 						promptTokens: aggregatedUsage.inputTokens ?? null,
 						completionTokens: aggregatedUsage.outputTokens ?? null,
 					});
+					await syncDisplayMessageFromRawMessage(updatedAssistant, {
+						reasoning: lastReasoningDelta || null,
+						status: "sent",
+						kind: "agent",
+						runId,
+						toolResults: allToolResults,
+					});
 				} catch {
-					await saveMessage({
+					const savedAssistant = await saveMessage({
 						messageId: assistantMessageId,
 						conversationId: run.conversationId,
 						role: "assistant",
@@ -6689,15 +6986,29 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 						promptTokens: aggregatedUsage.inputTokens,
 						completionTokens: aggregatedUsage.outputTokens,
 					});
+					await syncDisplayMessageFromRawMessage(savedAssistant, {
+						reasoning: lastReasoningDelta || null,
+						status: "sent",
+						kind: "agent",
+						runId,
+						toolResults: allToolResults,
+					});
 				}
 			} else {
-				await saveMessage({
+				const savedAssistant = await saveMessage({
 					conversationId: run.conversationId,
 					role: "assistant",
 					content: finalText,
 					toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : undefined,
 					promptTokens: aggregatedUsage.inputTokens,
 					completionTokens: aggregatedUsage.outputTokens,
+				});
+				await syncDisplayMessageFromRawMessage(savedAssistant, {
+					reasoning: lastReasoningDelta || null,
+					status: "sent",
+					kind: "agent",
+					runId,
+					toolResults: allToolResults,
 				});
 			}
 		}
@@ -6711,14 +7022,6 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		conversationId: run.conversationId,
 		payload: { type: "agent.run.finish", runId, status: "completed" },
 	});
-		await saveAgentEventMessage({
-			conversationId: run.conversationId,
-			payload: {
-				type: "agent.run.summary",
-				runId,
-				summary: safeTruncateString(finalText.trim(), 4000),
-			},
-		});
 
 			void (async () => {
 				const embeddingProvider = await resolveEmbeddingProviderConfig({
@@ -6810,6 +7113,19 @@ export const startAgentRun = async (params: {
 		conversationId: params.conversationId,
 		runId: run.runId,
 	});
+	if (assistantMessageId) {
+		await upsertDisplayMessageSnapshot({
+			messageId: assistantMessageId,
+			conversationId: params.conversationId,
+			sourceMessageId: assistantMessageId,
+			runId: run.runId,
+			role: "assistant",
+			kind: "agent",
+			content: "",
+			reasoning: null,
+			status: "sending",
+		});
+	}
 
 	if (conversation.title === "New Conversation") {
 		const nextTitle = String(params.goal ?? "")
@@ -6865,14 +7181,6 @@ export const startAgentRun = async (params: {
 					runId: run.runId,
 					status: "failed",
 					error: errorMessage,
-				},
-			});
-			await saveAgentEventMessage({
-				conversationId: params.conversationId,
-				payload: {
-					type: "agent.run.summary",
-					runId: run.runId,
-					summary: errorMessage,
 				},
 			});
 		}
@@ -7230,45 +7538,6 @@ async function autoContinueAfterApprovedToolExecution(params: {
 	}
 
 	let finalText = typeof result.text === "string" ? result.text : "";
-	if (
-		finalText.trim().length === 0 &&
-		Array.isArray(result.toolCalls) &&
-		result.toolCalls.length > 0
-	) {
-		finalText =
-			(await generateToolOutcomeSummary({
-				model,
-				userMessage: internalPrompt,
-				uiLocale,
-				toolCalls: result.toolCalls.map((tc) => ({
-					id: tc.toolCallId,
-					name: tc.toolName,
-					arguments:
-						(tc as unknown as { args?: unknown; input?: unknown }).args ??
-						(tc as unknown as { args?: unknown; input?: unknown }).input ??
-						{},
-				})),
-				toolResults: Array.isArray(result.toolResults)
-					? (result.toolResults as unknown[]).map((tr) => {
-							const toolCallId =
-								(tr as { toolCallId?: unknown }).toolCallId ??
-								(tr as { id?: unknown }).id;
-							const toolName =
-								(tr as { toolName?: unknown }).toolName ??
-								(tr as { name?: unknown }).name;
-							const resultValue =
-								(tr as { result?: unknown }).result ??
-								(tr as { output?: unknown }).output ??
-								tr;
-							return {
-								toolCallId: typeof toolCallId === "string" ? toolCallId : "",
-								toolName: typeof toolName === "string" ? toolName : "",
-								result: resultValue,
-							};
-						})
-					: [],
-			})) || finalText;
-	}
 
 	const executionIdByToolCallId = new Map<string, string>();
 	const invokedToolNameByToolCallId = new Map<string, string>();

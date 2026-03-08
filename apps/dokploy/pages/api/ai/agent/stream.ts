@@ -1,7 +1,7 @@
 import { validateRequest } from "@dokploy/server";
 import { apiStartAgent } from "@dokploy/server/db/schema/ai";
 import { db } from "@dokploy/server/db";
-import { aiMessages } from "@dokploy/server/db/schema";
+import { aiDisplayMessages, aiMessages } from "@dokploy/server/db/schema";
 import {
 	getConversationById,
 	startAgentRun,
@@ -158,7 +158,6 @@ export default async function handler(
 	let cursorCreatedAt = startedAt;
 	const seenMessageIds = new Set<string>();
 
-	let runFinishedAtMs: number | null = null;
 	let pollDelay = 800;
 
 	try {
@@ -170,6 +169,7 @@ export default async function handler(
 		});
 
 		while (!abortController.signal.aborted) {
+			let sawRunFinish = false;
 			const messages = await db.query.aiMessages.findMany({
 				where: and(
 					eq(aiMessages.conversationId, conversationId),
@@ -214,20 +214,26 @@ export default async function handler(
 				});
 
 				if (type === "agent.run.finish") {
-					runFinishedAtMs = Date.now();
-				}
-				if (type === "agent.run.summary") {
-					writeSseEvent(res, "done", { conversationId, runId });
-					return;
+					sawRunFinish = true;
 				}
 			}
 
-			pollDelay = sawNewMessage ? 800 : Math.min(Math.round(pollDelay * 1.5), 4000);
-
-			if (runFinishedAtMs && Date.now() - runFinishedAtMs > 5000) {
+			if (sawRunFinish) {
+				if (assistantMessageId) {
+					const assistantSnapshot = await db.query.aiDisplayMessages.findFirst({
+						where: eq(aiDisplayMessages.messageId, assistantMessageId),
+						columns: { status: true },
+					});
+					if (assistantSnapshot?.status === "sending") {
+						await sleep(250, abortController.signal);
+						continue;
+					}
+				}
 				writeSseEvent(res, "done", { conversationId, runId });
 				return;
 			}
+
+			pollDelay = sawNewMessage ? 800 : Math.min(Math.round(pollDelay * 1.5), 4000);
 
 			await sleep(pollDelay, abortController.signal);
 		}

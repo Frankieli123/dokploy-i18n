@@ -48,7 +48,7 @@ import {
 	getConversationById,
 	getConversationIdForToolExecution,
 	getAgentEventMessages,
-	getMessages,
+	getDisplayMessages,
 	getRunById,
 	getToolExecutionById,
 	getToolExecutionsByIds,
@@ -555,7 +555,7 @@ export const aiRouter = createTRPCRouter({
 						message: "settings.ai.errors.noAccessToConversation",
 					});
 				}
-				return await getMessages(input);
+				return await getDisplayMessages(input);
 			}),
 	}),
 

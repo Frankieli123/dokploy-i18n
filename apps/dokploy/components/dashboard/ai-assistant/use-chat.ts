@@ -151,6 +151,9 @@ function getExecutionIdForToolCall(toolCall: ToolCall): string {
 export interface Message {
 	messageId: string;
 	conversationId?: string;
+	sourceMessageId?: string | null;
+	runId?: string | null;
+	kind?: "message" | "agent" | null;
 	role: "user" | "assistant" | "system" | "tool";
 	content: string | null;
 	reasoning?: string | null;
@@ -163,101 +166,9 @@ export interface Message {
 	}> | null;
 	toolCalls?: ToolCall[] | null;
 	createdAt: string;
+	updatedAt?: string;
 	status?: "sending" | "sent" | "error";
 	error?: string;
-}
-
-function extractToolCallIdsFromContent(
-	content: string | null | undefined,
-): string[] {
-	const text = typeof content === "string" ? content : "";
-	if (text.length === 0) return [];
-
-	const markerRegex = /<<tool:([^>]+)>>/g;
-	const ids: string[] = [];
-	const seen = new Set<string>();
-
-	while (true) {
-		const match = markerRegex.exec(text);
-		if (match === null) break;
-		const id = match[1]?.trim() ?? "";
-		if (id.length === 0 || seen.has(id)) continue;
-		seen.add(id);
-		ids.push(id);
-	}
-
-	return ids;
-}
-
-function mergeToolCallSnapshot(primary: ToolCall, fallback: ToolCall): ToolCall {
-	const primaryFunction = primary.function ?? { name: "", arguments: "{}" };
-	const fallbackFunction = fallback.function ?? { name: "", arguments: "{}" };
-
-	return {
-		...fallback,
-		...primary,
-		status: primary.status ?? fallback.status,
-		executionId: primary.executionId ?? fallback.executionId,
-		result: primary.result ?? fallback.result,
-		function: {
-			...fallbackFunction,
-			...primaryFunction,
-			name: primaryFunction.name || fallbackFunction.name,
-			arguments:
-				primaryFunction.arguments || fallbackFunction.arguments || "{}",
-		},
-	};
-}
-
-function areToolCallSnapshotsEqual(left: ToolCall, right: ToolCall): boolean {
-	return (
-		left.id === right.id &&
-		left.status === right.status &&
-		left.executionId === right.executionId &&
-		left.function.name === right.function.name &&
-		left.function.arguments === right.function.arguments &&
-		JSON.stringify(left.result ?? null) === JSON.stringify(right.result ?? null)
-	);
-}
-
-function rehydrateToolCallsFromCatalog(params: {
-	content: string | null | undefined;
-	toolCalls: Message["toolCalls"];
-	catalog: Record<string, ToolCall>;
-}): Message["toolCalls"] {
-	const existing = Array.isArray(params.toolCalls)
-		? params.toolCalls.filter(
-			(tc): tc is ToolCall => typeof tc?.id === "string" && tc.id.length > 0,
-		)
-		: [];
-	const markerIds = extractToolCallIdsFromContent(params.content);
-
-	if (existing.length === 0 && markerIds.length === 0) {
-		return params.toolCalls ?? null;
-	}
-
-	const byId = new Map(existing.map((tc) => [tc.id, tc] as const));
-	const merged: ToolCall[] = [];
-	const seen = new Set<string>();
-
-	for (const toolCallId of markerIds) {
-		const current = byId.get(toolCallId);
-		const snapshot = params.catalog[toolCallId];
-		const next = current && snapshot
-			? mergeToolCallSnapshot(current, snapshot)
-			: current ?? snapshot;
-		if (!next) continue;
-		merged.push(next);
-		seen.add(toolCallId);
-	}
-
-	for (const toolCall of existing) {
-		if (seen.has(toolCall.id)) continue;
-		merged.push(toolCall);
-		seen.add(toolCall.id);
-	}
-
-	return merged.length > 0 ? merged : params.toolCalls ?? null;
 }
 
 export type ToolOutcome = {
@@ -268,6 +179,12 @@ export type ToolOutcome = {
 	message?: string;
 	error?: string;
 };
+
+export interface RetryContext {
+	content: string;
+	attachments: NonNullable<Message["attachments"]>;
+	removeMessageIds: Set<string>;
+}
 
 export interface UseChatOptions {
 	conversationId?: string;
@@ -367,198 +284,16 @@ function getMessageRoleRank(role: Message["role"]): number {
 	return 4;
 }
 
-function mergeMessageText(
-	serverText: string | null | undefined,
-	pendingText: string | null | undefined,
-): string | null {
-	const server = typeof serverText === "string" ? serverText : "";
-	const pending = typeof pendingText === "string" ? pendingText : "";
-	if (pending.trim().length === 0) return serverText ?? null;
-	if (server.trim().length === 0) return pendingText ?? null;
-	if (pending.startsWith(server)) return pendingText ?? null;
-	if (server.startsWith(pending)) return serverText ?? null;
-	return pending.length >= server.length
-		? (pendingText ?? null)
-		: (serverText ?? null);
-}
-
-function mergeMessageToolCalls(
-	serverCalls: Message["toolCalls"],
-	pendingCalls: Message["toolCalls"],
-): Message["toolCalls"] {
-	const serverList = Array.isArray(serverCalls) ? serverCalls : [];
-	const pendingList = Array.isArray(pendingCalls) ? pendingCalls : [];
-
-	if (serverList.length === 0 && pendingList.length === 0) {
-		return serverCalls ?? pendingCalls ?? null;
-	}
-	if (pendingList.length === 0) return serverCalls ?? null;
-	if (serverList.length === 0) return pendingCalls ?? null;
-
-	const byId = new Map<string, ToolCall>();
-	const order: string[] = [];
-
-	for (const tc of serverList) {
-		if (!tc?.id) continue;
-		if (!byId.has(tc.id)) order.push(tc.id);
-		byId.set(tc.id, tc);
-	}
-	for (const tc of pendingList) {
-		if (!tc?.id) continue;
-		const existing = byId.get(tc.id);
-		if (!existing) {
-			order.push(tc.id);
-			byId.set(tc.id, tc);
-			continue;
-		}
-		byId.set(tc.id, {
-			...existing,
-			...tc,
-			function: {
-				...existing.function,
-				...tc.function,
-			},
-			result: tc.result ?? existing.result,
-		});
-	}
-
-	return order.map((id) => byId.get(id)).filter(Boolean) as ToolCall[];
-}
-
-export function mergeServerAndPendingMessages(
-	server: Message[],
-	pending: Message[],
-) {
-	const pendingById = new Map(pending.map((m) => [m.messageId, m]));
-	const mergedServer = server.map((serverMessage) => {
-		const pendingMessage = pendingById.get(serverMessage.messageId);
-		if (!pendingMessage) return serverMessage;
-		if (pendingMessage.status !== "sending") return serverMessage;
-		const createdAt =
-			typeof serverMessage.createdAt === "string" &&
-			serverMessage.createdAt.trim().length > 0
-				? serverMessage.createdAt
-				: pendingMessage.createdAt;
-		const content = mergeMessageText(
-			serverMessage.content,
-			pendingMessage.content,
-		);
-		const reasoning = mergeMessageText(
-			serverMessage.reasoning,
-			pendingMessage.reasoning,
-		);
-		const toolCalls = mergeMessageToolCalls(
-			serverMessage.toolCalls,
-			pendingMessage.toolCalls,
-		);
-		const attachments =
-			Array.isArray(serverMessage.attachments) &&
-			serverMessage.attachments.length > 0
-				? serverMessage.attachments
-				: pendingMessage.attachments;
-		return {
-			...serverMessage,
-			...pendingMessage,
-			createdAt,
-			content,
-			reasoning,
-			toolCalls,
-			attachments,
-		};
-	});
-	const mergedServerIds = new Set(mergedServer.map((m) => m.messageId));
-
-	const isEphemeralPendingId = (messageId: string) =>
-		messageId.startsWith("temp-") || messageId.startsWith("agent-run-");
-
-	const pendingOnly = pending.filter((pendingMessage) => {
-		if (mergedServerIds.has(pendingMessage.messageId)) return false;
-		if (isEphemeralPendingId(pendingMessage.messageId)) {
-			const pendingTime = Date.parse(pendingMessage.createdAt ?? "");
-			const hasEquivalentOnServer = mergedServer.some((serverMessage) => {
-				if (serverMessage.role !== pendingMessage.role) return false;
-				if (serverMessage.content !== pendingMessage.content) return false;
-				if (
-					!areAttachmentsEqual(
-						serverMessage.attachments,
-						pendingMessage.attachments,
-					)
-				) {
-					return false;
-				}
-				const serverTime = Date.parse(serverMessage.createdAt ?? "");
-				if (Number.isFinite(pendingTime) && Number.isFinite(serverTime)) {
-					// Avoid dropping legitimate repeated messages from earlier history.
-					if (serverTime < pendingTime - 60 * 1000) return false;
-				}
-				return true;
-			});
-			if (hasEquivalentOnServer) return false;
-		}
-		if (pendingMessage.status === "sending") return true;
-		return !mergedServer.some(
-			(serverMessage) =>
-				serverMessage.role === pendingMessage.role &&
-				serverMessage.content === pendingMessage.content &&
-				areAttachmentsEqual(
-					serverMessage.attachments,
-					pendingMessage.attachments,
-				),
-		);
-	});
-
-	const merged = [...mergedServer, ...pendingOnly];
-	return merged
-		.map((message, index) => ({ message, index }))
-		.sort((left, right) => {
-			const leftIsSending = left.message.status === "sending";
-			const rightIsSending = right.message.status === "sending";
-			if (leftIsSending !== rightIsSending) {
-				// Keep in-flight messages at the bottom so the latest turn doesn't appear above
-				// its triggering user message due to clock skew / server-side createdAt ordering.
-				return leftIsSending ? 1 : -1;
-			}
-
-			const leftTime = Date.parse(left.message.createdAt ?? "");
-			const rightTime = Date.parse(right.message.createdAt ?? "");
-			if (
-				Number.isFinite(leftTime) &&
-				Number.isFinite(rightTime) &&
-				leftTime !== rightTime
-			) {
-				return leftTime - rightTime;
-			}
-			const leftRank = getMessageRoleRank(left.message.role);
-			const rightRank = getMessageRoleRank(right.message.role);
-			if (leftRank !== rightRank) return leftRank - rightRank;
-			if (left.message.messageId !== right.message.messageId) {
-				return left.message.messageId.localeCompare(right.message.messageId);
-			}
-			return left.index - right.index;
-		})
-		.map(({ message }) => message);
-}
-
-type RetryContext = {
-	content: string;
-	attachments: NonNullable<Message["attachments"]>;
-	removeMessageIds: Set<string>;
-};
-
-function parseAgentPayload(
-	content: string | null,
-): Record<string, unknown> | null {
-	if (typeof content !== "string" || content.trim().length === 0) return null;
-	try {
-		const parsed = JSON.parse(content);
-		return isRecord(parsed) ? parsed : null;
-	} catch {
-		return null;
-	}
+function isActiveAgentDisplayMessage(message: Message | undefined): boolean {
+	if (!message || message.role !== "assistant") return false;
+	if (message.kind !== "agent") return false;
+	const runId = typeof message.runId === "string" ? message.runId.trim() : "";
+	if (runId.length === 0) return false;
+	return message.status === "sending";
 }
 
 function buildServerDisplayMessages(serverMessages: Message[]): Message[] {
-	const sorted = serverMessages
+	return serverMessages
 		.map((message, index) => ({ message, index }))
 		.sort((left, right) => {
 			const leftTime = Date.parse(left.message.createdAt ?? "");
@@ -579,63 +314,30 @@ function buildServerDisplayMessages(serverMessages: Message[]): Message[] {
 			return left.index - right.index;
 		})
 		.map(({ message }) => message);
+}
 
-	const activeRunId = getMostRecentActiveAgentRunId(sorted) ?? "";
-	const activeAssistantMessageId = activeRunId ? `agent-run-${activeRunId}` : "";
-	if (!activeAssistantMessageId) return sorted;
-
-	return sorted.map((m) => {
-		if (m.role !== "assistant") return m;
-		if (m.messageId !== activeAssistantMessageId) return m;
-		return m.status === "sending" ? m : { ...m, status: "sending" as const };
-	});
+function mergeServerAndPendingMessages(
+	serverMessages: Message[],
+	pendingMessages: Message[],
+): Message[] {
+	if (pendingMessages.length === 0) return buildServerDisplayMessages(serverMessages);
+	const serverIds = new Set(serverMessages.map((message) => message.messageId));
+	return buildServerDisplayMessages([
+		...serverMessages,
+		...pendingMessages.filter((message) => !serverIds.has(message.messageId)),
+	]);
 }
 
 function hasActiveAgentRunInMessages(messages: Message[]): boolean {
-	const runHasSummary = new Map<string, boolean>();
-	for (const message of messages) {
-		if (message.role !== "system") continue;
-		const payload = parseAgentPayload(message.content);
-		if (!payload) continue;
-		const type = typeof payload.type === "string" ? payload.type : "";
-		if (!type.startsWith("agent.")) continue;
-		const runId = typeof payload.runId === "string" ? payload.runId.trim() : "";
-		if (runId.length === 0) continue;
-		if (!runHasSummary.has(runId)) runHasSummary.set(runId, false);
-		if (type === "agent.run.summary" || type === "agent.run.finish") {
-			runHasSummary.set(runId, true);
-		}
-	}
-	for (const hasSummary of runHasSummary.values()) {
-		if (!hasSummary) return true;
-	}
-	return false;
+	return getMostRecentActiveAgentRunId(messages) !== null;
 }
 
 function getMostRecentActiveAgentRunId(messages: Message[]): string | null {
-	const finished = new Set<string>();
-	for (const message of messages) {
-		if (message.role !== "system") continue;
-		const payload = parseAgentPayload(message.content);
-		if (!payload) continue;
-		const type = typeof payload.type === "string" ? payload.type : "";
-		if (!type.startsWith("agent.")) continue;
-		const runId = typeof payload.runId === "string" ? payload.runId.trim() : "";
-		if (runId.length === 0) continue;
-		if (type === "agent.run.summary" || type === "agent.run.finish") {
-			finished.add(runId);
-		}
-	}
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const message = messages[i];
-		if (!message || message.role !== "system") continue;
-		const payload = parseAgentPayload(message.content);
-		if (!payload) continue;
-		const type = typeof payload.type === "string" ? payload.type : "";
-		if (!type.startsWith("agent.")) continue;
-		const runId = typeof payload.runId === "string" ? payload.runId.trim() : "";
-		if (runId.length === 0) continue;
-		if (!finished.has(runId)) return runId;
+		if (!message) continue;
+		if (!isActiveAgentDisplayMessage(message)) continue;
+		return typeof message.runId === "string" ? message.runId.trim() : null;
 	}
 	return null;
 }
@@ -702,9 +404,6 @@ export function useChat(options: UseChatOptions = {}) {
 	);
 	const [pendingMessages, setPendingMessages] = useState<Message[]>([]);
 	const [toolOutcomes, setToolOutcomes] = useState<ToolOutcome[]>([]);
-	const [toolCallCatalog, setToolCallCatalog] = useState<Record<string, ToolCall>>(
-		{},
-	);
 	const [toolCallMeta, setToolCallMeta] = useState<
 		Record<string, Pick<ToolCall, "status" | "executionId" | "result">>
 	>({});
@@ -1010,14 +709,6 @@ export function useChat(options: UseChatOptions = {}) {
 		setConversationAgentRunId(conversationId, mostRecentActiveRunId ?? null);
 	}, [conversationId, mostRecentActiveRunId, setConversationAgentRunId]);
 
-	const agentEvents = api.ai.agent.events.useQuery(
-		{ runId: mostRecentActiveRunId || "", limit: 500 },
-		{
-			enabled: isEnabled && !!mostRecentActiveRunId,
-			refetchOnWindowFocus: false,
-			refetchInterval: isEnabled && mostRecentActiveRunId ? 2500 : false,
-		},
-	);
 
 	useEffect(() => {
 		if (!conversationId) return;
@@ -1123,25 +814,10 @@ export function useChat(options: UseChatOptions = {}) {
 		setToolBudgetModeMutation,
 	]);
 
-	const combinedServerMessages = useMemo(() => {
-		const base = ((serverMessages || []) as Message[]).slice();
-		const extra = (agentEvents.data?.messages ?? []) as Message[];
-		if (!extra || extra.length === 0) return base;
-		const seen = new Set<string>();
-		const merged: Message[] = [];
-		for (const message of [...base, ...extra]) {
-			if (!message?.messageId) continue;
-			if (seen.has(message.messageId)) continue;
-			seen.add(message.messageId);
-			merged.push(message);
-		}
-		return merged;
-	}, [agentEvents.data, serverMessages]);
-
 	const serverDisplayMessages = useMemo(() => {
 		if (!conversationId) return [] as Message[];
-		return buildServerDisplayMessages(combinedServerMessages);
-	}, [combinedServerMessages, conversationId]);
+		return buildServerDisplayMessages((serverMessages || []) as Message[]);
+	}, [conversationId, serverMessages]);
 
 	const pendingMessagesForConversation = useMemo(() => {
 		const normalizedConversationId = normalizeConversationValue(conversationId);
@@ -1159,44 +835,12 @@ export function useChat(options: UseChatOptions = {}) {
 		});
 	}, [conversationId, pendingMessages]);
 
-	useEffect(() => {
-		const sources = conversationId
-			? [...serverDisplayMessages, ...pendingMessagesForConversation]
-			: pendingMessagesForConversation;
-		const toolCalls = sources.flatMap((message) => message.toolCalls || []);
-		if (toolCalls.length === 0) return;
-
-		setToolCallCatalog((prev) => {
-			let changed = false;
-			const next = { ...prev };
-
-			for (const toolCall of toolCalls) {
-				if (!toolCall?.id) continue;
-				const existing = next[toolCall.id];
-				const merged = existing
-					? mergeToolCallSnapshot(toolCall, existing)
-					: toolCall;
-				if (!existing || !areToolCallSnapshotsEqual(existing, merged)) {
-					next[toolCall.id] = merged;
-					changed = true;
-				}
-			}
-
-			return changed ? next : prev;
-		});
-	}, [conversationId, pendingMessagesForConversation, serverDisplayMessages]);
-
 	const executionHydrationTargets = useMemo(() => {
 		const messageSources: Message[] = conversationId
 			? [...serverDisplayMessages, ...pendingMessagesForConversation]
 			: pendingMessagesForConversation;
-		const toolCalls = messageSources.flatMap(
-			(m) =>
-				rehydrateToolCallsFromCatalog({
-					content: m.content,
-					toolCalls: m.toolCalls,
-					catalog: toolCallCatalog,
-				}) || [],
+		const toolCalls = messageSources.flatMap((m) =>
+			Array.isArray(m.toolCalls) ? m.toolCalls : [],
 		);
 
 		const toolCallIdsByExecutionId = new Map<string, string[]>();
@@ -1230,7 +874,6 @@ export function useChat(options: UseChatOptions = {}) {
 		conversationId,
 		pendingMessagesForConversation,
 		serverDisplayMessages,
-		toolCallCatalog,
 		toolCallMeta,
 	]);
 
@@ -1295,11 +938,7 @@ export function useChat(options: UseChatOptions = {}) {
 
 	const messages = useMemo(() => {
 		const applyMeta = (msg: Message): Message => {
-			const toolCalls = rehydrateToolCallsFromCatalog({
-				content: msg.content,
-				toolCalls: msg.toolCalls,
-				catalog: toolCallCatalog,
-			});
+			const toolCalls = Array.isArray(msg.toolCalls) ? msg.toolCalls : null;
 			if (!toolCalls || toolCalls.length === 0) return msg;
 			return {
 				...msg,
@@ -1321,7 +960,6 @@ export function useChat(options: UseChatOptions = {}) {
 		conversationId,
 		pendingMessagesForConversation,
 		serverDisplayMessages,
-		toolCallCatalog,
 		toolCallMeta,
 	]);
 
@@ -1951,12 +1589,7 @@ export function useChat(options: UseChatOptions = {}) {
 						argumentsText?: string;
 						result?: ToolCall["result"];
 					}) => {
-						const marker = `\n\n<<tool:${params.toolCallId}>>\n\n`;
 						updateAssistantMessage((m) => {
-							const existingContent = m.content ?? "";
-							const content = existingContent.includes(marker)
-								? existingContent
-								: `${existingContent}${marker}`;
 							const toolCalls = [...(m.toolCalls || [])];
 							const existingIndex = toolCalls.findIndex(
 								(tc) => tc.id === params.toolCallId,
@@ -1994,10 +1627,9 @@ export function useChat(options: UseChatOptions = {}) {
 							} else {
 								toolCalls.push(nextToolCall);
 							}
-							return { ...m, content, toolCalls, status: "sending" as const };
+							return { ...m, toolCalls, status: "sending" as const };
 						});
 					};
-
 					const streamStartTime = Date.now();
 					let lastProgressTime = streamStartTime;
 					const INITIAL_IDLE_NO_PROGRESS_MS = 45 * 1000;
@@ -2010,7 +1642,6 @@ export function useChat(options: UseChatOptions = {}) {
 						eventName === "agent.run.start" ||
 						eventName === "agent.plan" ||
 						eventName === "agent.run.finish" ||
-						eventName === "agent.run.summary" ||
 						eventName === "agent.output.delta" ||
 						eventName === "agent.output.reasoning" ||
 						eventName === "agent.step.start" ||
@@ -2188,21 +1819,11 @@ export function useChat(options: UseChatOptions = {}) {
 									payload && typeof payload.text === "string"
 										? payload.text
 										: "";
-								if (text.length === 0) continue;
-								const previous = lastReasoningText;
+								if (text.length === 0 || text === lastReasoningText) continue;
 								lastReasoningText = text;
-								const delta = text.startsWith(previous)
-									? text.slice(previous.length)
-									: text;
-								if (delta.trim().length === 0) continue;
-								const thinkId =
-									eventMessageId.trim().length > 0
-										? `agent-${eventMessageId.trim()}`
-										: `agent-${Date.now()}`;
-								const marker = `\n\n<<think:${thinkId}>>\n${delta}\n<<think_end:${thinkId}>>\n\n`;
 								updateAssistantMessage((m) => ({
 									...m,
-									content: (m.content ?? "") + marker,
+									reasoning: text,
 									status: "sending" as const,
 								}));
 								continue;
@@ -2277,35 +1898,6 @@ export function useChat(options: UseChatOptions = {}) {
 								continue;
 							}
 
-							if (evt.event === "agent.run.summary") {
-								flushDeltaNow();
-								const summary =
-									payload && typeof payload.summary === "string"
-										? payload.summary.trim()
-										: "";
-								if (summary.length > 0 && !sawAssistantOutput) {
-									updateAssistantMessage((m) => {
-										const existing = m.content ?? "";
-										const normalizedSummary = summary.trim();
-										if (normalizedSummary.length === 0) return m;
-										if (existing.trim().length === 0) {
-											return {
-												...m,
-												content: normalizedSummary,
-												status: "sending" as const,
-											};
-										}
-										if (existing.includes(normalizedSummary)) return m;
-										const separator = existing.endsWith("\n") ? "\n" : "\n\n";
-										return {
-											...m,
-											content: `${existing}${separator}${normalizedSummary}`,
-											status: "sending" as const,
-										};
-									});
-								}
-								continue;
-							}
 
 							if (
 								evt.event === "agent.plan" ||
@@ -2352,10 +1944,7 @@ export function useChat(options: UseChatOptions = {}) {
 										parametersPreview.trim().length > 0
 											? parametersPreview
 											: "{}",
-									result: {
-										success: false,
-										message: "Waiting for approval",
-									},
+									result: undefined,
 								});
 								if (executionId.trim().length > 0) {
 									setConversationPendingApprovalState(streamConversationId, {
@@ -2530,25 +2119,9 @@ export function useChat(options: UseChatOptions = {}) {
 				const streamStartTime = Date.now();
 				let lastEventTime = streamStartTime;
 				const deltaBufferRef = { current: "" as string };
-				let activeThinkId: string | null = null;
 				let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
 				const FLUSH_VISIBLE_MS = 60;
 				const FLUSH_HIDDEN_MS = 600;
-
-				const ensureThinkStarted = () => {
-					if (activeThinkId) return;
-					activeThinkId =
-						typeof crypto !== "undefined" && "randomUUID" in crypto
-							? (crypto.randomUUID() as string)
-							: `think-${Date.now()}`;
-					deltaBufferRef.current += `\n\n<<think:${activeThinkId}>>\n`;
-				};
-
-				const closeThinkIfOpen = () => {
-					if (!activeThinkId) return;
-					deltaBufferRef.current += `\n<<think_end:${activeThinkId}>>\n\n`;
-					activeThinkId = null;
-				};
 
 				const flushDeltaNow = () => {
 					if (flushDeltaTimer) {
@@ -2675,7 +2248,6 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "delta") {
-							closeThinkIfOpen();
 							const payload = JSON.parse(evt.data) as { delta?: unknown };
 							const delta =
 								typeof payload.delta === "string" ? payload.delta : "";
@@ -2685,17 +2257,24 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "reasoning-delta") {
-							ensureThinkStarted();
 							const payload = JSON.parse(evt.data) as { delta?: unknown };
 							const delta =
 								typeof payload.delta === "string" ? payload.delta : "";
 							if (delta.length === 0) continue;
-							deltaBufferRef.current += delta;
-							scheduleFlushDelta();
+							setPendingMessages((prev) =>
+								prev.map((m) =>
+									m.messageId === assistantMessageId
+										? {
+											...m,
+											reasoning: `${m.reasoning ?? ""}${delta}`,
+											status: "sending" as const,
+										}
+										: m,
+								),
+							);
 						}
 
 						if (evt.event === "tool-call") {
-							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								toolCallId: string;
@@ -2703,33 +2282,34 @@ export function useChat(options: UseChatOptions = {}) {
 								arguments?: unknown;
 							};
 							activeToolCallIds.add(payload.toolCallId);
-							const marker = `\n\n<<tool:${payload.toolCallId}>>\n\n`;
 							const argsString =
 								typeof payload.arguments === "string"
 									? payload.arguments
 									: JSON.stringify(payload.arguments ?? {});
 							toolCallArgsById.set(payload.toolCallId, argsString);
 							setPendingMessages((prev) =>
-								prev.map((m) =>
-									m.messageId === assistantMessageId
-										? {
-												...m,
-												content: (m.content ?? "") + marker,
-												toolCalls: [
-													...(m.toolCalls || []),
-													{
-														id: payload.toolCallId,
-														type: "function" as const,
-														status: "executing" as const,
-														function: {
-															name: payload.toolName,
-															arguments: argsString,
-														},
-													},
-												],
-											}
-										: m,
-								),
+								prev.map((m) => {
+									if (m.messageId !== assistantMessageId) return m;
+									const toolCalls = [...(m.toolCalls || [])];
+									const existingIndex = toolCalls.findIndex(
+										(tc) => tc.id === payload.toolCallId,
+									);
+									const nextToolCall: ToolCall = {
+										id: payload.toolCallId,
+										type: "function" as const,
+										status: "executing" as const,
+										function: {
+											name: payload.toolName,
+											arguments: argsString,
+										},
+									};
+									if (existingIndex >= 0) {
+										toolCalls[existingIndex] = nextToolCall;
+									} else {
+										toolCalls.push(nextToolCall);
+									}
+									return { ...m, toolCalls, status: "sending" as const };
+								}),
 							);
 							setToolCallMeta((prev) => {
 								if (prev[payload.toolCallId]?.status) return prev;
@@ -2744,7 +2324,6 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "tool-result") {
-							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								toolCallId: string;
@@ -2849,7 +2428,6 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "done") {
-							closeThinkIfOpen();
 							flushDeltaNow();
 							let realId = "";
 							try {
@@ -2898,7 +2476,6 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "error" || evt.event === "stream-error") {
-							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								message?: string;
@@ -2912,7 +2489,6 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 					}
 				} finally {
-					closeThinkIfOpen();
 					flushDeltaNow();
 					clearInterval(safetyInterval);
 				}
@@ -3152,25 +2728,9 @@ export function useChat(options: UseChatOptions = {}) {
 				const streamStartTime = Date.now();
 				let lastEventTime = streamStartTime;
 				const deltaBufferRef = { current: "" as string };
-				let activeThinkId: string | null = null;
 				let flushDeltaTimer: ReturnType<typeof setTimeout> | null = null;
 				const FLUSH_VISIBLE_MS = 60;
 				const FLUSH_HIDDEN_MS = 600;
-
-				const ensureThinkStarted = () => {
-					if (activeThinkId) return;
-					activeThinkId =
-						typeof crypto !== "undefined" && "randomUUID" in crypto
-							? (crypto.randomUUID() as string)
-							: `think-${Date.now()}`;
-					deltaBufferRef.current += `\n\n<<think:${activeThinkId}>>\n`;
-				};
-
-				const closeThinkIfOpen = () => {
-					if (!activeThinkId) return;
-					deltaBufferRef.current += `\n<<think_end:${activeThinkId}>>\n\n`;
-					activeThinkId = null;
-				};
 
 				const flushDeltaNow = () => {
 					if (flushDeltaTimer) {
@@ -3266,7 +2826,6 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "delta") {
-							closeThinkIfOpen();
 							const payload = JSON.parse(evt.data) as { delta?: string };
 							const delta =
 								typeof payload.delta === "string" ? payload.delta : "";
@@ -3281,14 +2840,21 @@ export function useChat(options: UseChatOptions = {}) {
 							const delta =
 								typeof payload.delta === "string" ? payload.delta : "";
 							if (!delta) continue;
-							ensureThinkStarted();
-							deltaBufferRef.current += delta;
-							scheduleFlush();
+							setPendingMessages((prev) =>
+								prev.map((m) =>
+									m.messageId === assistantMessageId
+										? {
+											...m,
+											reasoning: `${m.reasoning ?? ""}${delta}`,
+											status: "sending" as const,
+										}
+										: m,
+								),
+							);
 							continue;
 						}
 
 						if (evt.event === "tool-call") {
-							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								toolCallId: string;
@@ -3304,15 +2870,10 @@ export function useChat(options: UseChatOptions = {}) {
 							})();
 							toolCallArgsById.set(payload.toolCallId, argsText);
 							activeToolCallIds.add(payload.toolCallId);
-							const marker = `\n\n<<tool:${payload.toolCallId}>>\n\n`;
 
 							setPendingMessages((prev) =>
 								prev.map((m) => {
 									if (m.messageId !== assistantMessageId) return m;
-									const existingContent = m.content ?? "";
-									const content = existingContent.includes(marker)
-										? existingContent
-										: `${existingContent}${marker}`;
 									const toolCalls = [...(m.toolCalls || [])];
 									const existingIndex = toolCalls.findIndex(
 										(tc) => tc.id === payload.toolCallId,
@@ -3351,7 +2912,6 @@ export function useChat(options: UseChatOptions = {}) {
 									}
 									return {
 										...m,
-										content,
 										toolCalls,
 										status: "sending" as const,
 									};
@@ -3370,7 +2930,6 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "tool-result") {
-							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								toolCallId: string;
@@ -3480,7 +3039,6 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "done") {
-							closeThinkIfOpen();
 							flushDeltaNow();
 							let realId = "";
 							try {
@@ -3528,7 +3086,6 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 
 						if (evt.event === "error" || evt.event === "stream-error") {
-							closeThinkIfOpen();
 							flushDeltaNow();
 							const payload = JSON.parse(evt.data) as {
 								message?: string;
@@ -3542,7 +3099,6 @@ export function useChat(options: UseChatOptions = {}) {
 						}
 					}
 				} finally {
-					closeThinkIfOpen();
 					flushDeltaNow();
 					clearInterval(safetyInterval);
 				}

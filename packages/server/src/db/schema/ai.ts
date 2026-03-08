@@ -455,13 +455,92 @@ export const aiMessages = pgTable("ai_message", {
 		.$defaultFn(() => new Date().toISOString()),
 });
 
+export const aiDisplayMessages = pgTable("ai_display_message", {
+	messageId: text("messageId")
+		.notNull()
+		.primaryKey()
+		.$defaultFn(() => nanoid()),
+	conversationId: text("conversationId")
+		.notNull()
+		.references(() => aiConversations.conversationId, { onDelete: "cascade" }),
+	sourceMessageId: text("sourceMessageId").references(() => aiMessages.messageId, {
+		onDelete: "set null",
+	}),
+	runId: text("runId").references(() => aiRuns.runId, { onDelete: "cascade" }),
+	role: aiMessageRole("role").notNull(),
+	kind: text("kind").$type<"message" | "agent">().notNull().default("message"),
+	content: text("content"),
+	reasoning: text("reasoning"),
+	attachments: jsonb("attachments").$type<
+		Array<{
+			type: "image";
+			data: string;
+			mediaType: string;
+			name?: string;
+			size?: number;
+		}>
+	>(),
+	toolCalls:
+		jsonb("toolCalls").$type<
+			Array<{
+				id: string;
+				type: "function";
+				status?:
+					| "pending"
+					| "approved"
+					| "rejected"
+					| "executing"
+					| "completed"
+					| "failed";
+				executionId?: string;
+				result?: {
+					success: boolean;
+					message?: string;
+					data?: unknown;
+					error?: string;
+				};
+				function: { name: string; arguments: string };
+			}>
+		>(),
+	status: text("status")
+		.$type<"sending" | "sent" | "error">()
+		.notNull()
+		.default("sent"),
+	error: text("error"),
+	createdAt: text("createdAt")
+		.notNull()
+		.$defaultFn(() => new Date().toISOString()),
+	updatedAt: text("updatedAt")
+		.notNull()
+		.$defaultFn(() => new Date().toISOString()),
+});
+
 export const aiMessagesRelations = relations(aiMessages, ({ one, many }) => ({
 	conversation: one(aiConversations, {
 		fields: [aiMessages.conversationId],
 		references: [aiConversations.conversationId],
 	}),
 	toolExecutions: many(aiToolExecutions),
+	displayMessages: many(aiDisplayMessages),
 }));
+
+export const aiDisplayMessagesRelations = relations(
+	aiDisplayMessages,
+	({ one }) => ({
+		conversation: one(aiConversations, {
+			fields: [aiDisplayMessages.conversationId],
+			references: [aiConversations.conversationId],
+		}),
+		sourceMessage: one(aiMessages, {
+			fields: [aiDisplayMessages.sourceMessageId],
+			references: [aiMessages.messageId],
+		}),
+		run: one(aiRuns, {
+			fields: [aiDisplayMessages.runId],
+			references: [aiRuns.runId],
+		}),
+	}),
+);
 
 // ============================================
 // AI Run Table (Agent Mode)
@@ -505,6 +584,7 @@ export const aiRunsRelations = relations(aiRuns, ({ one, many }) => ({
 		references: [aiConversations.conversationId],
 	}),
 	toolExecutions: many(aiToolExecutions),
+	displayMessages: many(aiDisplayMessages),
 }));
 
 // ============================================
@@ -637,6 +717,8 @@ export const apiGetMessages = z.object({
 	before: z.string().optional(),
 	beforeMessageId: z.string().optional(),
 });
+
+export const apiGetDisplayMessages = apiGetMessages;
 
 export const apiGetAgentEvents = z.object({
 	runId: z.string().min(1),

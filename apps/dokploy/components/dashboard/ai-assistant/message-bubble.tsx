@@ -239,87 +239,6 @@ const assistantMarkdownComponents: Components = {
 	),
 };
 
-type WaterfallPart =
-	| { type: "text"; value: string }
-	| { type: "tool"; toolCallId: string }
-	| { type: "think"; thinkId: string; value: string; isOpen: boolean };
-
-function splitByWaterfallMarkers(input: string): WaterfallPart[] {
-	const normalized = String(input ?? "")
-		.replace(/\r\n/g, "\n")
-		.replace(/<<(?:tool|think|think_end):[^>]*$/, "");
-
-	const out: WaterfallPart[] = [];
-	const re = /<<(tool|think|think_end):([^>]+)>>/g;
-	let lastIndex = 0;
-	let activeThinkId: string | null = null;
-	let thinkStartIndex = 0;
-
-	const pushText = (text: string) => {
-		const trimmedEdges = text.replace(/^\n+/, "").replace(/\n+$/, "");
-		if (trimmedEdges.trim().length === 0) return;
-		out.push({ type: "text", value: trimmedEdges.replace(/\n{3,}/g, "\n\n") });
-	};
-
-	const pushThink = (thinkId: string, text: string, isOpen: boolean) => {
-		const trimmedEdges = text.replace(/^\n+/, "").replace(/\n+$/, "");
-		out.push({
-			type: "think",
-			thinkId,
-			value: trimmedEdges.replace(/\n{3,}/g, "\n\n"),
-			isOpen,
-		});
-	};
-
-	while (true) {
-		const match = re.exec(normalized);
-		if (!match) break;
-		const kind = match[1];
-		const id = match[2]?.trim() ?? "";
-		if (activeThinkId) {
-			if (kind === "think_end" && id === activeThinkId) {
-				pushThink(
-					activeThinkId,
-					normalized.slice(thinkStartIndex, match.index),
-					false,
-				);
-				activeThinkId = null;
-				lastIndex = re.lastIndex;
-			}
-			continue;
-		}
-
-		if (match.index > lastIndex) {
-			pushText(normalized.slice(lastIndex, match.index));
-		}
-
-		if (kind === "tool") {
-			if (id) out.push({ type: "tool", toolCallId: id });
-			lastIndex = re.lastIndex;
-			continue;
-		}
-		if (kind === "think") {
-			if (id) {
-				activeThinkId = id;
-				thinkStartIndex = re.lastIndex;
-				lastIndex = re.lastIndex;
-			} else {
-				lastIndex = re.lastIndex;
-			}
-			continue;
-		}
-		// Unmatched think_end is treated as plain text (ignored marker).
-		lastIndex = re.lastIndex;
-	}
-
-	if (activeThinkId) {
-		pushThink(activeThinkId, normalized.slice(thinkStartIndex), true);
-	} else if (lastIndex < normalized.length) {
-		pushText(normalized.slice(lastIndex));
-	}
-
-	return out.length > 0 ? out : [{ type: "text", value: normalized }];
-}
 
 function ThinkingBlock({
 	text,
@@ -448,36 +367,9 @@ export function MessageBubble({
 
 	const toolCalls = Array.isArray(message.toolCalls) ? message.toolCalls : [];
 	const hasToolCalls = toolCalls.length > 0;
-	const legacyReasoningText =
+	const reasoningText =
 		!isUser && typeof message.reasoning === "string" ? message.reasoning : "";
-	const hasInlineThinkingMarkers = !isUser && bubbleText.includes("<<think:");
-	const bubbleTextForWaterfall =
-		!isUser &&
-		!hasInlineThinkingMarkers &&
-		legacyReasoningText.trim().length > 0
-			? `${bubbleText}\n\n<<think:legacy-${message.messageId}>>\n${legacyReasoningText}\n<<think_end:legacy-${message.messageId}>>`
-			: bubbleText;
-	const waterfallParts = isUser
-		? ([{ type: "text", value: bubbleText }] satisfies WaterfallPart[])
-		: splitByWaterfallMarkers(bubbleTextForWaterfall);
-	const hasToolMarkers =
-		!isUser && waterfallParts.some((p) => p.type === "tool");
-	const hasThinkingParts =
-		!isUser &&
-		waterfallParts.some((p) => p.type === "think" && p.value.trim().length > 0);
-	const hasAnyThinkingBlocks =
-		!isUser && waterfallParts.some((p) => p.type === "think");
-	const toolCallById = new Map(toolCalls.map((tc) => [tc.id, tc] as const));
-	const markerToolCallIds = new Set(
-		waterfallParts
-			.filter(
-				(p): p is Extract<WaterfallPart, { type: "tool" }> => p.type === "tool",
-			)
-			.map((p) => p.toolCallId),
-	);
-	const orphanToolCalls = hasToolMarkers
-		? toolCalls.filter((tc) => !markerToolCallIds.has(tc.id))
-		: toolCalls;
+	const hasReasoning = !isUser && reasoningText.trim().length > 0;
 
 	const approveHandler = areToolApprovalsDisabled
 		? undefined
@@ -519,24 +411,9 @@ export function MessageBubble({
 		);
 	};
 
-	const lastStreamingTextIdx = (() => {
-		if (!isSending) return -1;
-		for (let i = waterfallParts.length - 1; i >= 0; i--) {
-			const part = waterfallParts[i];
-			if (!part) continue;
-			if (part.type === "text" && part.value.trim().length > 0) return i;
-		}
-		return -1;
-	})();
 
-	const shouldShowEmptyAssistantFallback =
-		!isUser &&
-		!isSending &&
-		!isError &&
-		!hasToolCalls &&
-		!hasThinkingParts &&
-		(!bubbleTextForWaterfall || bubbleTextForWaterfall.length === 0) &&
-		!!isLast;
+	const hasTextContent = bubbleText.trim().length > 0;
+	const lastStreamingTextIdx = isSending && hasTextContent ? 0 : -1;
 
 	useEffect(() => {
 		if (isUser) return;
@@ -612,9 +489,9 @@ export function MessageBubble({
 					</div>
 				)}
 
-				{!isUser && !hasToolMarkers && hasToolCalls && (
+				{!isUser && hasToolCalls && (
 					<div className="w-full max-w-full min-w-0 overflow-hidden space-y-1">
-						{renderToolCalls(orphanToolCalls, "toolcalls")}
+						{renderToolCalls(toolCalls, "toolcalls")}
 					</div>
 				)}
 
@@ -625,88 +502,40 @@ export function MessageBubble({
 						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm">
 							{bubbleText}
 						</p>
-					) : shouldShowEmptyAssistantFallback ? (
-						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm">
-							{t("common.unknownError")}
-						</p>
 					) : (
 						<div className="space-y-2 text-sm">
-							{waterfallParts.map((part, idx) => {
-								if (part.type === "tool") {
-									const toolCall = toolCallById.get(part.toolCallId);
-									if (toolCall) {
-										return renderToolCallCard(
-											toolCall,
-											`tool-${toolCall.id}-${idx}`,
-										);
-									}
+							{hasReasoning && (
+								<ThinkingBlock text={reasoningText} isStreaming={isSending} />
+							)}
 
-									return (
-										<p
-											key={`tool-marker-${part.toolCallId}-${idx}`}
-											className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm font-mono text-muted-foreground"
-										>
-											{`<<tool:${part.toolCallId}>>`}
-										</p>
-									);
-								}
-								if (part.type === "think") {
-									const value = part.value;
-									if (value.trim().length === 0 && !part.isOpen) return null;
-									return (
-										<ThinkingBlock
-											key={`think-${part.thinkId}-${idx}`}
-											text={value}
-											isStreaming={isSending && part.isOpen}
-										/>
-									);
-								}
-
-								const text = part.value;
-								if (text.trim().length === 0) return null;
-
-								if (isSending) {
-									return (
-										<p
-											key={`text-${idx}`}
-											className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm"
-										>
-											{text}
-											{idx === lastStreamingTextIdx && (
-												<span className="inline-block w-[2px] h-4 ml-1 bg-current align-middle animate-pulse" />
-											)}
-										</p>
-									);
-								}
-
-								return (
+							{hasTextContent &&
+								(isSending ? (
+									<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm">
+										{bubbleText}
+										{lastStreamingTextIdx === 0 && (
+											<span className="inline-block w-[2px] h-4 ml-1 bg-current align-middle animate-pulse" />
+										)}
+									</p>
+								) : (
 									<ReactMarkdown
-										key={`text-${idx}`}
 										skipHtml
 										remarkPlugins={[remarkGfm]}
 										components={assistantMarkdownComponents}
 									>
-										{text}
+										{bubbleText}
 									</ReactMarkdown>
-								);
-							})}
+								))}
 
 							{isSending &&
-								lastStreamingTextIdx === -1 &&
+								!hasTextContent &&
 								!hasToolCalls &&
-								!hasAnyThinkingBlocks && (
+								!hasReasoning && (
 									<div className="inline-flex items-center gap-1 h-4">
 										<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
 										<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
 										<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" />
 									</div>
 								)}
-
-							{hasToolMarkers && orphanToolCalls.length > 0 && (
-								<div className="w-full max-w-full min-w-0 overflow-hidden space-y-1">
-									{renderToolCalls(orphanToolCalls, "orphan")}
-								</div>
-							)}
 						</div>
 					)}
 
