@@ -619,7 +619,7 @@ export function AIChatDrawer({
 
 				<ScrollArea
 					className="flex-1 min-h-0"
-					viewPortClassName="p-4 overflow-x-hidden min-w-0 max-w-full [scrollbar-gutter:stable] [&>div]:!block [&>div]:!w-full [&>div]:!min-w-0 [&>div]:!max-w-full"
+					viewPortClassName="px-3 py-4 overflow-x-hidden min-w-0 max-w-full [scrollbar-gutter:stable] [&>div]:!block [&>div]:!w-full [&>div]:!min-w-0 [&>div]:!max-w-full"
 					viewportRef={viewportRef}
 					onViewportScroll={handleViewportScroll}
 					role="log"
@@ -835,7 +835,12 @@ export function AIChatDrawer({
 								type="button"
 								variant="ghost"
 								className="h-8 w-auto shrink-0 px-2 text-xs text-muted-foreground hover:text-foreground hover:bg-transparent"
-								disabled={!hasAiConfigs || isLoading || !!pendingApproval || !selectedAiId}
+								disabled={
+									!hasAiConfigs ||
+									isLoading ||
+									!!pendingApproval ||
+									!selectedAiId
+								}
 								onClick={() => void continueChat(selectedAiId)}
 							>
 								{t("ai.chat.continue")}
@@ -1111,6 +1116,6 @@ function ConversationHistoryDialog(props: {
 					</div>
 				</ScrollArea>
 			</DialogContent>
-			</Dialog>
-		);
+		</Dialog>
+	);
 }

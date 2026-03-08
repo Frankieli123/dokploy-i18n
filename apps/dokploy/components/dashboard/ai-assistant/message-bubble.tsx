@@ -1,9 +1,8 @@
 "use client";
 
+import copyToClipboard from "copy-to-clipboard";
 import {
-	AlertCircle,
 	AlertTriangle,
-	Bot,
 	Brain,
 	ChevronDown,
 	ChevronRight,
@@ -11,11 +10,15 @@ import {
 	Loader2,
 	RotateCcw,
 	Sparkles,
-	User,
 } from "lucide-react";
-import copyToClipboard from "copy-to-clipboard";
 import { useTranslation } from "next-i18next";
-import { Children, isValidElement, useEffect, useState, type ReactNode } from "react";
+import {
+	Children,
+	isValidElement,
+	type ReactNode,
+	useEffect,
+	useState,
+} from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
@@ -31,7 +34,9 @@ const assistantHeadingClassName =
 const codeBlockCollapseThresholdLines = 10;
 
 function countLines(text: string): number {
-	const normalized = String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const normalized = String(text ?? "")
+		.replace(/\r\n/g, "\n")
+		.replace(/\r/g, "\n");
 	const trimmed = normalized.replace(/\n+$/, "");
 	if (trimmed.length === 0) return 0;
 	return trimmed.split("\n").length;
@@ -59,7 +64,9 @@ function MarkdownCodeBlock({
 	language?: string;
 }) {
 	const { t } = useTranslation("common");
-	const normalized = String(code ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const normalized = String(code ?? "")
+		.replace(/\r\n/g, "\n")
+		.replace(/\r/g, "\n");
 	const displayCode = normalized.replace(/\n+$/, "");
 	const totalLines = countLines(displayCode);
 	const canCollapse = totalLines >= codeBlockCollapseThresholdLines;
@@ -239,7 +246,6 @@ const assistantMarkdownComponents: Components = {
 	),
 };
 
-
 function ThinkingBlock({
 	text,
 	isStreaming,
@@ -411,9 +417,25 @@ export function MessageBubble({
 		);
 	};
 
-
 	const hasTextContent = bubbleText.trim().length > 0;
 	const lastStreamingTextIdx = isSending && hasTextContent ? 0 : -1;
+	const contentColumnClassName = cn(
+		"flex w-full min-w-0 flex-col gap-2",
+		isUser ? "items-end" : "items-start",
+	);
+	const attachmentGridClassName = cn(
+		"grid gap-2",
+		attachments.length > 1 ? "grid-cols-2" : "grid-cols-1",
+		isUser ? "w-full max-w-[92%]" : "w-full",
+	);
+	const messageBodyClassName = cn(
+		"min-w-0",
+		isUser ? "max-w-[92%] rounded-xl border bg-muted/30 px-3 py-2.5" : "w-full",
+	);
+	const metaRowClassName = cn(
+		"flex items-center gap-2",
+		isUser && "justify-end",
+	);
 
 	useEffect(() => {
 		if (isUser) return;
@@ -442,34 +464,10 @@ export function MessageBubble({
 	}, [message.content, isSending, displayedContent, isUser, isLast]);
 
 	return (
-		<div className="flex gap-3 py-3">
-			<div
-				className={cn(
-					"flex h-8 w-8 shrink-0 items-center justify-center rounded-full border shadow-sm",
-					isUser
-						? "bg-primary text-primary-foreground border-primary"
-						: "bg-background text-muted-foreground border-border",
-					isError && "bg-destructive/10 border-destructive/20 text-destructive",
-				)}
-			>
-				{isUser ? (
-					isError ? (
-						<AlertCircle className="h-4 w-4" />
-					) : (
-						<User className="h-4 w-4" />
-					)
-				) : (
-					<Bot className="h-4 w-4" />
-				)}
-			</div>
-			<div className={cn("flex w-full min-w-0 flex-col gap-2")}>
+		<div className="py-3">
+			<div className={contentColumnClassName}>
 				{hasAttachments && (
-					<div
-						className={cn(
-							"grid gap-2",
-							attachments.length > 1 ? "grid-cols-2" : "grid-cols-1",
-						)}
-					>
+					<div className={attachmentGridClassName}>
 						{attachments.map((att, idx) => {
 							if (!att || att.type !== "image") return null;
 							if (!att.data || !att.mediaType) return null;
@@ -480,9 +478,7 @@ export function MessageBubble({
 									key={`${att.name ?? "image"}-${idx}`}
 									src={src}
 									alt={att.name ?? "attachment"}
-									className={cn(
-										"w-full rounded-lg border border-border/50 object-cover",
-									)}
+									className="w-full rounded-lg border border-border/50 object-cover"
 								/>
 							);
 						})}
@@ -495,9 +491,7 @@ export function MessageBubble({
 					</div>
 				)}
 
-				<div
-					className={cn(isUser && "rounded-xl border bg-muted/30 px-3 py-2.5")}
-				>
+				<div className={messageBodyClassName}>
 					{isUser ? (
 						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm">
 							{bubbleText}
@@ -530,10 +524,10 @@ export function MessageBubble({
 								!hasTextContent &&
 								!hasToolCalls &&
 								!hasReasoning && (
-									<div className="inline-flex items-center gap-1 h-4">
-										<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
-										<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
-										<span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" />
+									<div className="inline-flex h-4 items-center gap-1">
+										<span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
+										<span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
+										<span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
 									</div>
 								)}
 						</div>
@@ -547,7 +541,7 @@ export function MessageBubble({
 					)}
 				</div>
 
-				<div className="flex items-center gap-2">
+				<div className={metaRowClassName}>
 					{isSending && isUser && (
 						<Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
 					)}
