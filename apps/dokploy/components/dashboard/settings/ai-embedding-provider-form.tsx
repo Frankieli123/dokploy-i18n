@@ -157,6 +157,13 @@ export const AiEmbeddingProviderForm = () => {
 		retry: false,
 		refetchOnWindowFocus: false,
 	});
+	const { data: diagnostics } = api.ai.embeddingProvider.diagnostics.useQuery(
+		undefined,
+		{
+			enabled: !!embeddingProvider,
+			refetchOnWindowFocus: false,
+		},
+	);
 
 	const schema = createEmbeddingSchema(t);
 
@@ -227,6 +234,9 @@ export const AiEmbeddingProviderForm = () => {
 			},
 		);
 
+	const currentVectorCount = diagnostics?.embeddedPlaybooks ?? 0;
+	const totalPlaybookCount = diagnostics?.totalPlaybooks ?? 0;
+
 	const onSubmit = async (data: Schema) => {
 		try {
 			await upsertEmbeddingProvider({
@@ -238,6 +248,7 @@ export const AiEmbeddingProviderForm = () => {
 
 			utils.ai.embeddingProvider.get.invalidate();
 			utils.ai.embeddingProvider.test.invalidate();
+			utils.ai.embeddingProvider.diagnostics.invalidate();
 			toast.success(t("settings.ai.embeddingProvider.toast.saveSuccess"));
 			refetchEmbeddingProvider();
 			setOpen(false);
@@ -267,9 +278,10 @@ export const AiEmbeddingProviderForm = () => {
 	}
 
 	return (
-		<div className="flex items-center justify-between bg-sidebar p-1 w-full rounded-lg">
-			<div className="flex items-center justify-between p-3.5 rounded-lg bg-background border w-full">
-				<div>
+		<div className="bg-sidebar p-1 w-full rounded-lg">
+			<div className="p-3.5 rounded-lg bg-background border w-full space-y-3">
+				<div className="flex items-center justify-between gap-3">
+					<div>
 					<span className="text-sm font-medium">
 						{t("settings.ai.embeddingProvider.title")}
 					</span>
@@ -329,6 +341,10 @@ export const AiEmbeddingProviderForm = () => {
 													{t("settings.ai.embeddingProvider.test.dim")}:{" "}
 													{testResult.dim}
 												</span>
+												<span>
+													{t("settings.ai.embeddingProvider.test.vectors")}:{" "}
+													{`${currentVectorCount} / ${totalPlaybookCount}`}
+												</span>
 												{testResult.latencyMs && (
 													<span>
 														{t("settings.ai.embeddingProvider.test.latency")}:{" "}
@@ -346,6 +362,10 @@ export const AiEmbeddingProviderForm = () => {
 												<span className="text-muted-foreground">
 													{t("settings.ai.embeddingProvider.test.fallback")}
 												</span>
+												<span>
+													{t("settings.ai.embeddingProvider.test.vectors")}:{" "}
+													{`${currentVectorCount} / ${totalPlaybookCount}`}
+												</span>
 												{testResult.error && (
 													<span className="break-words">{testResult.error}</span>
 												)}
@@ -362,6 +382,10 @@ export const AiEmbeddingProviderForm = () => {
 												</span>
 												<span className="text-muted-foreground">
 													{t("settings.ai.embeddingProvider.test.fallback")}
+												</span>
+												<span>
+													{t("settings.ai.embeddingProvider.test.vectors")}:{" "}
+													{`${currentVectorCount} / ${totalPlaybookCount}`}
 												</span>
 											</div>
 										)}
@@ -382,6 +406,7 @@ export const AiEmbeddingProviderForm = () => {
 										);
 										refetchEmbeddingProvider();
 										utils.ai.embeddingProvider.test.invalidate();
+										utils.ai.embeddingProvider.diagnostics.invalidate();
 									})
 									.catch(() => {
 										toast.error(
@@ -744,6 +769,7 @@ export const AiEmbeddingProviderForm = () => {
 							</Form>
 						</DialogContent>
 					</Dialog>
+				</div>
 				</div>
 			</div>
 		</div>

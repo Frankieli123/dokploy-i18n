@@ -1200,6 +1200,7 @@
 	"settings.ai.embeddingProvider.test.model": "模型",
 	"settings.ai.embeddingProvider.test.dim": "维度",
 	"settings.ai.embeddingProvider.test.latency": "延迟",
+	"settings.ai.embeddingProvider.test.vectors": "向量条数",
 	"settings.ai.embeddingProvider.test.fallback": "使用本地哈希回退",
 	"settings.ai.mcpServers.title": "MCP 服务器",
 	"settings.ai.mcpServers.count": "{{count}} 个",

@@ -1,10 +1,17 @@
-import { embed } from "ai";
 import { createHash } from "node:crypto";
 import { selectAIProvider } from "@dokploy/server/utils/ai/select-ai-provider";
+import { embed } from "ai";
 
 export const PLAYBOOK_HASH_DIMENSIONS = 256;
 export const PLAYBOOK_DEFAULT_TOP_K = 4;
 export const PLAYBOOK_RETENTION_DAYS = 180;
+export const PLAYBOOK_QUERY_CANDIDATE_MULTIPLIER = 3;
+export const PLAYBOOK_EMBEDDING_MAX_DISTANCE = 0.45;
+export const PLAYBOOK_HASH_MAX_DISTANCE = 0.9;
+export const PLAYBOOK_MAX_INDEXABLE_EMBEDDING_DIMENSIONS = 4000;
+export const PLAYBOOK_INDEXED_EMBEDDING_DIMENSIONS = [
+	384, 512, 768, 1024, 1536, 3072,
+] as const;
 
 function tokenizeForHashing(text: string): string[] {
 	const input = text.trim().toLowerCase();
@@ -31,7 +38,10 @@ export function hashTextToUnitVector(
 	text: string,
 	dimensions = PLAYBOOK_HASH_DIMENSIONS,
 ): number[] {
-	const dim = Math.max(8, Math.min(4096, Number(dimensions) || PLAYBOOK_HASH_DIMENSIONS));
+	const dim = Math.max(
+		8,
+		Math.min(4096, Number(dimensions) || PLAYBOOK_HASH_DIMENSIONS),
+	);
 	const vec = new Array(dim).fill(0);
 	const tokens = tokenizeForHashing(text);
 	if (tokens.length === 0) {

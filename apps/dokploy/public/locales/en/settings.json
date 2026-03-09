@@ -1200,6 +1200,7 @@
 	"settings.ai.embeddingProvider.test.model": "Model",
 	"settings.ai.embeddingProvider.test.dim": "Dimensions",
 	"settings.ai.embeddingProvider.test.latency": "Latency",
+	"settings.ai.embeddingProvider.test.vectors": "Vectors",
 	"settings.ai.embeddingProvider.test.fallback": "Using local hashing fallback",
 	"settings.ai.mcpServers.title": "MCP Servers",
 	"settings.ai.mcpServers.count": "{{count}} server(s)",

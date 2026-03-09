@@ -1009,6 +1009,13 @@
       "when": 1766460000000,
       "tag": "0145_ai_display_message_agent_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "5",
+      "when": 1766470000000,
+      "tag": "0146_ai_playbook_vector_optimizations",
+      "breakpoints": true
     }
   ]
 }

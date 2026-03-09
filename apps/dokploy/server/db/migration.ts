@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
+import { pathToFileURL } from "node:url";
 import { docker } from "@dokploy/server";
 
 const DEFAULT_DB_URL =
@@ -131,3 +132,11 @@ export const migration = async () => {
 		}
 	}
 };
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+	try {
+		await migration();
+	} catch {
+		process.exitCode = 1;
+	}
+}

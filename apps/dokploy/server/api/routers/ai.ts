@@ -42,6 +42,7 @@ import {
 	getAiSettingById,
 	getAiSettingsByOrganizationId,
 	getAiEmbeddingProviderByOrganizationId,
+	getAiEmbeddingProviderDiagnostics,
 	testAiEmbeddingProvider,
 	listAiMcpServersByOrganizationId,
 	testAiMcpServer,
@@ -221,6 +222,11 @@ export const aiRouter = createTRPCRouter({
 			return await testAiEmbeddingProvider({
 				organizationId: ctx.session.activeOrganizationId,
 			});
+		}),
+		diagnostics: adminProcedure.query(async ({ ctx }) => {
+			return await getAiEmbeddingProviderDiagnostics(
+				ctx.session.activeOrganizationId,
+			);
 		}),
 		upsert: adminProcedure
 			.input(apiUpsertAiEmbeddingProvider)

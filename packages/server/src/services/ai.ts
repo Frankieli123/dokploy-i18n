@@ -35,7 +35,12 @@ import {
 import { getTrpcBridge } from "./ai/trpc-bridge";
 import {
 	PLAYBOOK_DEFAULT_TOP_K,
+	PLAYBOOK_EMBEDDING_MAX_DISTANCE,
 	PLAYBOOK_HASH_DIMENSIONS,
+	PLAYBOOK_HASH_MAX_DISTANCE,
+	PLAYBOOK_INDEXED_EMBEDDING_DIMENSIONS,
+	PLAYBOOK_MAX_INDEXABLE_EMBEDDING_DIMENSIONS,
+	PLAYBOOK_QUERY_CANDIDATE_MULTIPLIER,
 	PLAYBOOK_RETENTION_DAYS,
 	hashTextToUnitVector,
 	type EmbeddingProviderConfig,
@@ -1042,31 +1047,87 @@ export const saveAiEmbeddingProvider = async (
 		});
 	}
 
-	return await db
-		.insert(aiEmbeddingProviders)
-		.values({
-			organizationId,
-			providerType,
-			apiUrl,
-			apiKey,
-			model,
-		})
-		.onConflictDoUpdate({
-			target: aiEmbeddingProviders.organizationId,
-			set: {
+	return await db.transaction(async (tx) => {
+		const [currentProvider] = await tx
+			.select({
+				providerType: aiEmbeddingProviders.providerType,
+				apiUrl: aiEmbeddingProviders.apiUrl,
+				model: aiEmbeddingProviders.model,
+			})
+			.from(aiEmbeddingProviders)
+			.where(eq(aiEmbeddingProviders.organizationId, organizationId))
+			.limit(1);
+
+		const shouldClearStoredEmbeddings =
+			!!currentProvider &&
+			(
+				currentProvider.providerType !== providerType ||
+				currentProvider.apiUrl !== apiUrl ||
+				currentProvider.model !== model
+			);
+
+		const result = await tx
+			.insert(aiEmbeddingProviders)
+			.values({
+				organizationId,
 				providerType,
 				apiUrl,
 				apiKey,
 				model,
-				updatedAt: new Date().toISOString(),
-			},
-		});
+			})
+			.onConflictDoUpdate({
+				target: aiEmbeddingProviders.organizationId,
+				set: {
+					providerType,
+					apiUrl,
+					apiKey,
+					model,
+					updatedAt: new Date().toISOString(),
+				},
+			});
+
+		if (shouldClearStoredEmbeddings) {
+			await tx
+				.update(aiAgentPlaybooks)
+				.set({
+					embeddingModel: null,
+					embeddingDim: null,
+					embeddingVector: null,
+				})
+				.where(
+					and(
+						eq(aiAgentPlaybooks.organizationId, organizationId),
+						isNotNull(aiAgentPlaybooks.embeddingVector),
+					),
+				);
+		}
+
+		return result;
+	});
 };
 
 export const deleteAiEmbeddingProvider = async (organizationId: string) => {
-	return await db
-		.delete(aiEmbeddingProviders)
-		.where(eq(aiEmbeddingProviders.organizationId, organizationId));
+	return await db.transaction(async (tx) => {
+		const result = await tx
+			.delete(aiEmbeddingProviders)
+			.where(eq(aiEmbeddingProviders.organizationId, organizationId));
+
+		await tx
+			.update(aiAgentPlaybooks)
+			.set({
+				embeddingModel: null,
+				embeddingDim: null,
+				embeddingVector: null,
+			})
+			.where(
+				and(
+					eq(aiAgentPlaybooks.organizationId, organizationId),
+					isNotNull(aiAgentPlaybooks.embeddingVector),
+				),
+			);
+
+		return result;
+	});
 };
 
 export {
@@ -1187,6 +1248,118 @@ export const testAiEmbeddingProvider = async (params: {
 	}
 };
 
+export type AiEmbeddingProviderDiagnostics = {
+	configuredProviderType: string | null;
+	configuredModel: string | null;
+	totalPlaybooks: number;
+	embeddedPlaybooks: number;
+	missingEmbeddings: number;
+	modelBreakdown: Array<{
+		model: string | null;
+		count: number;
+	}>;
+	dimensionBreakdown: Array<{
+		dim: number | null;
+		count: number;
+	}>;
+	hasStoredEmbeddings: boolean;
+	hasPartialEmbeddings: boolean;
+	hasMixedModels: boolean;
+	hasMixedDimensions: boolean;
+	hasConfiguredModelMismatch: boolean;
+};
+
+const toDiagnosticCount = (value: unknown) => {
+	const numeric = Number(value ?? 0);
+	return Number.isFinite(numeric) ? numeric : 0;
+};
+
+export const getAiEmbeddingProviderDiagnostics = async (
+	organizationId: string,
+): Promise<AiEmbeddingProviderDiagnostics> => {
+	const provider = await getAiEmbeddingProviderByOrganizationId(organizationId);
+	const [totals] = await db
+		.select({
+			totalPlaybooks: sql<number>`count(*)`,
+			embeddedPlaybooks: sql<number>`count(*) filter (where ${aiAgentPlaybooks.embeddingVector} is not null)`,
+			missingEmbeddings: sql<number>`count(*) filter (where ${aiAgentPlaybooks.embeddingVector} is null)`,
+		})
+		.from(aiAgentPlaybooks)
+		.where(eq(aiAgentPlaybooks.organizationId, organizationId));
+
+	const [modelRows, dimensionRows] = await Promise.all([
+		db
+			.select({
+				model: aiAgentPlaybooks.embeddingModel,
+				count: sql<number>`count(*)`,
+			})
+			.from(aiAgentPlaybooks)
+			.where(
+				and(
+					eq(aiAgentPlaybooks.organizationId, organizationId),
+					isNotNull(aiAgentPlaybooks.embeddingVector),
+				),
+			)
+			.groupBy(aiAgentPlaybooks.embeddingModel),
+		db
+			.select({
+				dim: aiAgentPlaybooks.embeddingDim,
+				count: sql<number>`count(*)`,
+			})
+			.from(aiAgentPlaybooks)
+			.where(
+				and(
+					eq(aiAgentPlaybooks.organizationId, organizationId),
+					isNotNull(aiAgentPlaybooks.embeddingVector),
+				),
+			)
+			.groupBy(aiAgentPlaybooks.embeddingDim),
+	]);
+
+	const modelBreakdown = modelRows
+		.map((row) => ({
+			model: row.model ?? null,
+			count: toDiagnosticCount(row.count),
+		}))
+		.sort(
+			(left, right) =>
+				right.count - left.count ||
+				String(left.model ?? "").localeCompare(String(right.model ?? "")),
+		);
+
+	const dimensionBreakdown = dimensionRows
+		.map((row) => ({
+			dim: row.dim ?? null,
+			count: toDiagnosticCount(row.count),
+		}))
+		.sort((left, right) => {
+			if (right.count !== left.count) return right.count - left.count;
+			if (left.dim === null) return 1;
+			if (right.dim === null) return -1;
+			return left.dim - right.dim;
+		});
+
+	const configuredModel = String(provider?.model ?? "").trim() || null;
+	const embeddedPlaybooks = toDiagnosticCount(totals?.embeddedPlaybooks);
+	const missingEmbeddings = toDiagnosticCount(totals?.missingEmbeddings);
+
+	return {
+		configuredProviderType: provider?.providerType ?? null,
+		configuredModel,
+		totalPlaybooks: toDiagnosticCount(totals?.totalPlaybooks),
+		embeddedPlaybooks,
+		missingEmbeddings,
+		modelBreakdown,
+		dimensionBreakdown,
+		hasStoredEmbeddings: embeddedPlaybooks > 0,
+		hasPartialEmbeddings: embeddedPlaybooks > 0 && missingEmbeddings > 0,
+		hasMixedModels: modelBreakdown.length > 1,
+		hasMixedDimensions: dimensionBreakdown.length > 1,
+		hasConfiguredModelMismatch:
+			configuredModel !== null &&
+			modelBreakdown.some((row) => String(row.model ?? "").trim() !== configuredModel),
+	};
+};
 const resolveEmbeddingProviderConfig = async (params: {
 	organizationId: string;
 	aiSettings: {
@@ -5758,16 +5931,36 @@ export const chatStream = async (
 		return new Date(from.getTime() + ms).toISOString();
 	}
 
+	function normalizePlaybookInputKeys(inputKeys?: string[]): string[] {
+		if (!Array.isArray(inputKeys)) return [];
+		return Array.from(
+			new Set(
+				inputKeys
+					.map((key) => String(key ?? "").trim())
+					.filter((key) => key.length > 0),
+			),
+		)
+			.sort((left, right) => left.localeCompare(right))
+			.slice(0, 40);
+	}
+
 	function buildPlaybookSignature(steps: PlaybookStep[]): string {
 		const text = steps
-			.map((s) => `${s.toolName}:${s.procedureName ?? ""}`)
+			.map((step) => {
+				const inputKeys = normalizePlaybookInputKeys(step.inputKeys);
+				return [
+					step.toolName.trim(),
+					step.procedureName?.trim() ?? "",
+					inputKeys.join(","),
+				].join(":");
+			})
 			.join("|");
 		return createHash("sha256").update(text).digest("hex");
 	}
 
 	function extractTopLevelKeys(value: unknown): string[] {
 		if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-		return Object.keys(value).filter((k) => k.trim().length > 0).slice(0, 40);
+		return normalizePlaybookInputKeys(Object.keys(value));
 	}
 
 	function derivePlaybookTagsFromSteps(steps: PlaybookStep[]): string[] {
@@ -5786,10 +5979,129 @@ export const chatStream = async (
 		tags: string[];
 	}): string {
 		const stepText = params.steps
-			.map((s) => (s.procedureName ? `${s.toolName} ${s.procedureName}` : s.toolName))
+			.map((step) => {
+				const inputKeys = normalizePlaybookInputKeys(step.inputKeys);
+				const parts = [step.toolName];
+				if (step.procedureName) parts.push(step.procedureName);
+				if (inputKeys.length > 0) parts.push(`inputs:${inputKeys.join(",")}`);
+				return parts.join(" ");
+			})
 			.join("\n");
 		const tagText = params.tags.length > 0 ? `\nTags: ${params.tags.join(", ")}` : "";
 		return `${params.intent.trim()}\n${stepText}${tagText}`.trim();
+	}
+
+	type PlaybookMatchSource = "embedding" | "hash";
+	type PlaybookMatchRow = {
+		playbookId: string;
+		intent: string;
+		summary: string | null;
+		steps: PlaybookStep[];
+		successCount: number;
+		failCount: number;
+		lastUsedAt: string | null;
+		signature: string;
+		distance: number;
+		source: PlaybookMatchSource;
+	};
+
+	const PLAYBOOK_CLEANUP_TTL_MS = 60 * 60 * 1000;
+	const playbookCleanupThrottle = new Map<string, number>();
+
+	function isIndexedEmbeddingDimension(dim: number): boolean {
+		if (!Number.isInteger(dim) || dim <= 0) return false;
+		if (dim > PLAYBOOK_MAX_INDEXABLE_EMBEDDING_DIMENSIONS) return false;
+		return PLAYBOOK_INDEXED_EMBEDDING_DIMENSIONS.includes(
+			dim as (typeof PLAYBOOK_INDEXED_EMBEDDING_DIMENSIONS)[number],
+		);
+	}
+
+	function buildEmbeddingDistanceExpr(vector: number[], dim: number) {
+		const literal = JSON.stringify(vector);
+		if (isIndexedEmbeddingDimension(dim)) {
+			return sql<number>`${sql.raw(
+				`(("ai_agent_playbook"."embeddingVector")::halfvec(${dim}) <=> '${literal}'::halfvec(${dim}))`,
+			)}`.as("distance");
+		}
+		return sql<number>`${aiAgentPlaybooks.embeddingVector} <=> ${literal}::vector`.as(
+			"distance",
+		);
+	}
+
+	function getPlaybookReliabilityScore(playbook: {
+		successCount: number;
+		failCount: number;
+	}): number {
+		return (Number(playbook.successCount) || 0) - (Number(playbook.failCount) || 0);
+	}
+
+	function comparePlaybookMatches(left: PlaybookMatchRow, right: PlaybookMatchRow): number {
+		if (left.source !== right.source) {
+			return left.source === "embedding" ? -1 : 1;
+		}
+		const leftDistance = Number.isFinite(left.distance)
+			? left.distance
+			: Number.POSITIVE_INFINITY;
+		const rightDistance = Number.isFinite(right.distance)
+			? right.distance
+			: Number.POSITIVE_INFINITY;
+		if (leftDistance !== rightDistance) return leftDistance - rightDistance;
+		const reliabilityDiff =
+			getPlaybookReliabilityScore(right) - getPlaybookReliabilityScore(left);
+		if (reliabilityDiff !== 0) return reliabilityDiff;
+		return String(right.lastUsedAt ?? "").localeCompare(String(left.lastUsedAt ?? ""));
+	}
+
+	function uniquePlaybookIds(ids: string[]): string[] {
+		return Array.from(
+			new Set(
+				ids
+					.map((id) => String(id ?? "").trim())
+					.filter((id) => id.length > 0),
+			),
+		);
+	}
+
+	function scheduleExpiredPlaybookCleanup(organizationId: string) {
+		const orgId = String(organizationId ?? "").trim();
+		if (!orgId) return;
+		const now = Date.now();
+		const nextAllowedAt = playbookCleanupThrottle.get(orgId) ?? 0;
+		if (nextAllowedAt > now) return;
+		playbookCleanupThrottle.set(orgId, now + PLAYBOOK_CLEANUP_TTL_MS);
+		void db
+			.delete(aiAgentPlaybooks)
+			.where(
+				and(
+					eq(aiAgentPlaybooks.organizationId, orgId),
+					lt(aiAgentPlaybooks.expiresAt, new Date().toISOString()),
+				),
+			)
+			.catch(() => {
+				playbookCleanupThrottle.set(orgId, Date.now() + 5 * 60 * 1000);
+			});
+	}
+
+	async function incrementPlaybookFailureCounts(params: {
+		organizationId: string;
+		playbookIds: string[];
+	}): Promise<void> {
+		const playbookIds = uniquePlaybookIds(params.playbookIds);
+		if (playbookIds.length === 0) return;
+		try {
+			await db
+				.update(aiAgentPlaybooks)
+				.set({
+					failCount: sql`${aiAgentPlaybooks.failCount} + 1`,
+					lastUsedAt: new Date().toISOString(),
+				})
+				.where(
+					and(
+						eq(aiAgentPlaybooks.organizationId, params.organizationId),
+						inArray(aiAgentPlaybooks.playbookId, playbookIds),
+					),
+				);
+		} catch {}
 	}
 
 	async function findRelevantPlaybooks(params: {
@@ -5814,19 +6126,11 @@ export const chatStream = async (
 			1,
 			Math.min(10, Number(params.limit ?? PLAYBOOK_DEFAULT_TOP_K) || PLAYBOOK_DEFAULT_TOP_K),
 		);
+		const candidateLimit = Math.max(
+			limit,
+			limit * PLAYBOOK_QUERY_CANDIDATE_MULTIPLIER,
+		);
 		const nowIso = new Date().toISOString();
-
-		// Opportunistic cleanup (cheap, organization-scoped).
-		try {
-			await db
-				.delete(aiAgentPlaybooks)
-				.where(
-					and(
-						eq(aiAgentPlaybooks.organizationId, params.organizationId),
-						lt(aiAgentPlaybooks.expiresAt, nowIso),
-					),
-				);
-		} catch {}
 
 		const embedding = await tryEmbedText({
 			embeddingProvider: params.embeddingProvider,
@@ -5835,77 +6139,118 @@ export const chatStream = async (
 
 		const queryEmbedding = async () => {
 			if (!embedding) return [];
-			const distanceExpr = sql<number>`${aiAgentPlaybooks.embeddingVector} <=> ${JSON.stringify(
-				embedding.vector,
-			)}::vector`.as("distance");
-			return await db
-				.select({
-					playbookId: aiAgentPlaybooks.playbookId,
-					intent: aiAgentPlaybooks.intent,
-					summary: aiAgentPlaybooks.summary,
-					steps: aiAgentPlaybooks.steps,
-					successCount: aiAgentPlaybooks.successCount,
-					failCount: aiAgentPlaybooks.failCount,
-					lastUsedAt: aiAgentPlaybooks.lastUsedAt,
-					signature: aiAgentPlaybooks.signature,
-					distance: distanceExpr,
-				})
-				.from(aiAgentPlaybooks)
-				.where(
-					and(
-						eq(aiAgentPlaybooks.organizationId, params.organizationId),
-						gt(aiAgentPlaybooks.expiresAt, nowIso),
-						eq(aiAgentPlaybooks.embeddingModel, embedding.model),
-						eq(aiAgentPlaybooks.embeddingDim, embedding.dim),
-						isNotNull(aiAgentPlaybooks.embeddingVector),
-					),
-				)
-				.orderBy(distanceExpr, desc(aiAgentPlaybooks.successCount), desc(aiAgentPlaybooks.lastUsedAt))
-				.limit(limit);
+			try {
+				const distanceExpr = buildEmbeddingDistanceExpr(
+					embedding.vector,
+					embedding.dim,
+				);
+				return await db
+					.select({
+						playbookId: aiAgentPlaybooks.playbookId,
+						intent: aiAgentPlaybooks.intent,
+						summary: aiAgentPlaybooks.summary,
+						steps: aiAgentPlaybooks.steps,
+						successCount: aiAgentPlaybooks.successCount,
+						failCount: aiAgentPlaybooks.failCount,
+						lastUsedAt: aiAgentPlaybooks.lastUsedAt,
+						signature: aiAgentPlaybooks.signature,
+						distance: distanceExpr,
+					})
+					.from(aiAgentPlaybooks)
+					.where(
+						and(
+							eq(aiAgentPlaybooks.organizationId, params.organizationId),
+							gt(aiAgentPlaybooks.expiresAt, nowIso),
+							eq(aiAgentPlaybooks.embeddingModel, embedding.model),
+							eq(aiAgentPlaybooks.embeddingDim, embedding.dim),
+							isNotNull(aiAgentPlaybooks.embeddingVector),
+						),
+					)
+					.orderBy(distanceExpr, desc(aiAgentPlaybooks.lastUsedAt))
+					.limit(candidateLimit);
+			} catch {
+				return [];
+			}
 		};
 
 		const queryHash = async () => {
 			const vec = hashTextToUnitVector(params.queryText, PLAYBOOK_HASH_DIMENSIONS);
-			const distanceExpr = sql<number>`${aiAgentPlaybooks.hashVector} <=> ${JSON.stringify(
-				vec,
-			)}::vector`.as("distance");
-			return await db
-				.select({
-					playbookId: aiAgentPlaybooks.playbookId,
-					intent: aiAgentPlaybooks.intent,
-					summary: aiAgentPlaybooks.summary,
-					steps: aiAgentPlaybooks.steps,
-					successCount: aiAgentPlaybooks.successCount,
-					failCount: aiAgentPlaybooks.failCount,
-					lastUsedAt: aiAgentPlaybooks.lastUsedAt,
-					signature: aiAgentPlaybooks.signature,
-					distance: distanceExpr,
-				})
-				.from(aiAgentPlaybooks)
-				.where(
-					and(
-						eq(aiAgentPlaybooks.organizationId, params.organizationId),
-						gt(aiAgentPlaybooks.expiresAt, nowIso),
-					),
-				)
-				.orderBy(distanceExpr, desc(aiAgentPlaybooks.successCount), desc(aiAgentPlaybooks.lastUsedAt))
-				.limit(limit);
+			try {
+				const distanceExpr = sql<number>`${aiAgentPlaybooks.hashVector} <=> ${JSON.stringify(
+					vec,
+				)}::vector`.as("distance");
+				return await db
+					.select({
+						playbookId: aiAgentPlaybooks.playbookId,
+						intent: aiAgentPlaybooks.intent,
+						summary: aiAgentPlaybooks.summary,
+						steps: aiAgentPlaybooks.steps,
+						successCount: aiAgentPlaybooks.successCount,
+						failCount: aiAgentPlaybooks.failCount,
+						lastUsedAt: aiAgentPlaybooks.lastUsedAt,
+						signature: aiAgentPlaybooks.signature,
+						distance: distanceExpr,
+					})
+					.from(aiAgentPlaybooks)
+					.where(
+						and(
+							eq(aiAgentPlaybooks.organizationId, params.organizationId),
+							gt(aiAgentPlaybooks.expiresAt, nowIso),
+						),
+					)
+					.orderBy(distanceExpr, desc(aiAgentPlaybooks.lastUsedAt))
+					.limit(candidateLimit);
+			} catch {
+				return [];
+			}
 		};
 
-		const rows = (await queryEmbedding()) || [];
-		const picked = rows.length > 0 ? rows : (await queryHash()) || [];
+		const [embeddingRows, hashRows] = await Promise.all([
+			queryEmbedding(),
+			queryHash(),
+		]);
+		const merged = new Map<string, PlaybookMatchRow>();
+
+		for (const row of embeddingRows || []) {
+			if (
+				!Number.isFinite(row.distance) ||
+				row.distance > PLAYBOOK_EMBEDDING_MAX_DISTANCE
+			) {
+				continue;
+			}
+			merged.set(row.playbookId, { ...row, source: "embedding" });
+		}
+
+		for (const row of hashRows || []) {
+			if (
+				!Number.isFinite(row.distance) ||
+				row.distance > PLAYBOOK_HASH_MAX_DISTANCE
+			) {
+				continue;
+			}
+			if (!merged.has(row.playbookId)) {
+				merged.set(row.playbookId, { ...row, source: "hash" });
+			}
+		}
+
+		const picked = Array.from(merged.values())
+			.sort(comparePlaybookMatches)
+			.slice(0, limit);
 
 		if (picked.length > 0) {
-			const ids = picked
-				.map((p) => p.playbookId)
-				.filter((id) => typeof id === "string" && id.trim().length > 0);
+			const ids = uniquePlaybookIds(picked.map((playbook) => playbook.playbookId));
 			const nextExpiry = addDaysIso(PLAYBOOK_RETENTION_DAYS);
 			if (ids.length > 0) {
 				try {
 					await db
 						.update(aiAgentPlaybooks)
 						.set({ lastUsedAt: nowIso, expiresAt: nextExpiry })
-						.where(inArray(aiAgentPlaybooks.playbookId, ids));
+						.where(
+							and(
+								eq(aiAgentPlaybooks.organizationId, params.organizationId),
+								inArray(aiAgentPlaybooks.playbookId, ids),
+							),
+						);
 				} catch {}
 			}
 		}
@@ -5921,6 +6266,7 @@ export const chatStream = async (
 		summary: string | null;
 		steps: PlaybookStep[];
 		successCount: number;
+		failCount: number;
 		lastUsedAt: string | null;
 		distance: number;
 	}>): string {
@@ -5931,6 +6277,7 @@ export const chatStream = async (
 				const title = safeTruncateString(p.summary?.trim() || p.intent.trim(), 140);
 				const meta = [
 					`success=${Number(p.successCount) || 0}`,
+					`fail=${Number(p.failCount) || 0}`,
 					p.lastUsedAt ? `lastUsed=${p.lastUsedAt}` : "",
 				]
 					.filter(Boolean)
@@ -6014,6 +6361,8 @@ export const chatStream = async (
 
 		if (steps.length === 0) return;
 
+		scheduleExpiredPlaybookCleanup(params.organizationId);
+
 		const tags = derivePlaybookTagsFromSteps(steps);
 		const vectorText = buildPlaybookVectorText({ intent: goal, steps, tags });
 		const hashVector = hashTextToUnitVector(vectorText, PLAYBOOK_HASH_DIMENSIONS);
@@ -6027,6 +6376,33 @@ export const chatStream = async (
 			embeddingProvider: params.embeddingProvider,
 			text: vectorText,
 		});
+		const nextSet: {
+			intent: string;
+			summary: string;
+			tags: string[];
+			steps: PlaybookStep[];
+			lastUsedAt: string;
+			expiresAt: string;
+			hashVector: number[];
+			successCount: ReturnType<typeof sql>;
+			embeddingModel?: string;
+			embeddingDim?: number;
+			embeddingVector?: number[];
+		} = {
+			intent: goal,
+			summary: safeTruncateString(params.finalSummary.trim(), 600),
+			tags,
+			steps,
+			lastUsedAt: nowIso,
+			expiresAt,
+			hashVector,
+			successCount: sql`${aiAgentPlaybooks.successCount} + 1`,
+		};
+		if (embedding) {
+			nextSet.embeddingModel = embedding.model;
+			nextSet.embeddingDim = embedding.dim;
+			nextSet.embeddingVector = embedding.vector;
+		}
 
 		await db
 			.insert(aiAgentPlaybooks)
@@ -6048,19 +6424,7 @@ export const chatStream = async (
 			})
 			.onConflictDoUpdate({
 				target: [aiAgentPlaybooks.organizationId, aiAgentPlaybooks.signature],
-				set: {
-					intent: goal,
-					summary: safeTruncateString(params.finalSummary.trim(), 600),
-					tags,
-					steps,
-					lastUsedAt: nowIso,
-					expiresAt,
-					hashVector,
-					embeddingModel: embedding?.model ?? null,
-					embeddingDim: embedding?.dim ?? null,
-					embeddingVector: embedding?.vector ?? null,
-					successCount: sql`${aiAgentPlaybooks.successCount} + 1`,
-				},
+				set: nextSet,
 			});
 	}
 
@@ -6470,6 +6834,16 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 	initializeTools();
 
 	const runAbortController = getOrCreateAgentRunAbortController(runId);
+	let selectedPlaybookIds: string[] = [];
+	let selectedPlaybookOrganizationId = "";
+	const markSelectedPlaybooksFailed = async () => {
+		if (!selectedPlaybookOrganizationId || selectedPlaybookIds.length === 0) return;
+		await incrementPlaybookFailureCounts({
+			organizationId: selectedPlaybookOrganizationId,
+			playbookIds: selectedPlaybookIds,
+		});
+		selectedPlaybookIds = [];
+	};
 	try {
 	const run = await db.query.aiRuns.findFirst({
 		where: eq(aiRuns.runId, runId),
@@ -6480,6 +6854,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 	if (["completed", "failed", "cancelled"].includes(run.status)) return;
 
 	const conversation = await getConversationById(run.conversationId);
+	selectedPlaybookOrganizationId = conversation.organizationId;
 	if (conversation.organizationId !== ctx.organizationId) {
 		throw new TRPCError({
 			code: "UNAUTHORIZED",
@@ -6711,6 +7086,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			});
 			if (!result.success) {
 				const errorMessage = result.error || result.message || "Tool execution failed";
+				await markSelectedPlaybooksFailed();
 				await updateRun(runId, {
 					status: "failed",
 					error: errorMessage,
@@ -6762,6 +7138,9 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 					embeddingProvider,
 					queryText: goal,
 				});
+				selectedPlaybookIds = uniquePlaybookIds(
+					playbooks.map((playbook) => playbook.playbookId),
+				);
 				playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
 			} catch {}
 
@@ -7099,11 +7478,12 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			(tc) => tc.toolName === "tool_call",
 		).length;
 		platformToolCalls += platformThisTurn;
-			if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls) {
-				const msg = "Agent tool call budget exceeded";
-				await updateRun(runId, {
-					status: "failed",
-					error: msg,
+		if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls) {
+			const msg = "Agent tool call budget exceeded";
+			await markSelectedPlaybooksFailed();
+			await updateRun(runId, {
+				status: "failed",
+				error: msg,
 					completedAt: new Date().toISOString(),
 				});
 				await saveAgentEventMessage({
@@ -7329,6 +7709,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		if (runAbortController.signal.aborted || isAbortLikeError(error)) {
 			return;
 		}
+		await markSelectedPlaybooksFailed();
 		throw error;
 	} finally {
 		clearAgentRunAbortController(runId);
