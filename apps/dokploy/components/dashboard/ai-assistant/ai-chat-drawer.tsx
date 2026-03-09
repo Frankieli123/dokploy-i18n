@@ -619,7 +619,7 @@ export function AIChatDrawer({
 
 				<ScrollArea
 					className="flex-1 min-h-0"
-					viewPortClassName="px-3 py-4 overflow-x-hidden min-w-0 max-w-full [scrollbar-gutter:stable] [&>div]:!block [&>div]:!w-full [&>div]:!min-w-0 [&>div]:!max-w-full"
+					viewPortClassName="px-4 py-4 overflow-x-hidden min-w-0 max-w-full [scrollbar-gutter:stable] [&>div]:!block [&>div]:!w-full [&>div]:!min-w-0 [&>div]:!max-w-full"
 					viewportRef={viewportRef}
 					onViewportScroll={handleViewportScroll}
 					role="log"

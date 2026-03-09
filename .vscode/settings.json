@@ -4,5 +4,16 @@
 	"editor.codeActionsOnSave": {
 		"source.fixAll.biome": "explicit",
 		"source.organizeImports.biome": "explicit"
-	}
+	},
+	"files.watcherExclude": {
+		"**/.git/objects/**": true,
+		"**/.git/subtree-cache/**": true,
+		"**/node_modules/**": true,
+		"**/.next/**": true,
+		"**/dist/**": true,
+		"**/.turbo/**": true,
+		"**/.tmp/**": true,
+		"**/coverage/**": true
+	},
+	"git.ignoredRepositories": ["e:/APP/dokploy-i18n/Chaterm\u53c2\u8003"]
 }

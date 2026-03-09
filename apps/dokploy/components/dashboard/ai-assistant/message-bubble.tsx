@@ -29,7 +29,7 @@ import { ToolCallBlock } from "./tool-call-block";
 import type { Message, ToolCall } from "./use-chat";
 
 const assistantHeadingClassName =
-	"break-words [overflow-wrap:anywhere] text-sm font-semibold leading-relaxed mb-2 mt-3 first:mt-0";
+	"break-words [overflow-wrap:anywhere] text-sm font-medium leading-relaxed mb-2 mt-3 first:mt-0";
 
 const codeBlockCollapseThresholdLines = 10;
 
@@ -207,6 +207,9 @@ const assistantMarkdownComponents: Components = {
 		>
 			{children}
 		</a>
+	),
+	strong: ({ children }) => (
+		<strong className="font-medium text-foreground/95">{children}</strong>
 	),
 	code: ({ className, children }) => {
 		const text = getTextFromChildren(children);
