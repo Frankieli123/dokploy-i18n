@@ -773,7 +773,7 @@ export function AIChatDrawer({
 											: t("ai.chat.configureFirst")
 									}
 									disabled={!hasAiConfigs || !!pendingApproval}
-									className="min-h-[20px] max-h-[180px] resize-none overflow-y-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+									className="min-h-[20px] max-h-[180px] resize-none overflow-y-auto border-0 bg-transparent p-0 text-[13px] leading-relaxed shadow-none placeholder:text-[13px] focus-visible:ring-0"
 									aria-label={t("ai.chat.inputLabel")}
 								/>
 							</div>

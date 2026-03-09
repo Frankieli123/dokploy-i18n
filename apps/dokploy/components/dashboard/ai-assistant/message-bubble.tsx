@@ -29,7 +29,7 @@ import { ToolCallBlock } from "./tool-call-block";
 import type { Message, ToolCall } from "./use-chat";
 
 const assistantHeadingClassName =
-	"break-words [overflow-wrap:anywhere] text-sm font-medium leading-relaxed mb-2 mt-3 first:mt-0";
+	"break-words [overflow-wrap:anywhere] text-[13px] font-medium leading-relaxed mb-2 mt-3 first:mt-0";
 
 const codeBlockCollapseThresholdLines = 10;
 
@@ -209,7 +209,7 @@ const assistantMarkdownComponents: Components = {
 		</a>
 	),
 	strong: ({ children }) => (
-		<strong className="font-medium text-foreground/95">{children}</strong>
+		<strong className="font-semibold text-foreground">{children}</strong>
 	),
 	code: ({ className, children }) => {
 		const text = getTextFromChildren(children);
@@ -429,11 +429,13 @@ export function MessageBubble({
 	const attachmentGridClassName = cn(
 		"grid gap-2",
 		attachments.length > 1 ? "grid-cols-2" : "grid-cols-1",
-		isUser ? "w-full max-w-[92%]" : "w-full",
+		isUser ? "w-full max-w-[86%]" : "w-full max-w-[86%]",
 	);
 	const messageBodyClassName = cn(
 		"min-w-0",
-		isUser ? "max-w-[92%] rounded-xl border bg-muted/30 px-3 py-2.5" : "w-full",
+		isUser
+			? "max-w-[86%] rounded-xl border bg-muted/30 px-3 py-2.5"
+			: "w-full max-w-[86%]",
 	);
 	const metaRowClassName = cn(
 		"flex items-center gap-2",
@@ -496,18 +498,18 @@ export function MessageBubble({
 
 				<div className={messageBodyClassName}>
 					{isUser ? (
-						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm">
+						<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-[13px]">
 							{bubbleText}
 						</p>
 					) : (
-						<div className="space-y-2 text-sm">
+						<div className="space-y-2 text-[13px]">
 							{hasReasoning && (
 								<ThinkingBlock text={reasoningText} isStreaming={isSending} />
 							)}
 
 							{hasTextContent &&
 								(isSending ? (
-									<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-sm">
+									<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-[13px]">
 										{bubbleText}
 										{lastStreamingTextIdx === 0 && (
 											<span className="inline-block w-[2px] h-4 ml-1 bg-current align-middle animate-pulse" />
