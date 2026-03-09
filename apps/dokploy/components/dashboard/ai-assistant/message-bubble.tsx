@@ -424,7 +424,7 @@ export function MessageBubble({
 	const lastStreamingTextIdx = isSending && hasTextContent ? 0 : -1;
 	const contentColumnClassName = cn(
 		"flex min-w-0 flex-col gap-2",
-		isUser ? "w-full items-end" : "w-full max-w-[80%] items-start",
+		isUser ? "w-full items-end" : "mx-auto w-full max-w-[80%] items-start",
 	);
 	const attachmentGridClassName = cn(
 		"grid gap-2",
