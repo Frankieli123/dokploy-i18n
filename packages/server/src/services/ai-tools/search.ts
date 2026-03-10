@@ -18,6 +18,29 @@ export function tokenizeToolSearchQuery(query: string): string[] {
 	if (/(describe|schema|描述|定义|参数|字段|输入)/i.test(query))
 		add("describe");
 	if (/(call|invoke|execute|run|调用|执行)/i.test(query)) add("call");
+	if (
+		/(\bsql\b|\bdatabase\b|\bdb\b|\btable\b|\bschema\b|\bddl\b|\bdml\b|\bpostgres\b|\bpostgresql\b|\bmysql\b|\bmariadb\b|\bsqlite\b|\bmongodb\b|\bmongo\b|\bredis\b|数据库|数据表|表|查询|结构)/i.test(
+			query,
+		)
+	) {
+		add(
+			"sql",
+			"database",
+			"db",
+			"table",
+			"schema",
+			"ddl",
+			"dml",
+			"postgres",
+			"postgresql",
+			"pg",
+			"mysql",
+			"mariadb",
+			"mongo",
+			"mongodb",
+			"redis",
+		);
+	}
 	if (/(项目|project)/i.test(query)) add("project", "projects");
 	if (/(环境|environment|env)/i.test(query)) add("environment");
 	if (/(应用|application|app)/i.test(query)) add("application", "app");
@@ -117,4 +140,3 @@ export function getToolSearchIndex(): ToolSearchIndexItem[] {
 	toolSearchIndexCache = { revision, items };
 	return items;
 }
-

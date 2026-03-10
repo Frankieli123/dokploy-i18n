@@ -25,5 +25,11 @@ describe("AI tool selector", () => {
 		}).map((t) => t.name);
 		expect(names).toContain("project_containers");
 	});
-});
 
+	it("includes SQL tools when relevant", () => {
+		const names = selectRelevantTools("执行 SQL 改表", { maxTools: 10 }).map(
+			(t) => t.name,
+		);
+		expect(names).toContain("database_sql_execute");
+	});
+});
