@@ -423,19 +423,19 @@ export function MessageBubble({
 	const hasTextContent = bubbleText.trim().length > 0;
 	const lastStreamingTextIdx = isSending && hasTextContent ? 0 : -1;
 	const contentColumnClassName = cn(
-		"flex min-w-0 flex-col gap-2",
-		isUser ? "w-full items-end" : "mx-auto w-full max-w-[80%] items-start",
+		"flex w-full min-w-0 flex-col gap-2",
+		isUser ? "items-end" : "items-start",
 	);
 	const attachmentGridClassName = cn(
 		"grid gap-2",
 		attachments.length > 1 ? "grid-cols-2" : "grid-cols-1",
-		isUser ? "w-full max-w-[86%]" : "w-full",
+		"w-full max-w-full",
 	);
 	const messageBodyClassName = cn(
-		"min-w-0 w-full",
+		"min-w-0 max-w-full",
 		isUser
-			? "max-w-[86%] rounded-xl border bg-muted/30 px-3 py-2.5"
-			: "max-w-full",
+			? "w-fit rounded-xl border bg-muted/30 px-3 py-2.5"
+			: "w-full",
 	);
 	const metaRowClassName = cn(
 		"flex items-center gap-2",
