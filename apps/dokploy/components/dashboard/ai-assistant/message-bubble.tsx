@@ -365,6 +365,7 @@ export function MessageBubble({
 	const isUser = message.role === "user";
 	const isError = message.status === "error";
 	const isSending = message.status === "sending";
+	const isStopped = message.status === "stopped";
 	const attachments = Array.isArray(message.attachments)
 		? message.attachments
 		: [];
@@ -561,6 +562,8 @@ export function MessageBubble({
 					>
 						{isError
 							? t("ai.chat.failedToSend")
+							: isStopped
+								? t("status.stopped")
 							: isSending
 								? isUser
 									? t("ai.chat.sending")

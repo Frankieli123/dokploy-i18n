@@ -6,7 +6,7 @@ export type ReplayToolCallStatus =
 	| "completed"
 	| "failed";
 
-export type ReplayMessageStatus = "sending" | "sent" | "error";
+export type ReplayMessageStatus = "sending" | "sent" | "stopped" | "error";
 
 export type ReplayToolCall = {
 	id: string;

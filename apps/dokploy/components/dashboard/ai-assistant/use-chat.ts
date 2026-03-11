@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/utils/api";
 
+const stoppedMessageIds = new Set<string>();
+const stopRequestedConversationIds = new Set<string>();
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -167,7 +170,7 @@ export interface Message {
 	toolCalls?: ToolCall[] | null;
 	createdAt: string;
 	updatedAt?: string;
-	status?: "sending" | "sent" | "error";
+	status?: "sending" | "sent" | "stopped" | "error";
 	error?: string;
 }
 
@@ -313,7 +316,11 @@ function buildServerDisplayMessages(serverMessages: Message[]): Message[] {
 			}
 			return left.index - right.index;
 		})
-		.map(({ message }) => message);
+		.map(({ message }) =>
+			stoppedMessageIds.has(message.messageId) && message.status !== "stopped"
+				? { ...message, status: "stopped" }
+				: message,
+		);
 }
 
 function mergeToolCalls(
@@ -456,7 +463,9 @@ export function resolveRetryContext(
 		if (
 			nextMessage &&
 			nextMessage.role === "assistant" &&
-			(nextMessage.status === "sending" || nextMessage.status === "error")
+			(nextMessage.status === "sending" ||
+				nextMessage.status === "stopped" ||
+				nextMessage.status === "error")
 		) {
 			removeMessageIds.add(nextMessage.messageId);
 		}
@@ -796,7 +805,13 @@ export function useChat(options: UseChatOptions = {}) {
 				) {
 					return true;
 				}
-				if (m.status === "sending" || m.status === "error") return true;
+				if (
+					m.status === "sending" ||
+					m.status === "stopped" ||
+					m.status === "error"
+				) {
+					return true;
+				}
 				if (m.role !== "assistant") return true;
 				return serverIds.has(m.messageId);
 			}),
@@ -1313,6 +1328,24 @@ export function useChat(options: UseChatOptions = {}) {
 				: "";
 		const runId =
 			agentRunIdByConversationRef.current[scopeId] ?? fallbackRunId ?? "";
+		stopRequestedConversationIds.add(scopeId);
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			if (!msg || msg.role !== "assistant") continue;
+			const msgConversationId = normalizeConversationValue(msg.conversationId);
+			const msgScopeId = msgConversationId || DRAFT_CONVERSATION_SCOPE_ID;
+			if (msgScopeId !== scopeId) continue;
+			if (msg.status !== "sending") continue;
+			stoppedMessageIds.add(msg.messageId);
+			setPendingMessages((prev) =>
+				prev.map((m) =>
+					m.messageId === msg.messageId
+						? { ...m, status: "stopped" as const, error: undefined }
+						: m,
+				),
+			);
+			break;
+		}
 		if (runId.trim().length > 0) {
 			void cancelAgentRun.mutateAsync({ runId: runId.trim() }).catch(() => {});
 		}
@@ -1326,6 +1359,7 @@ export function useChat(options: UseChatOptions = {}) {
 		abortController,
 		cancelAgentRun,
 		conversationId,
+		messages,
 		mostRecentActiveRunId,
 		setConversationAgentRunId,
 		setConversationAbortControllerState,
@@ -1388,6 +1422,7 @@ export function useChat(options: UseChatOptions = {}) {
 
 			const startConversationId = normalizeConversationValue(conversationId);
 			const pendingScopeId = startConversationId || DRAFT_CONVERSATION_SCOPE_ID;
+			stopRequestedConversationIds.delete(pendingScopeId);
 			setConversationLoadingState(pendingScopeId, true);
 			setConversationCanContinueState(pendingScopeId, false);
 			const controller = new AbortController();
@@ -1500,6 +1535,13 @@ export function useChat(options: UseChatOptions = {}) {
 							: m,
 					),
 				);
+				if (
+					pendingScopeId !== streamConversationId &&
+					stopRequestedConversationIds.has(pendingScopeId)
+				) {
+					stopRequestedConversationIds.delete(pendingScopeId);
+					stopRequestedConversationIds.add(streamConversationId);
+				}
 			}
 
 			let abortedBySafetyTimer = false;
@@ -1560,6 +1602,10 @@ export function useChat(options: UseChatOptions = {}) {
 									? headerAssistantMessageId
 									: `agent-run-${headerRunId}`;
 							const previousId = assistantMessageId;
+							if (stoppedMessageIds.has(previousId)) {
+								stoppedMessageIds.delete(previousId);
+								stoppedMessageIds.add(nextId);
+							}
 							setPendingMessages((prev) =>
 								prev.map((m) =>
 									m.messageId === previousId ? { ...m, messageId: nextId } : m,
@@ -1601,7 +1647,7 @@ export function useChat(options: UseChatOptions = {}) {
 						updateAssistantMessage((m) => ({
 							...m,
 							content: (m.content ?? "") + pending,
-							status: "sending" as const,
+							status: m.status === "stopped" ? "stopped" : ("sending" as const),
 						}));
 					};
 
@@ -1695,7 +1741,11 @@ export function useChat(options: UseChatOptions = {}) {
 							} else {
 								toolCalls.push(nextToolCall);
 							}
-							return { ...m, toolCalls, status: "sending" as const };
+							return {
+								...m,
+								toolCalls,
+								status: m.status === "stopped" ? "stopped" : ("sending" as const),
+							};
 						});
 					};
 					const streamStartTime = Date.now();
@@ -1788,6 +1838,10 @@ export function useChat(options: UseChatOptions = {}) {
 													? startedAssistantMessageId
 													: `agent-run-${startedRunId}`;
 											const previousId = assistantMessageId;
+											if (stoppedMessageIds.has(previousId)) {
+												stoppedMessageIds.delete(previousId);
+												stoppedMessageIds.add(nextId);
+											}
 											setPendingMessages((prev) =>
 												prev.map((m) =>
 													m.messageId === previousId
@@ -1851,6 +1905,10 @@ export function useChat(options: UseChatOptions = {}) {
 								flushDeltaNow();
 								const nextId = `agent-run-${runId}`;
 								const previousId = assistantMessageId;
+								if (stoppedMessageIds.has(previousId)) {
+									stoppedMessageIds.delete(previousId);
+									stoppedMessageIds.add(nextId);
+								}
 								setPendingMessages((prev) =>
 									prev.map((m) =>
 										m.messageId === previousId
@@ -1892,7 +1950,10 @@ export function useChat(options: UseChatOptions = {}) {
 								updateAssistantMessage((m) => ({
 									...m,
 									reasoning: text,
-									status: "sending" as const,
+									status:
+										m.status === "stopped"
+											? "stopped"
+											: ("sending" as const),
 								}));
 								continue;
 							}
@@ -2036,6 +2097,25 @@ export function useChat(options: UseChatOptions = {}) {
 					}
 				} catch (error) {
 					setConversationAbortControllerState(streamConversationId, null);
+					if (stopRequestedConversationIds.has(streamConversationId)) {
+						stopRequestedConversationIds.delete(streamConversationId);
+						stoppedMessageIds.add(assistantMessageId);
+						const assistantId = assistantMessageId;
+						const userId = userMessageId;
+						setPendingMessages((prev) =>
+							prev.map((m) => {
+								if (m.messageId === assistantId) {
+									return { ...m, status: "stopped" as const, error: undefined };
+								}
+								if (m.messageId === userId) {
+									return { ...m, status: "sent" as const };
+								}
+								return m;
+							}),
+						);
+						setConversationLoadingState(streamConversationId, false);
+						return;
+					}
 					if (isAbortLikeError(error)) {
 						const assistantId = assistantMessageId;
 						const userId = userMessageId;
@@ -2092,12 +2172,28 @@ export function useChat(options: UseChatOptions = {}) {
 					if (stopReason !== "done") {
 						const assistantId = assistantMessageId;
 						const userId = userMessageId;
+						const stopRequested =
+							stopRequestedConversationIds.has(streamConversationId);
+						if (stopRequested) {
+							stopRequestedConversationIds.delete(streamConversationId);
+							stoppedMessageIds.add(assistantId);
+						}
 						setPendingMessages((prev) =>
-							prev.map((m) =>
-								m.messageId === userId || m.messageId === assistantId
-									? { ...m, status: "sent" as const }
-									: m,
-							),
+							prev.map((m) => {
+								if (m.messageId === assistantId) {
+									return {
+										...m,
+										status: stopRequested
+											? ("stopped" as const)
+											: ("sent" as const),
+										error: stopRequested ? undefined : m.error,
+									};
+								}
+								if (m.messageId === userId) {
+									return { ...m, status: "sent" as const };
+								}
+								return m;
+							}),
 						);
 						let didRefetch = false;
 					try {
@@ -2115,9 +2211,11 @@ export function useChat(options: UseChatOptions = {}) {
 							setConversationAbortControllerState(streamConversationId, null);
 							if (didRefetch) {
 								setPendingMessages((prev) =>
-									prev.filter(
-										(m) =>
-											m.messageId !== userId && m.messageId !== assistantId,
+									prev.filter((m) =>
+										m.messageId === assistantId &&
+										stoppedMessageIds.has(assistantId)
+											? true
+											: m.messageId !== userId && m.messageId !== assistantId,
 									),
 								);
 							}
@@ -2205,7 +2303,10 @@ export function useChat(options: UseChatOptions = {}) {
 									? {
 											...m,
 											content: (m.content ?? "") + pendingText,
-											status: "sending" as const,
+											status:
+												m.status === "stopped"
+													? "stopped"
+													: ("sending" as const),
 										}
 									: m,
 							),
@@ -2291,6 +2392,10 @@ export function useChat(options: UseChatOptions = {}) {
 									assistantMessageId.startsWith("temp-")
 								) {
 									const previousId = assistantMessageId;
+									if (stoppedMessageIds.has(previousId)) {
+										stoppedMessageIds.delete(previousId);
+										stoppedMessageIds.add(nextAssistantMessageId);
+									}
 									setPendingMessages((prev) =>
 										prev.map((m) =>
 											m.messageId === previousId
@@ -2335,7 +2440,10 @@ export function useChat(options: UseChatOptions = {}) {
 										? {
 											...m,
 											reasoning: `${m.reasoning ?? ""}${delta}`,
-											status: "sending" as const,
+											status:
+												m.status === "stopped"
+													? "stopped"
+													: ("sending" as const),
 										}
 										: m,
 								),
@@ -2376,7 +2484,12 @@ export function useChat(options: UseChatOptions = {}) {
 									} else {
 										toolCalls.push(nextToolCall);
 									}
-									return { ...m, toolCalls, status: "sending" as const };
+									return {
+										...m,
+										toolCalls,
+										status:
+											m.status === "stopped" ? "stopped" : ("sending" as const),
+									};
 								}),
 							);
 							setToolCallMeta((prev) => {
@@ -2531,6 +2644,10 @@ export function useChat(options: UseChatOptions = {}) {
 							if (realId && realId !== assistantMessageId) {
 								const previousId = assistantMessageId;
 								const nextId = realId;
+								if (stoppedMessageIds.has(previousId)) {
+									stoppedMessageIds.delete(previousId);
+									stoppedMessageIds.add(nextId);
+								}
 								setPendingMessages((prev) =>
 									prev.map((m) =>
 										m.messageId === previousId
@@ -2563,11 +2680,17 @@ export function useChat(options: UseChatOptions = {}) {
 
 				if (controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
+					const stopRequested =
+						stopRequestedConversationIds.has(streamConversationId);
+					if (stopRequested) {
+						stopRequestedConversationIds.delete(streamConversationId);
+						stoppedMessageIds.add(assistantMessageId);
+					}
 					const errorMsg = abortedBySafetyTimer
 						? "settings.ai.errors.streamingError"
 						: "settings.ai.errors.streamingAborted";
 					finalizeExecutingToolCalls(assistantMessageId, errorMsg);
-					if (abortedBySafetyTimer) {
+					if (abortedBySafetyTimer && !stopRequested) {
 						setPendingMessages((prev) =>
 							prev
 								.filter((m) => m.messageId !== userMessageId)
@@ -2583,13 +2706,27 @@ export function useChat(options: UseChatOptions = {}) {
 						return;
 					}
 					setPendingMessages((prev) =>
-						prev.map((m) =>
-							m.messageId === userMessageId ||
-							m.messageId === assistantMessageId
-								? { ...m, status: "sent" as const }
-								: m,
-						),
+						prev.map((m) => {
+							if (m.messageId === assistantMessageId) {
+								return {
+									...m,
+									status: stopRequested
+										? ("stopped" as const)
+										: ("sent" as const),
+									error: stopRequested ? undefined : m.error,
+								};
+							}
+							if (m.messageId === userMessageId) {
+								return { ...m, status: "sent" as const };
+							}
+							return m;
+						}),
 					);
+					if (abortedBySafetyTimer) {
+						setConversationAbortControllerState(streamConversationId, null);
+						setConversationLoadingState(streamConversationId, false);
+						return;
+					}
 				}
 
 				if (!controller.signal.aborted && !receivedDone) {
@@ -2611,6 +2748,25 @@ export function useChat(options: UseChatOptions = {}) {
 				setConversationAbortControllerState(streamConversationId, null);
 			} catch (error) {
 				setConversationAbortControllerState(streamConversationId, null);
+				if (stopRequestedConversationIds.has(streamConversationId)) {
+					stopRequestedConversationIds.delete(streamConversationId);
+					stoppedMessageIds.add(assistantMessageId);
+					const assistantId = assistantMessageId;
+					const userId = userMessageId;
+					setPendingMessages((prev) =>
+						prev.map((m) => {
+							if (m.messageId === assistantId) {
+								return { ...m, status: "stopped" as const, error: undefined };
+							}
+							if (m.messageId === userId) {
+								return { ...m, status: "sent" as const };
+							}
+							return m;
+						}),
+					);
+					setConversationLoadingState(streamConversationId, false);
+					return;
+				}
 				if (isAbortLikeError(error)) {
 					const errorMsg = abortedBySafetyTimer
 						? "settings.ai.errors.streamingError"
@@ -2675,7 +2831,10 @@ export function useChat(options: UseChatOptions = {}) {
 					const assistantId = assistantMessageId;
 					setPendingMessages((prev) =>
 						prev.filter(
-							(m) => m.messageId !== userId && m.messageId !== assistantId,
+							(m) =>
+								m.messageId === assistantId && stoppedMessageIds.has(assistantId)
+									? true
+									: m.messageId !== userId && m.messageId !== assistantId,
 						),
 					);
 				}
@@ -2770,6 +2929,7 @@ export function useChat(options: UseChatOptions = {}) {
 			try {
 				const controller = new AbortController();
 				setConversationAbortControllerState(streamConversationId, controller);
+				stopRequestedConversationIds.delete(streamConversationId);
 
 				const response = await fetch("/api/ai/continue", {
 					method: "POST",
@@ -2814,7 +2974,10 @@ export function useChat(options: UseChatOptions = {}) {
 								? {
 										...m,
 										content: (m.content ?? "") + pendingText,
-										status: "sending" as const,
+										status:
+											m.status === "stopped"
+												? "stopped"
+												: ("sending" as const),
 									}
 								: m,
 						),
@@ -2868,6 +3031,10 @@ export function useChat(options: UseChatOptions = {}) {
 									assistantMessageId.startsWith("temp-")
 								) {
 									const previousId = assistantMessageId;
+									if (stoppedMessageIds.has(previousId)) {
+										stoppedMessageIds.delete(previousId);
+										stoppedMessageIds.add(nextAssistantMessageId);
+									}
 									setPendingMessages((prev) =>
 										prev.map((m) =>
 											m.messageId === previousId
@@ -2914,7 +3081,10 @@ export function useChat(options: UseChatOptions = {}) {
 										? {
 											...m,
 											reasoning: `${m.reasoning ?? ""}${delta}`,
-											status: "sending" as const,
+											status:
+												m.status === "stopped"
+													? "stopped"
+													: ("sending" as const),
 										}
 										: m,
 								),
@@ -2981,7 +3151,8 @@ export function useChat(options: UseChatOptions = {}) {
 									return {
 										...m,
 										toolCalls,
-										status: "sending" as const,
+										status:
+											m.status === "stopped" ? "stopped" : ("sending" as const),
 									};
 								}),
 							);
@@ -3141,6 +3312,10 @@ export function useChat(options: UseChatOptions = {}) {
 							if (realId && realId !== assistantMessageId) {
 								const previousId = assistantMessageId;
 								const nextId = realId;
+								if (stoppedMessageIds.has(previousId)) {
+									stoppedMessageIds.delete(previousId);
+									stoppedMessageIds.add(nextId);
+								}
 								setPendingMessages((prev) =>
 									prev.map((m) =>
 										m.messageId === previousId
@@ -3173,11 +3348,17 @@ export function useChat(options: UseChatOptions = {}) {
 
 				if (controller.signal.aborted && !receivedDone) {
 					flushDeltaNow();
+					const stopRequested =
+						stopRequestedConversationIds.has(streamConversationId);
+					if (stopRequested) {
+						stopRequestedConversationIds.delete(streamConversationId);
+						stoppedMessageIds.add(assistantMessageId);
+					}
 					const errorMsg = abortedBySafetyTimer
 						? "settings.ai.errors.streamingError"
 						: "settings.ai.errors.streamingAborted";
 					finalizeExecutingToolCalls(assistantMessageId, errorMsg);
-					if (abortedBySafetyTimer) {
+					if (abortedBySafetyTimer && !stopRequested) {
 						setPendingMessages((prev) =>
 							prev.map((m) =>
 								m.messageId === assistantMessageId
@@ -3193,10 +3374,21 @@ export function useChat(options: UseChatOptions = {}) {
 					setPendingMessages((prev) =>
 						prev.map((m) =>
 							m.messageId === assistantMessageId
-								? { ...m, status: "sent" as const }
+								? {
+										...m,
+										status: stopRequested
+											? ("stopped" as const)
+											: ("sent" as const),
+										error: stopRequested ? undefined : m.error,
+									}
 								: m,
 						),
 					);
+					if (abortedBySafetyTimer) {
+						setConversationAbortControllerState(streamConversationId, null);
+						setConversationLoadingState(streamConversationId, false);
+						return;
+					}
 				}
 
 				if (!controller.signal.aborted && !receivedDone) {
@@ -3217,6 +3409,19 @@ export function useChat(options: UseChatOptions = {}) {
 				setConversationAbortControllerState(streamConversationId, null);
 			} catch (error) {
 				setConversationAbortControllerState(streamConversationId, null);
+				if (stopRequestedConversationIds.has(streamConversationId)) {
+					stopRequestedConversationIds.delete(streamConversationId);
+					stoppedMessageIds.add(assistantMessageId);
+					setPendingMessages((prev) =>
+						prev.map((m) =>
+							m.messageId === assistantMessageId
+								? { ...m, status: "stopped" as const, error: undefined }
+								: m,
+						),
+					);
+					setConversationLoadingState(streamConversationId, false);
+					return;
+				}
 				if (isAbortLikeError(error)) {
 					const errorMsg = abortedBySafetyTimer
 						? "settings.ai.errors.streamingError"
@@ -3273,6 +3478,7 @@ export function useChat(options: UseChatOptions = {}) {
 			} finally {
 				if (didRefetch) {
 					const assistantId = assistantMessageId;
+					if (stoppedMessageIds.has(assistantId)) return;
 					setPendingMessages((prev) =>
 						prev.filter((m) => m.messageId !== assistantId),
 					);

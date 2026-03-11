@@ -503,7 +503,7 @@ export const aiDisplayMessages = pgTable("ai_display_message", {
 			}>
 		>(),
 	status: text("status")
-		.$type<"sending" | "sent" | "error">()
+		.$type<"sending" | "sent" | "stopped" | "error">()
 		.notNull()
 		.default("sent"),
 	error: text("error"),

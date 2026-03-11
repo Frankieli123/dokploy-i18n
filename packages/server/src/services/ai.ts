@@ -2046,7 +2046,7 @@ type DisplayToolCallStatus =
 	| "completed"
 	| "failed";
 
-type DisplayMessageStatus = "sending" | "sent" | "error";
+type DisplayMessageStatus = "sending" | "sent" | "stopped" | "error";
 type DisplayMessageKind = "message" | "agent";
 type DisplayToolCall = NonNullable<AiDisplayMessageRow["toolCalls"]>[number];
 type DisplayToolCallResult = DisplayToolCall["result"];
@@ -5862,9 +5862,12 @@ export const chatStream = async (
 		completionTokens: aggregatedUsage.completionTokens ?? null,
 	});
 
+	const finalAssistantStatus: DisplayMessageStatus = options.abortSignal?.aborted
+		? "stopped"
+		: "sent";
 	await syncDisplayMessageFromRawMessage(updatedAssistantMessage, {
 		reasoning: assistantReasoning,
-		status: "sent",
+		status: finalAssistantStatus,
 		toolResults: allToolResults,
 	});
 
@@ -5929,7 +5932,7 @@ export const chatStream = async (
 					toolCalls: latestToolCallsSnapshot,
 					toolResults: latestToolResultsSnapshot,
 				}),
-				status: "error",
+				status: options.abortSignal?.aborted ? "stopped" : "error",
 				error: options.abortSignal?.aborted ? null : getProviderErrorText(error),
 				createdAt: assistantMessage.createdAt,
 			});
@@ -6668,8 +6671,8 @@ export const cancelRun = async (runId: string) => {
 				role: "assistant",
 				kind: "agent",
 				content: current.trim().length > 0 ? current : null,
-				status: "error",
-				error: "cancelled",
+				status: "stopped",
+				error: null,
 			});
 		} catch {}
 
@@ -7231,6 +7234,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			messages: nextMessages,
 			tools: withTools ? tools : undefined,
 			stopWhen: stepCountIs(toolStepBudget),
+			abortSignal: runAbortController.signal,
 		});
 	};
 
@@ -7243,7 +7247,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		try {
 			result = await runGenerate(true, initialSystemMode, overrideSystemPrompt);
 		} catch (error) {
-			const aborted = false;
+			const aborted = runAbortController.signal.aborted || isAbortLikeError(error);
 			if (isSystemMessagePlacementError(error) && !aborted) {
 				try {
 					result = await runGenerate(true, "inline", overrideSystemPrompt);
@@ -7428,6 +7432,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 					toolResults: allToolResults,
 				});
 				if (finalText.trim().length > 0 || toolCallsToPersistNow.length > 0) {
+					const stopRequested = runAbortController.signal.aborted;
 					try {
 						const updatedAssistant = await updateMessage({
 							messageId: assistantMessageId,
@@ -7439,12 +7444,13 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 						});
 						await syncDisplayMessageFromRawMessage(updatedAssistant, {
 							reasoning: lastReasoningDelta || null,
-							status: "sending",
+							status: stopRequested ? "stopped" : "sending",
 							kind: "agent",
 							runId,
 							toolResults: allToolResults,
 						});
 					} catch {}
+					if (stopRequested) return;
 				}
 			}
 
@@ -7642,6 +7648,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		messages = messages.concat({ role: "user", content: buildAgentContinuePrompt() });
 	}
 
+	if (runAbortController.signal.aborted) return;
 
 		{
 			const toolCallsToPersist = buildPersistedToolCallsFromResults({
