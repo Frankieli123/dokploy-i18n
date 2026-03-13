@@ -73,6 +73,8 @@ export function AIChatDrawer({
 	const utils = api.useUtils();
 	const [isOpen, setIsOpen] = useState(false);
 	const SERVER_CONTEXT_STORAGE_KEY = "dokploy.ai.serverContext.v2";
+	const CONVERSATION_LAST_SEEN_STORAGE_KEY =
+		"dokploy.ai.conversationLastSeen.v1";
 	const LOCAL_SERVER_CONTEXT = "local";
 	const [autoLoadHistory, setAutoLoadHistory] = useState(true);
 	const [input, setInput] = useState("");
@@ -80,6 +82,26 @@ export function AIChatDrawer({
 	const [isAgentMode, setIsAgentMode] = useState(false);
 	const viewportRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
+	const [conversationLastSeen, setConversationLastSeen] = useState<
+		Record<string, number>
+	>(() => {
+		if (typeof window === "undefined") return {};
+		try {
+			const raw =
+				localStorage.getItem(CONVERSATION_LAST_SEEN_STORAGE_KEY) ?? "";
+			const parsed: unknown = raw ? JSON.parse(raw) : {};
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+				return {};
+			const out: Record<string, number> = {};
+			for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+				if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) continue;
+				out[k] = v;
+			}
+			return out;
+		} catch {
+			return {};
+		}
+	});
 
 	useEffect(() => {
 		if (!isOpen) return;
@@ -89,13 +111,36 @@ export function AIChatDrawer({
 	}, [isOpen, utils]);
 	const isNearBottomRef = useRef(true);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
-	const sendInFlightRef = useRef(false);
 	const [draftImages, setDraftImages] = useState<DraftImage[]>([]);
 	const draftImagesRef = useRef<DraftImage[]>([]);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	const MAX_IMAGE_ATTACHMENTS = 4;
 	const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+	const markConversationSeen = useCallback(
+		(targetConversationId: string | undefined, at = Date.now()) => {
+			if (typeof window === "undefined") return;
+			const normalized =
+				typeof targetConversationId === "string"
+					? targetConversationId.trim()
+					: "";
+			if (!normalized) return;
+			if (normalized === "__draft_conversation__") return;
+
+			setConversationLastSeen((prev) => {
+				if (prev[normalized] === at) return prev;
+				const next = { ...prev, [normalized]: at };
+				try {
+					localStorage.setItem(
+						CONVERSATION_LAST_SEEN_STORAGE_KEY,
+						JSON.stringify(next),
+					);
+				} catch {}
+				return next;
+			});
+		},
+		[CONVERSATION_LAST_SEEN_STORAGE_KEY],
+	);
 
 	const clearDraftImages = useCallback(() => {
 		setDraftImages((prev) => {
@@ -193,6 +238,7 @@ export function AIChatDrawer({
 	const {
 		messages,
 		isLoading,
+		isLoadingByConversation,
 		conversationId,
 		areToolApprovalsDisabled,
 		setToolApprovalsDisabled,
@@ -206,6 +252,7 @@ export function AIChatDrawer({
 		stopGeneration,
 		openConversation,
 		pendingApproval,
+		pendingApprovalByConversation,
 		approvePending,
 		rejectPending,
 	} = useChat({
@@ -219,6 +266,44 @@ export function AIChatDrawer({
 		uiVisible: isOpen,
 		autoLoad: autoLoadHistory,
 	});
+
+	const runningConversationIds = useMemo(() => {
+		const out = new Set<string>();
+		for (const [conversationId, isLoading] of Object.entries(
+			isLoadingByConversation,
+		)) {
+			if (isLoading === true) out.add(conversationId);
+		}
+		return out;
+	}, [isLoadingByConversation]);
+
+	const pendingApprovalConversationIds = useMemo(() => {
+		const out = new Set<string>();
+		for (const [conversationId, approval] of Object.entries(
+			pendingApprovalByConversation,
+		)) {
+			if (approval) out.add(conversationId);
+		}
+		return out;
+	}, [pendingApprovalByConversation]);
+
+	const previousConversationIdRef = useRef<string | undefined>(undefined);
+	useEffect(() => {
+		if (!isOpen) return;
+		const prev = previousConversationIdRef.current;
+		previousConversationIdRef.current = conversationId;
+		if (!prev) return;
+		if (prev === conversationId) return;
+		markConversationSeen(prev);
+	}, [conversationId, isOpen, markConversationSeen]);
+
+	const wasOpenRef = useRef(false);
+	useEffect(() => {
+		if (wasOpenRef.current && !isOpen) {
+			markConversationSeen(conversationId);
+		}
+		wasOpenRef.current = isOpen;
+	}, [conversationId, isOpen, markConversationSeen]);
 
 	const serversForPicker = useMemo(() => {
 		const servers = serversForDefaultPick ?? [];
@@ -456,8 +541,6 @@ export function AIChatDrawer({
 		}
 
 		if (!selectedAiId || isLoading) return;
-		if (sendInFlightRef.current) return;
-		sendInFlightRef.current = true;
 
 		type ImageAttachment = {
 			type: "image";
@@ -467,53 +550,49 @@ export function AIChatDrawer({
 			size: number;
 		};
 
-		try {
-			const toDataUrl = (file: File) =>
-				new Promise<string>((resolve, reject) => {
-					const reader = new FileReader();
-					reader.onload = () => resolve(String(reader.result ?? ""));
-					reader.onerror = () => reject(new Error("Failed to read image"));
-					reader.readAsDataURL(file);
-				});
+		const toDataUrl = (file: File) =>
+			new Promise<string>((resolve, reject) => {
+				const reader = new FileReader();
+				reader.onload = () => resolve(String(reader.result ?? ""));
+				reader.onerror = () => reject(new Error("Failed to read image"));
+				reader.readAsDataURL(file);
+			});
 
-			const parseBase64DataUrl = (
-				dataUrl: string,
-			): { mediaType: string; data: string } | null => {
-				const match = /^data:([^;]+);base64,(.*)$/i.exec(dataUrl.trim());
-				if (!match) return null;
-				return { mediaType: match[1] ?? "", data: match[2] ?? "" };
-			};
+		const parseBase64DataUrl = (
+			dataUrl: string,
+		): { mediaType: string; data: string } | null => {
+			const match = /^data:([^;]+);base64,(.*)$/i.exec(dataUrl.trim());
+			if (!match) return null;
+			return { mediaType: match[1] ?? "", data: match[2] ?? "" };
+		};
 
-			const maybeAttachments = await Promise.all(
-				draftImages.map(async (img) => {
-					try {
-						const parsed = parseBase64DataUrl(await toDataUrl(img.file));
-						if (!parsed) return null;
-						if (!parsed.mediaType.startsWith("image/")) return null;
-						if (!parsed.data) return null;
-						return {
-							type: "image",
-							data: parsed.data,
-							mediaType: parsed.mediaType,
-							name: img.file.name,
-							size: img.file.size,
-						} satisfies ImageAttachment;
-					} catch {
-						return null;
-					}
-				}),
-			);
-			const attachments = maybeAttachments.filter(
-				(att): att is ImageAttachment => att != null,
-			);
+		const maybeAttachments = await Promise.all(
+			draftImages.map(async (img) => {
+				try {
+					const parsed = parseBase64DataUrl(await toDataUrl(img.file));
+					if (!parsed) return null;
+					if (!parsed.mediaType.startsWith("image/")) return null;
+					if (!parsed.data) return null;
+					return {
+						type: "image",
+						data: parsed.data,
+						mediaType: parsed.mediaType,
+						name: img.file.name,
+						size: img.file.size,
+					} satisfies ImageAttachment;
+				} catch {
+					return null;
+				}
+			}),
+		);
+		const attachments = maybeAttachments.filter(
+			(att): att is ImageAttachment => att != null,
+		);
 
-			const message = trimmedInput;
-			setInput("");
-			clearDraftImages();
-			await send(message, selectedAiId, isAgentMode, attachments);
-		} finally {
-			sendInFlightRef.current = false;
-		}
+		const message = trimmedInput;
+		setInput("");
+		clearDraftImages();
+		await send(message, selectedAiId, isAgentMode, attachments);
 	};
 
 	const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -575,6 +654,9 @@ export function AIChatDrawer({
 								projectId={projectId}
 								serverId={effectiveServerId}
 								currentConversationId={conversationId}
+								conversationLastSeen={conversationLastSeen}
+								runningConversationIds={runningConversationIds}
+								pendingApprovalConversationIds={pendingApprovalConversationIds}
 								onSelect={(nextId) => {
 									setAutoLoadHistory(false);
 									openConversation(nextId);
@@ -967,6 +1049,9 @@ function ConversationHistoryDialog(props: {
 	projectId?: string;
 	serverId?: string;
 	currentConversationId?: string;
+	conversationLastSeen: Record<string, number>;
+	runningConversationIds: Set<string>;
+	pendingApprovalConversationIds: Set<string>;
 	onSelect: (conversationId: string) => void;
 }) {
 	const { t } = useTranslation("common");
@@ -1085,6 +1170,11 @@ function ConversationHistoryDialog(props: {
 							filteredConversations.map((c) => {
 								const isCurrent =
 									c.conversationId === props.currentConversationId;
+								const isRunning = props.runningConversationIds.has(
+									c.conversationId,
+								);
+								const isPendingApproval =
+									props.pendingApprovalConversationIds.has(c.conversationId);
 								const title =
 									typeof c.title === "string" && c.title.trim().length > 0
 										? c.title
@@ -1093,6 +1183,18 @@ function ConversationHistoryDialog(props: {
 									typeof c.updatedAt === "string" && c.updatedAt.length > 0
 										? c.updatedAt
 										: c.createdAt;
+								const lastSeenAt = props.conversationLastSeen[c.conversationId];
+								const lastSeenMs =
+									typeof lastSeenAt === "number" &&
+									Number.isFinite(lastSeenAt) &&
+									lastSeenAt > 0
+										? lastSeenAt
+										: 0;
+								const updatedMs = Date.parse(ts ?? "");
+								const isUnread =
+									Number.isFinite(updatedMs) && updatedMs > lastSeenMs;
+								const showDoneCheck =
+									!isCurrent && !isRunning && !isPendingApproval && isUnread;
 								return (
 									<Button
 										key={c.conversationId}
@@ -1103,9 +1205,24 @@ function ConversationHistoryDialog(props: {
 											setOpen(false);
 										}}
 									>
-										<span className="w-full min-w-0 text-left text-sm font-medium whitespace-normal [overflow-wrap:anywhere] line-clamp-2">
-											{title}
-										</span>
+										<div className="flex w-full min-w-0 items-start gap-2">
+											<span className="min-w-0 flex-1 text-left text-sm font-medium whitespace-normal [overflow-wrap:anywhere] line-clamp-2">
+												{title}
+											</span>
+											{isRunning ? (
+												<span className="shrink-0 inline-flex items-center gap-1 text-xs text-muted-foreground">
+													<Loader2 className="h-3.5 w-3.5 animate-spin" />
+													{t("ai.chat.history.status.running")}
+												</span>
+											) : isPendingApproval ? (
+												<span className="shrink-0 inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+													<AlertTriangle className="h-3.5 w-3.5" />
+													{t("ai.chat.history.status.pendingApproval")}
+												</span>
+											) : showDoneCheck ? (
+												<Check className="h-4 w-4 shrink-0 text-emerald-600" />
+											) : null}
+										</div>
 										<span className="text-xs text-muted-foreground tabular-nums">
 											{new Date(ts).toLocaleString()}
 										</span>

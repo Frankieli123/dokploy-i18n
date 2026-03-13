@@ -2030,6 +2030,8 @@
     "ai.chat.title": "AI 助手",
     "ai.chat.sendError": "訊息發送失敗",
     "ai.chat.newConversation": "新對話",
+    "ai.chat.history.status.running": "運行中",
+    "ai.chat.history.status.pendingApproval": "待審批",
     "ai.chat.selectModel": "選擇 AI 模型",
     "ai.chat.mode.switchTitle": "切換模式",
     "ai.chat.mode.chat": "聊天",

@@ -2029,6 +2029,8 @@
 	"ai.chat.title": "AI Assistant",
 	"ai.chat.sendError": "Failed to send message",
 	"ai.chat.newConversation": "New conversation",
+	"ai.chat.history.status.running": "Running",
+	"ai.chat.history.status.pendingApproval": "Pending approval",
 	"ai.chat.selectModel": "Select AI model",
 	"ai.chat.mode.switchTitle": "Switch mode",
 	"ai.chat.mode.chat": "Chat",

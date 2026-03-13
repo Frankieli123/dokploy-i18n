@@ -2022,6 +2022,8 @@
     "ai.chat.title": "AI 助手",
     "ai.chat.sendError": "消息发送失败",
     "ai.chat.newConversation": "新对话",
+    "ai.chat.history.status.running": "运行中",
+    "ai.chat.history.status.pendingApproval": "待审批",
     "ai.chat.selectModel": "选择 AI 模型",
     "ai.chat.mode.switchTitle": "切换模式",
     "ai.chat.mode.chat": "聊天",
