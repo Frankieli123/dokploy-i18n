@@ -111,30 +111,38 @@ export const getContainersByAppNameMatch = async (
 		const cmd =
 			"docker ps -a --format 'CONTAINER ID : {{.ID}} | Name: {{.Names}} | State: {{.State}} | Status: {{.Status}}'";
 
-		const command =
+		const primaryCommand =
 			appType === "docker-compose"
-				? `${cmd} --filter='label=com.docker.compose.project=${appName}'`
-				: `${cmd} | grep '^.*Name: ${appName}'`;
+				? `${cmd} --filter "label=com.docker.compose.project=${appName}"`
+				: appType === "stack"
+					? `${cmd} --filter "label=com.docker.stack.namespace=${appName}"`
+					: `${cmd} --filter "label=com.docker.swarm.service.name=${appName}"`;
+
+		const escapedAppName = appName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		const fallbackCommand = `${cmd} | grep -E '^.*Name: ${escapedAppName}([._-]|$)'`;
+		const commandsToTry =
+			appType === "docker-compose"
+				? [primaryCommand]
+				: [primaryCommand, fallbackCommand];
 		if (serverId) {
-			const { stdout, stderr } = await execAsyncRemote(serverId, command);
-
-			if (stderr) {
-				return [];
+			for (const command of commandsToTry) {
+				const { stdout, stderr } = await execAsyncRemote(serverId, command);
+				if (stderr) return [];
+				if (!stdout) continue;
+				result = stdout.trim().split("\n");
+				break;
 			}
-
-			if (!stdout) return [];
-			result = stdout.trim().split("\n");
 		} else {
-			const { stdout, stderr } = await execAsync(command);
-
-			if (stderr) {
-				return [];
+			for (const command of commandsToTry) {
+				const { stdout, stderr } = await execAsync(command);
+				if (stderr) return [];
+				if (!stdout) continue;
+				result = stdout.trim().split("\n");
+				break;
 			}
-
-			if (!stdout) return [];
-
-			result = stdout.trim().split("\n");
 		}
+
+		if (result.length === 0) return [];
 
 		const containers = result.map((line) => {
 			const parts = line.split(" | ");
