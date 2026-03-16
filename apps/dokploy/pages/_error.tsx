@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useTranslation } from "next-i18next";
 import { Logo } from "@/components/shared/logo";
 import { buttonVariants } from "@/components/ui/button";
+import { getLocale, serverSideTranslations } from "@/utils/i18n";
 
 interface Props {
 	statusCode: number;
@@ -98,8 +99,22 @@ export default function Custom404({ statusCode, error }: Props) {
 	);
 }
 
-// @ts-ignore
-Error.getInitialProps = ({ res, err }: NextPageContext) => {
-	const statusCode = res ? res.statusCode : err ? err.statusCode : 404;
-	return { statusCode, error: err };
+Custom404.getInitialProps = async (ctx: NextPageContext) => {
+	const { res, err, req } = ctx;
+	const statusCode = res ? res.statusCode : err ? (err as any).statusCode : 404;
+
+	if (!req) {
+		return { statusCode, error: err };
+	}
+
+	try {
+		const locale = getLocale(((req as any).cookies ?? {}) as any);
+		return {
+			statusCode,
+			error: err,
+			...(await serverSideTranslations(locale, ["common"])),
+		};
+	} catch {
+		return { statusCode, error: err };
+	}
 };

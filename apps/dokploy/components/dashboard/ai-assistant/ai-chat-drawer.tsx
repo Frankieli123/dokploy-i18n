@@ -1213,7 +1213,6 @@ function ConversationHistoryDialog(props: {
 											{isRunning ? (
 												<span className="shrink-0 inline-flex items-center gap-1 text-xs text-muted-foreground">
 													<Loader2 className="h-3.5 w-3.5 animate-spin" />
-													{t("ai.chat.history.status.running")}
 												</span>
 											) : isPendingApproval ? (
 												<span className="shrink-0 inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">

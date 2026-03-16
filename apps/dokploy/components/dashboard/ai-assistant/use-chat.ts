@@ -1490,6 +1490,8 @@ export function useChat(options: UseChatOptions = {}) {
 				const nonce = tempMessageNonceRef.current;
 				const userTempId = `temp-${timestamp}-${nonce}-user`;
 				const assistantTempId = `temp-${timestamp}-${nonce}-assistant`;
+				const baseCreatedAt = new Date(timestamp).toISOString();
+				const assistantCreatedAt = new Date(timestamp + 1).toISOString();
 
 				const userMessage: Message = {
 					messageId: userTempId,
@@ -1497,7 +1499,7 @@ export function useChat(options: UseChatOptions = {}) {
 					role: "user",
 					content,
 					attachments: attachments.length > 0 ? attachments : undefined,
-					createdAt: new Date().toISOString(),
+					createdAt: baseCreatedAt,
 					status: "sending",
 				};
 
@@ -1506,7 +1508,7 @@ export function useChat(options: UseChatOptions = {}) {
 					conversationId: pendingScopeId,
 					role: "assistant",
 					content: "",
-					createdAt: new Date().toISOString(),
+					createdAt: assistantCreatedAt,
 					status: "sending",
 				};
 
