@@ -722,14 +722,18 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 															</SelectTrigger>
 														</FormControl>
 														<SelectContent>
-															{services?.length ? (
+															{isLoadingServices ? (
+																<SelectItem value="__loading__" disabled>
+																	{t("application.domains.loading")}
+																</SelectItem>
+															) : services?.length ? (
 																services.map((service) => (
 																	<SelectItem key={service} value={service}>
 																		{service}
 																	</SelectItem>
 																))
 															) : (
-																<SelectItem value="" disabled>
+																<SelectItem value="__empty__" disabled>
 																	{t(
 																		"application.domains.handle.field.serviceName.empty",
 																	)}
