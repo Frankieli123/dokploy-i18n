@@ -2703,6 +2703,9 @@ interface ChatParams {
 	userId: string;
 	uiLocale?: string;
 	persistUserMessage?: boolean;
+	historyBefore?: { before?: string; beforeMessageId?: string };
+	assistantMessageId?: string;
+	sourceUserMessageId?: string;
 }
 
 type ChatUsage = {
@@ -5041,6 +5044,9 @@ export const chatStream = async (
 		userId,
 		uiLocale,
 		persistUserMessage,
+		historyBefore,
+		assistantMessageId: overrideAssistantMessageId,
+		sourceUserMessageId: overrideSourceUserMessageId,
 	}: ChatParams,
 	options: ChatStreamOptions = {},
 ) => {
@@ -5096,7 +5102,12 @@ export const chatStream = async (
 
 	const shouldPersistUserMessage = persistUserMessage !== false;
 	const normalizedAttachments = normalizeMessageAttachments(attachments);
-	let userMessageId: string | undefined;
+	let userMessageId: string | undefined =
+		!shouldPersistUserMessage &&
+		typeof overrideSourceUserMessageId === "string" &&
+		overrideSourceUserMessageId.trim().length > 0
+			? overrideSourceUserMessageId.trim()
+			: undefined;
 	if (shouldPersistUserMessage) {
 		const userMessage = await saveMessage({
 			conversationId,
@@ -5114,34 +5125,88 @@ export const chatStream = async (
 		userMessageId = userMessage.messageId;
 	}
 
-	const history = await getMessages({ conversationId, limit: 20 });
+	const history = await getMessages({
+		conversationId,
+		limit: 20,
+		before: historyBefore?.before,
+		beforeMessageId: historyBefore?.beforeMessageId,
+	});
 	let messages: CoreMessage[] = history
 		.map(messageToCoreMessage)
 		.filter(Boolean) as CoreMessage[];
 
 	if (!shouldPersistUserMessage) {
 		const trimmed = message.trim();
-		messages = messages.concat({
-			role: "user",
-			content: trimmed.length > 0 ? trimmed : "Continue.",
-		});
+		if (trimmed.length > 0 || normalizedAttachments.length > 0) {
+			const synthetic = messageToCoreMessage({
+				role: "user",
+				content: trimmed.length > 0 ? trimmed : "Continue.",
+				attachments: normalizedAttachments,
+				toolCalls: null,
+			});
+			if (synthetic) {
+				messages = messages.concat(synthetic);
+			}
+		}
 	}
 
-	const assistantMessage = await saveMessage({
-		conversationId,
-		role: "assistant",
-		content: "",
-	});
-	if (!assistantMessage) {
-		throw new TRPCError({
-			code: "INTERNAL_SERVER_ERROR",
-			message: "Failed to save assistant message",
+	const normalizedOverrideAssistantMessageId =
+		typeof overrideAssistantMessageId === "string"
+			? overrideAssistantMessageId.trim()
+			: "";
+	let assistantMessage: AiMessageRow;
+	if (normalizedOverrideAssistantMessageId.length > 0) {
+		const existing = await db.query.aiMessages.findFirst({
+			where: eq(aiMessages.messageId, normalizedOverrideAssistantMessageId),
+			columns: {
+				messageId: true,
+				conversationId: true,
+				role: true,
+				createdAt: true,
+			},
 		});
+		if (
+			!existing ||
+			existing.conversationId !== conversationId ||
+			existing.role !== "assistant"
+		) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "Invalid assistant message",
+			});
+		}
+		const updated = await updateMessage({
+			messageId: normalizedOverrideAssistantMessageId,
+			conversationId,
+			role: "assistant",
+			content: "",
+			attachments: null,
+			toolCalls: null,
+			toolCallId: null,
+			toolName: null,
+			promptTokens: null,
+			completionTokens: null,
+		});
+		if (!updated) {
+			throw new TRPCError({ code: "NOT_FOUND", message: "Assistant message not found" });
+		}
+		assistantMessage = updated;
+	} else {
+		const saved = await saveMessage({
+			conversationId,
+			role: "assistant",
+			content: "",
+		});
+		if (!saved) {
+			throw new TRPCError({
+				code: "INTERNAL_SERVER_ERROR",
+				message: "Failed to save assistant message",
+			});
+		}
+		assistantMessage = saved;
 	}
+
 	const assistantMessageId = assistantMessage.messageId;
-	try {
-		options.onStart?.({ assistantMessageId, userMessageId });
-	} catch {}
 
 	await upsertDisplayMessageSnapshot({
 		messageId: assistantMessageId,
@@ -5151,9 +5216,15 @@ export const chatStream = async (
 		kind: "message",
 		content: "",
 		reasoning: null,
+		toolCalls: null,
 		status: "sending",
+		error: null,
 		createdAt: assistantMessage.createdAt,
 	});
+
+	try {
+		options.onStart?.({ assistantMessageId, userMessageId });
+	} catch {}
 
 	let assistantRawTextContent = "";
 	let assistantTextContent = "";

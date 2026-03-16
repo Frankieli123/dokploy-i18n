@@ -1,15 +1,15 @@
 import { validateRequest } from "@dokploy/server";
-import { apiStartAgent } from "@dokploy/server/db/schema/ai";
 import { db } from "@dokploy/server/db";
-import { aiMessages } from "@dokploy/server/db/schema";
-import {
-	getConversationById,
-	startAgentRun,
-} from "@dokploy/server/services/ai";
+import { aiMessages, aiRuns } from "@dokploy/server/db/schema";
+import { getConversationById } from "@dokploy/server/services/ai";
 import { and, asc, eq, gte } from "drizzle-orm";
 import type { NextApiRequest, NextApiResponse } from "next";
+import { z } from "zod";
 
-const bodySchema = apiStartAgent;
+const bodySchema = z.object({
+	conversationId: z.string().min(1),
+	runId: z.string().min(1),
+});
 
 function writeSseEvent(res: NextApiResponse, event: string, data: unknown) {
 	if (res.writableEnded || res.finished) return;
@@ -43,10 +43,7 @@ function sleep(ms: number, signal?: AbortSignal) {
 	});
 }
 
-export default async function handler(
-	req: NextApiRequest,
-	res: NextApiResponse,
-) {
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
 	if (req.method !== "POST") {
 		res.setHeader("Allow", "POST");
 		res.status(405).end("Method Not Allowed");
@@ -78,6 +75,8 @@ export default async function handler(
 	}
 
 	const conversationId = parsed.data.conversationId;
+	const runId = parsed.data.runId.trim();
+
 	try {
 		const conversation = await getConversationById(conversationId);
 		if (conversation.organizationId !== session.activeOrganizationId) {
@@ -89,34 +88,19 @@ export default async function handler(
 		return;
 	}
 
-	let runId = "";
-	let assistantMessageId = "";
-	let userMessageId = "";
-	try {
-		const run = await startAgentRun({
-			conversationId,
-			goal: parsed.data.goal,
-			aiId: parsed.data.aiId,
-			attachments: parsed.data.attachments,
-			organizationId: session.activeOrganizationId,
-			userId: user.id,
-			uiLocale: req.cookies.DOKPLOY_LOCALE,
-		});
-		runId = typeof run?.runId === "string" ? run.runId.trim() : "";
-		assistantMessageId =
-			typeof (run as any)?.assistantMessageId === "string"
-				? String((run as any).assistantMessageId).trim()
-				: runId
-					? `agent-run-${runId}`
-					: "";
-		userMessageId =
-			typeof (run as any)?.userMessageId === "string"
-				? String((run as any).userMessageId).trim()
-				: "";
-	} catch (error) {
-		res.status(500).json({
-			message: error instanceof Error ? error.message : String(error),
-		});
+	const run = await db.query.aiRuns.findFirst({
+		where: eq(aiRuns.runId, runId),
+		columns: {
+			runId: true,
+			conversationId: true,
+			status: true,
+			createdAt: true,
+			startedAt: true,
+			completedAt: true,
+		},
+	});
+	if (!run || run.conversationId !== conversationId) {
+		res.status(404).json({ message: "Run not found" });
 		return;
 	}
 
@@ -125,13 +109,6 @@ export default async function handler(
 		"Cache-Control": "no-cache, no-transform",
 		Connection: "keep-alive",
 		"X-Accel-Buffering": "no",
-		...(runId ? { "X-Dokploy-AI-Run-Id": runId } : {}),
-		...(assistantMessageId
-			? { "X-Dokploy-AI-Assistant-Message-Id": assistantMessageId }
-			: {}),
-		...(userMessageId
-			? { "X-Dokploy-AI-User-Message-Id": userMessageId }
-			: {}),
 	});
 	try {
 		(res as any).flushHeaders?.();
@@ -154,19 +131,27 @@ export default async function handler(
 		}
 	}, 15000);
 
-	const startedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-	let cursorCreatedAt = startedAt;
-	const seenMessageIds = new Set<string>();
+	const assistantMessageId = `agent-run-${runId}`;
+	const runStartMs = Date.parse(run.startedAt ?? run.createdAt ?? "");
+	const baseStartMs = Number.isFinite(runStartMs) ? runStartMs : Date.now();
+	const cursorStartMs = Math.max(baseStartMs - 5 * 60 * 1000, Date.now() - 30 * 60 * 1000);
 
+	let cursorCreatedAt = new Date(cursorStartMs).toISOString();
+	const seenMessageIds = new Set<string>();
 	let pollDelay = 800;
 
 	try {
-		writeSseEvent(res, "start", {
-			conversationId,
-			runId: runId.trim(),
-			assistantMessageId,
-			userMessageId,
-		});
+		writeSseEvent(res, "start", { conversationId, runId, assistantMessageId });
+
+		if (
+			run.completedAt ||
+			run.status === "completed" ||
+			run.status === "failed" ||
+			run.status === "cancelled"
+		) {
+			writeSseEvent(res, "done", { conversationId, runId });
+			return;
+		}
 
 		while (!abortController.signal.aborted) {
 			let sawRunFinish = false;
@@ -193,19 +178,12 @@ export default async function handler(
 				} catch {
 					continue;
 				}
-
 				if (!isRecord(payload)) continue;
 				const type = typeof payload.type === "string" ? payload.type : "";
 				if (!type.startsWith("agent.")) continue;
 
-				const payloadRunId =
-					type === "agent.run.start" && typeof payload.runId === "string"
-						? payload.runId
-						: typeof payload.runId === "string"
-							? payload.runId
-							: "";
-				if (!runId && payloadRunId) runId = payloadRunId;
-				if (runId && payloadRunId && payloadRunId !== runId) continue;
+				const payloadRunId = typeof payload.runId === "string" ? payload.runId : "";
+				if (payloadRunId.trim().length > 0 && payloadRunId.trim() !== runId) continue;
 
 				writeSseEvent(res, type, {
 					messageId: msg.messageId,
@@ -224,7 +202,6 @@ export default async function handler(
 			}
 
 			pollDelay = sawNewMessage ? 800 : Math.min(Math.round(pollDelay * 1.5), 4000);
-
 			await sleep(pollDelay, abortController.signal);
 		}
 	} catch (error) {
@@ -241,9 +218,6 @@ export default async function handler(
 
 export const config = {
 	api: {
-		bodyParser: {
-			sizeLimit: "15mb",
-		},
 		responseLimit: false,
 	},
 };

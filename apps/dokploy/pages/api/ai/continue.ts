@@ -205,8 +205,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 						result: resultPayload,
 					});
 				},
-				onError: (error) => {
-					safeWrite("stream-error", { error });
+				onError: (message) => {
+					safeWrite("stream-error", { message });
 				},
 			},
 		);

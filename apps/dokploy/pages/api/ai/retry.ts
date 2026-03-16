@@ -1,9 +1,17 @@
 import { validateRequest } from "@dokploy/server";
-import { apiSendMessage } from "@dokploy/server/db/schema/ai";
+import { db } from "@dokploy/server/db";
+import { aiMessages } from "@dokploy/server/db/schema";
 import { chatStream, getConversationById } from "@dokploy/server/services/ai";
+import { eq } from "drizzle-orm";
 import type { NextApiRequest, NextApiResponse } from "next";
+import { z } from "zod";
 
-const bodySchema = apiSendMessage;
+const bodySchema = z.object({
+	conversationId: z.string().min(1),
+	aiId: z.string().min(1),
+	userMessageId: z.string().min(1),
+	assistantMessageId: z.string().min(1),
+});
 
 function writeSseEvent(
 	res: NextApiResponse,
@@ -52,10 +60,7 @@ function writeSseEvent(
 	} catch {}
 }
 
-export default async function handler(
-	req: NextApiRequest,
-	res: NextApiResponse,
-) {
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
 	if (req.method !== "POST") {
 		res.setHeader("Allow", "POST");
 		res.status(405).end("Method Not Allowed");
@@ -97,6 +102,45 @@ export default async function handler(
 		return;
 	}
 
+	const [userMessage, assistantMessage] = await Promise.all([
+		db.query.aiMessages.findFirst({
+			where: eq(aiMessages.messageId, parsed.data.userMessageId),
+			columns: {
+				messageId: true,
+				conversationId: true,
+				role: true,
+				createdAt: true,
+			},
+		}),
+		db.query.aiMessages.findFirst({
+			where: eq(aiMessages.messageId, parsed.data.assistantMessageId),
+			columns: {
+				messageId: true,
+				conversationId: true,
+				role: true,
+				createdAt: true,
+			},
+		}),
+	]);
+
+	if (
+		!userMessage ||
+		userMessage.conversationId !== parsed.data.conversationId ||
+		userMessage.role !== "user"
+	) {
+		res.status(400).json({ message: "Invalid user message" });
+		return;
+	}
+
+	if (
+		!assistantMessage ||
+		assistantMessage.conversationId !== parsed.data.conversationId ||
+		assistantMessage.role !== "assistant"
+	) {
+		res.status(400).json({ message: "Invalid assistant message" });
+		return;
+	}
+
 	res.writeHead(200, {
 		"Content-Type": "text/event-stream; charset=utf-8",
 		"Cache-Control": "no-cache, no-transform",
@@ -116,12 +160,8 @@ export default async function handler(
 	req.on("close", handleClose);
 	req.on("aborted", handleClose);
 
-	const safeWrite = (
-		event: string,
-		data: Record<string, unknown>,
-	): void => {
-		if (abortController.signal.aborted || res.writableEnded || res.finished)
-			return;
+	const safeWrite = (event: string, data: Record<string, unknown>): void => {
+		if (abortController.signal.aborted || res.writableEnded || res.finished) return;
 		try {
 			writeSseEvent(res, event, data);
 		} catch {
@@ -138,6 +178,7 @@ export default async function handler(
 		if (sentStart) return;
 		sentStart = true;
 		safeWrite("start", {
+			retry: true,
 			conversationId: parsed.data.conversationId,
 			assistantMessageId,
 			userMessageId: userMessageId ?? "",
@@ -152,12 +193,19 @@ export default async function handler(
 		const result = await chatStream(
 			{
 				conversationId: parsed.data.conversationId,
-				message: parsed.data.message,
+				message: "",
 				aiId: parsed.data.aiId,
-				attachments: parsed.data.attachments,
+				attachments: [],
 				organizationId: session.activeOrganizationId,
 				userId: user.id,
 				uiLocale: req.cookies.DOKPLOY_LOCALE,
+				persistUserMessage: false,
+				historyBefore: {
+					before: assistantMessage.createdAt,
+					beforeMessageId: assistantMessage.messageId,
+				},
+				assistantMessageId: assistantMessage.messageId,
+				sourceUserMessageId: userMessage.messageId,
 			},
 			{
 				abortSignal: abortController.signal,
@@ -176,14 +224,14 @@ export default async function handler(
 				},
 				onToolCall: (toolCallId, toolName, args) => {
 					toolCalls++;
-					safeWrite("tool-call", {
+					safeWrite("tool-call", { toolCallId, toolName, arguments: args });
+				},
+				onToolResult: (toolCallId, toolName, resultPayload) => {
+					safeWrite("tool-result", {
 						toolCallId,
 						toolName,
-						arguments: args,
+						result: resultPayload,
 					});
-				},
-				onToolResult: (toolCallId, toolName, result) => {
-					safeWrite("tool-result", { toolCallId, toolName, result });
 				},
 				onError: (message) => {
 					safeWrite("stream-error", { message });
@@ -193,7 +241,7 @@ export default async function handler(
 
 		const messageId = result?.message?.messageId;
 		console.log(
-			`[AI Stream] Completed: ${textChunks} text chunks, ${reasoningChunks} reasoning chunks, ${toolCalls} tool calls, message: ${messageId ?? ""}`,
+			`[AI Retry] Completed: ${textChunks} text chunks, ${reasoningChunks} reasoning chunks, ${toolCalls} tool calls, message: ${messageId ?? ""}`,
 		);
 
 		safeWrite("done", {
@@ -217,9 +265,6 @@ export default async function handler(
 
 export const config = {
 	api: {
-		bodyParser: {
-			sizeLimit: "15mb",
-		},
 		responseLimit: false,
 	},
 };

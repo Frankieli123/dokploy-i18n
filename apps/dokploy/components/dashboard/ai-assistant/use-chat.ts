@@ -187,6 +187,7 @@ export interface RetryContext {
 	content: string;
 	attachments: NonNullable<Message["attachments"]>;
 	removeMessageIds: Set<string>;
+	sourceUserMessageId: string;
 }
 
 export interface UseChatOptions {
@@ -483,7 +484,12 @@ export function resolveRetryContext(
 		}
 	}
 
-	return { content, attachments, removeMessageIds };
+	return {
+		content,
+		attachments,
+		removeMessageIds,
+		sourceUserMessageId: sourceUserMessage.messageId,
+	};
 }
 
 export function useChat(options: UseChatOptions = {}) {
@@ -3648,10 +3654,231 @@ export function useChat(options: UseChatOptions = {}) {
 		setConversationPendingApprovalState,
 	]);
 
+	const retryChatAssistantMessage = useCallback(
+		async (params: {
+			conversationId: string;
+			aiId: string;
+			userMessageId: string;
+			assistantMessageId: string;
+		}) => {
+			const streamConversationId = normalizeConversationValue(params.conversationId);
+			const assistantMessageId = params.assistantMessageId.trim();
+			const userMessageId = params.userMessageId.trim();
+			if (!streamConversationId || !assistantMessageId || !userMessageId) return;
+
+			const locks = sendInFlightByConversationRef.current;
+			if (locks.has(streamConversationId)) return;
+			locks.add(streamConversationId);
+
+			const controller = new AbortController();
+			try {
+				stopRequestedConversationIds.delete(streamConversationId);
+				setConversationLoadingState(streamConversationId, true);
+				setConversationCanContinueState(streamConversationId, false);
+				setConversationPendingApprovalState(streamConversationId, null);
+				setConversationAbortControllerState(streamConversationId, controller);
+
+				const response = await fetch("/api/ai/retry", {
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						Accept: "text/event-stream",
+					},
+					body: JSON.stringify({
+						conversationId: streamConversationId,
+						aiId: params.aiId,
+						userMessageId,
+						assistantMessageId,
+					}),
+					signal: controller.signal,
+				});
+
+				if (!response.ok) {
+					const errorText = await response.text().catch(() => "");
+					throw new Error(errorText || `Request failed (${response.status})`);
+				}
+				if (!response.body) {
+					throw new Error("settings.ai.errors.streamingResponseNotAvailable");
+				}
+
+				let lastRefetchAt = 0;
+				const maybeRefetch = () => {
+					const now = Date.now();
+					if (now - lastRefetchAt < 500) return;
+					lastRefetchAt = now;
+					void refetchMessages().catch(() => {});
+				};
+
+				for await (const evt of readSseStream(response.body)) {
+					if (controller.signal.aborted) break;
+					if (evt.event === "ping") continue;
+					if (evt.event === "done") {
+						try {
+							const payload = JSON.parse(evt.data) as { needsContinue?: unknown };
+							setConversationCanContinueState(
+								streamConversationId,
+								payload.needsContinue === true,
+							);
+						} catch {}
+						maybeRefetch();
+						break;
+					}
+					if (evt.event === "start") {
+						maybeRefetch();
+						continue;
+					}
+					if (evt.event === "error" || evt.event === "stream-error") {
+						const payload = JSON.parse(evt.data) as {
+							message?: string;
+							error?: string;
+						};
+						throw new Error(
+							payload.message ||
+								payload.error ||
+								"settings.ai.errors.streamingError",
+						);
+					}
+					maybeRefetch();
+				}
+
+				await refetchMessages().catch(() => {});
+			} catch (error) {
+				if (!isAbortLikeError(error)) {
+					options.onError?.(error as Error);
+				}
+			} finally {
+				setConversationAbortControllerState(streamConversationId, null);
+				setConversationLoadingState(streamConversationId, false);
+				locks.delete(streamConversationId);
+			}
+		},
+		[
+			options,
+			refetchMessages,
+			setConversationAbortControllerState,
+			setConversationCanContinueState,
+			setConversationLoadingState,
+			setConversationPendingApprovalState,
+		],
+	);
+
+	const reconnectAgentRun = useCallback(
+		async (params: { conversationId: string; runId: string }) => {
+			const streamConversationId = normalizeConversationValue(params.conversationId);
+			const runId = params.runId.trim();
+			if (!streamConversationId || !runId) return;
+
+			const locks = sendInFlightByConversationRef.current;
+			if (locks.has(streamConversationId)) return;
+			locks.add(streamConversationId);
+
+			const controller = new AbortController();
+			try {
+				setConversationLoadingState(streamConversationId, true);
+				setConversationAbortControllerState(streamConversationId, controller);
+
+				const response = await fetch("/api/ai/agent/reconnect", {
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						Accept: "text/event-stream",
+					},
+					body: JSON.stringify({ conversationId: streamConversationId, runId }),
+					signal: controller.signal,
+				});
+
+				if (!response.ok) {
+					const errorText = await response.text().catch(() => "");
+					throw new Error(errorText || `Request failed (${response.status})`);
+				}
+
+				if (!response.body) {
+					throw new Error("settings.ai.errors.streamingResponseNotAvailable");
+				}
+
+				let lastRefetchAt = 0;
+				const maybeRefetch = () => {
+					const now = Date.now();
+					if (now - lastRefetchAt < 800) return;
+					lastRefetchAt = now;
+					void refetchMessages().catch(() => {});
+				};
+
+				for await (const evt of readSseStream(response.body)) {
+					if (controller.signal.aborted) break;
+					if (evt.event === "ping") continue;
+					if (evt.event === "done") {
+						maybeRefetch();
+						break;
+					}
+					if (evt.event === "error" || evt.event === "stream-error") {
+						const payload = JSON.parse(evt.data) as { message?: string };
+						throw new Error(payload.message || "settings.ai.errors.streamingError");
+					}
+					maybeRefetch();
+				}
+			} catch (error) {
+				if (!isAbortLikeError(error)) {
+					options.onError?.(error as Error);
+				}
+			} finally {
+				setConversationAbortControllerState(streamConversationId, null);
+				setConversationLoadingState(streamConversationId, false);
+				locks.delete(streamConversationId);
+			}
+		},
+		[
+			options,
+			refetchMessages,
+			setConversationAbortControllerState,
+			setConversationLoadingState,
+		],
+	);
+
 	const retryMessage = useCallback(
 		async (messageId: string, aiId: string, isAgentMode = false) => {
+			const target = messages.find((m) => m.messageId === messageId);
 			const retryContext = resolveRetryContext(messages, messageId);
 			if (!retryContext) return;
+
+			const targetConversationId = normalizeConversationValue(
+				target?.conversationId ?? conversationId ?? "",
+			);
+
+			const isTemp =
+				messageId.startsWith("temp-") ||
+				retryContext.sourceUserMessageId.startsWith("temp-");
+
+			if (
+				target &&
+				!isTemp &&
+				targetConversationId.length > 0 &&
+				target.role === "assistant"
+			) {
+				const isAgentMessage =
+					target.kind === "agent" ||
+					(typeof target.runId === "string" && target.runId.trim().length > 0);
+				if (isAgentMessage) {
+					const runId =
+						typeof target.runId === "string" && target.runId.trim().length > 0
+							? target.runId.trim()
+							: messageId.startsWith("agent-run-")
+								? messageId.slice("agent-run-".length)
+								: "";
+					if (runId) {
+						await reconnectAgentRun({ conversationId: targetConversationId, runId });
+						return;
+					}
+				} else {
+					await retryChatAssistantMessage({
+						conversationId: targetConversationId,
+						aiId,
+						userMessageId: retryContext.sourceUserMessageId,
+						assistantMessageId: messageId,
+					});
+					return;
+				}
+			}
 
 			setPendingMessages((prev) =>
 				prev.filter((m) => !retryContext.removeMessageIds.has(m.messageId)),
@@ -3664,7 +3891,13 @@ export function useChat(options: UseChatOptions = {}) {
 				retryContext.attachments,
 			);
 		},
-		[messages, send],
+		[
+			conversationId,
+			messages,
+			reconnectAgentRun,
+			retryChatAssistantMessage,
+			send,
+		],
 	);
 
 	const openConversation = useCallback((nextConversationId: string) => {

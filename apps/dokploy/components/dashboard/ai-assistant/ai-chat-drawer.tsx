@@ -4,6 +4,7 @@ import {
 	AlertTriangle,
 	Bot,
 	Check,
+	CheckCircle2,
 	History,
 	Laptop,
 	Loader2,
@@ -1220,7 +1221,7 @@ function ConversationHistoryDialog(props: {
 													{t("ai.chat.history.status.pendingApproval")}
 												</span>
 											) : showDoneCheck ? (
-												<Check className="h-4 w-4 shrink-0 text-emerald-600" />
+												<CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
 											) : null}
 										</div>
 										<span className="text-xs text-muted-foreground tabular-nums">

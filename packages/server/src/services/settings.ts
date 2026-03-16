@@ -70,6 +70,106 @@ const normalizeUpdateTagsUrl = (tagsUrl?: string | null) => {
 	}
 };
 
+type SemverIdentifier = number | string;
+
+type ParsedSemver = {
+	major: number;
+	minor: number;
+	patch: number;
+	prerelease: SemverIdentifier[];
+};
+
+const I18N_TAG_MARKER = "-i18n";
+
+const semverTagRegex = /^v(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
+
+const parseSemverTag = (tag: string): ParsedSemver | null => {
+	const match = semverTagRegex.exec(tag.trim());
+	if (!match) return null;
+	const major = Number.parseInt(match[1] ?? "", 10);
+	const minor = Number.parseInt(match[2] ?? "", 10);
+	const patch = Number.parseInt(match[3] ?? "", 10);
+	if (![major, minor, patch].every(Number.isFinite)) return null;
+
+	const prereleaseRaw = match[4];
+	const prerelease = prereleaseRaw
+		? prereleaseRaw
+				.split(".")
+				.filter(Boolean)
+				.map((id) => (/^\d+$/.test(id) ? Number.parseInt(id, 10) : id))
+		: [];
+
+	return { major, minor, patch, prerelease };
+};
+
+const compareSemver = (a: ParsedSemver, b: ParsedSemver): number => {
+	if (a.major !== b.major) return a.major < b.major ? -1 : 1;
+	if (a.minor !== b.minor) return a.minor < b.minor ? -1 : 1;
+	if (a.patch !== b.patch) return a.patch < b.patch ? -1 : 1;
+
+	const aPre = a.prerelease;
+	const bPre = b.prerelease;
+	const aEmpty = aPre.length === 0;
+	const bEmpty = bPre.length === 0;
+	if (aEmpty && bEmpty) return 0;
+	if (aEmpty) return 1;
+	if (bEmpty) return -1;
+
+	const len = Math.max(aPre.length, bPre.length);
+	for (let i = 0; i < len; i++) {
+		const ai = aPre[i];
+		const bi = bPre[i];
+		if (ai === undefined) return -1;
+		if (bi === undefined) return 1;
+		if (ai === bi) continue;
+
+		const aNum = typeof ai === "number";
+		const bNum = typeof bi === "number";
+		if (aNum && bNum) return ai < bi ? -1 : 1;
+		if (aNum) return -1;
+		if (bNum) return 1;
+		return String(ai) < String(bi) ? -1 : 1;
+	}
+
+	return 0;
+};
+
+const pickLatestVersionTag = (
+	tags: { name: string; digest: string }[],
+	options?: { preferSubstring?: string },
+): { name: string; digest: string } | null => {
+	const parsed = tags
+		.map((t) => {
+			const name = typeof t.name === "string" ? t.name.trim() : "";
+			const digest = typeof t.digest === "string" ? t.digest.trim() : "";
+			if (!name || !digest) return null;
+			const version = parseSemverTag(name);
+			return version ? { name, digest, version } : null;
+		})
+		.filter((t): t is NonNullable<typeof t> => t !== null);
+
+	if (parsed.length === 0) return null;
+
+	const prefer = options?.preferSubstring?.trim().toLowerCase() ?? "";
+	let candidates = parsed;
+	if (prefer.length > 0) {
+		const filtered = parsed.filter((t) =>
+			t.name.toLowerCase().includes(prefer),
+		);
+		if (filtered.length > 0) candidates = filtered;
+	}
+
+	const first = candidates[0];
+	if (!first) return null;
+
+	let best = first;
+	for (const candidate of candidates.slice(1)) {
+		if (compareSemver(candidate.version, best.version) > 0) best = candidate;
+	}
+
+	return { name: best.name, digest: best.digest };
+};
+
 /** Returns current Dokploy docker image tag or `latest` by default. */
 export const getDokployImageTag = () => {
 	return process.env.RELEASE_TAG || "latest";
@@ -161,8 +261,13 @@ export const getUpdateData = async (
 	}
 
 	if (imageTag === "latest") {
-		const versionedTag = allResults.find(
-			(t) => t.digest === searchedDigest && t.name.startsWith("v"),
+		const versionedTag = pickLatestVersionTag(
+			allResults.filter(
+				(t) =>
+					t.digest === searchedDigest &&
+					typeof t.name === "string" &&
+					t.name.toLowerCase().includes(I18N_TAG_MARKER),
+			),
 		);
 
 		if (!versionedTag) {
@@ -173,6 +278,22 @@ export const getUpdateData = async (
 		const updateAvailable = digest !== currentDigest;
 
 		return { latestVersion, updateAvailable };
+	}
+
+	if (parseSemverTag(imageTag)) {
+		const latest = pickLatestVersionTag(
+			allResults.filter(
+				(t) =>
+					typeof t.name === "string" &&
+					t.name.toLowerCase().includes(I18N_TAG_MARKER),
+			),
+		);
+		if (latest) {
+			return {
+				latestVersion: latest.name,
+				updateAvailable: latest.digest !== currentDigest,
+			};
+		}
 	}
 	const updateAvailable = searchedDigest !== currentDigest;
 	return { latestVersion: imageTag, updateAvailable };
