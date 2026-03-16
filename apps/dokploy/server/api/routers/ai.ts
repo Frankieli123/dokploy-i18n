@@ -6,6 +6,7 @@ import {
 	apiCreateAi,
 	apiCreateAiMcpServer,
 	apiCreateConversation,
+	apiConversationIndicators,
 	apiDeleteAiMcpServer,
 	apiFindConversation,
 	apiGetAgentEvents,
@@ -46,6 +47,7 @@ import {
 	testAiEmbeddingProvider,
 	listAiMcpServersByOrganizationId,
 	testAiMcpServer,
+	getConversationIndicators,
 	getConversationById,
 	getConversationIdForToolExecution,
 	getAgentEventMessages,
@@ -391,10 +393,10 @@ export const aiRouter = createTRPCRouter({
 	// Conversation Management
 	// ============================================
 
-	conversations: createTRPCRouter({
-		create: protectedProcedure
-			.input(apiCreateConversation)
-			.mutation(async ({ ctx, input }) => {
+		conversations: createTRPCRouter({
+			create: protectedProcedure
+				.input(apiCreateConversation)
+				.mutation(async ({ ctx, input }) => {
 				const normalizedAiId =
 					typeof input.aiId === "string" && input.aiId.trim().length > 0
 						? input.aiId
@@ -427,21 +429,31 @@ export const aiRouter = createTRPCRouter({
 				return conversation;
 			}),
 
-		list: protectedProcedure
-			.input(apiListConversations)
-			.query(async ({ ctx, input }) => {
-				return await listConversations({
-					organizationId: ctx.session.activeOrganizationId,
-					userId: ctx.user.id,
-					...input,
-				});
-			}),
+			list: protectedProcedure
+				.input(apiListConversations)
+				.query(async ({ ctx, input }) => {
+					return await listConversations({
+						organizationId: ctx.session.activeOrganizationId,
+						userId: ctx.user.id,
+						...input,
+					});
+				}),
 
-		update: protectedProcedure
-			.input(apiUpdateConversation)
-			.mutation(async ({ ctx, input }) => {
-				const conversation = await getConversationById(input.conversationId);
-				if (conversation.organizationId !== ctx.session.activeOrganizationId) {
+			indicators: protectedProcedure
+				.input(apiConversationIndicators)
+				.query(async ({ ctx, input }) => {
+					return await getConversationIndicators({
+						organizationId: ctx.session.activeOrganizationId,
+						userId: ctx.user.id,
+						conversationIds: input.conversationIds,
+					});
+				}),
+
+			update: protectedProcedure
+				.input(apiUpdateConversation)
+				.mutation(async ({ ctx, input }) => {
+					const conversation = await getConversationById(input.conversationId);
+					if (conversation.organizationId !== ctx.session.activeOrganizationId) {
 					throw new TRPCError({
 						code: "UNAUTHORIZED",
 						message: "settings.ai.errors.noAccessToConversation",

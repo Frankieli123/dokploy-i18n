@@ -1709,6 +1709,111 @@ export const listConversations = async (params: {
 	return conversations;
 };
 
+export const getConversationIndicators = async (params: {
+	organizationId: string;
+	userId: string;
+	conversationIds: string[];
+}) => {
+	const ids = Array.from(
+		new Set(
+			(params.conversationIds || [])
+				.map((id) => (typeof id === "string" ? id.trim() : ""))
+				.filter((id) => id.length > 0),
+		),
+	).slice(0, 100);
+	if (ids.length === 0) return {};
+
+	const conversations = await db.query.aiConversations.findMany({
+		where: and(
+			eq(aiConversations.organizationId, params.organizationId),
+			eq(aiConversations.userId, params.userId),
+			inArray(aiConversations.conversationId, ids),
+		),
+		columns: {
+			conversationId: true,
+		},
+	});
+
+	const allowedIds = conversations
+		.map((c) => c.conversationId)
+		.filter((id): id is string => typeof id === "string" && id.length > 0);
+	if (allowedIds.length === 0) return {};
+
+	const sendingAssistantMessages = await db.query.aiDisplayMessages.findMany({
+		where: and(
+			inArray(aiDisplayMessages.conversationId, allowedIds),
+			eq(aiDisplayMessages.role, "assistant"),
+			eq(aiDisplayMessages.status, "sending"),
+		),
+		columns: {
+			conversationId: true,
+		},
+	});
+	const sendingByConversationId = new Set(
+		sendingAssistantMessages
+			.map((row) => row.conversationId)
+			.filter((id): id is string => typeof id === "string" && id.length > 0),
+	);
+
+	const runningRuns = await db.query.aiRuns.findMany({
+		where: and(
+			inArray(aiRuns.conversationId, allowedIds),
+			inArray(aiRuns.status, ["pending", "planning", "executing", "verifying"]),
+		),
+		columns: {
+			conversationId: true,
+		},
+	});
+	const runningByConversationId = new Set(
+		runningRuns
+			.map((row) => row.conversationId)
+			.filter((id): id is string => typeof id === "string" && id.length > 0),
+	);
+
+	const waitingApprovalRuns = await db.query.aiRuns.findMany({
+		where: and(
+			inArray(aiRuns.conversationId, allowedIds),
+			eq(aiRuns.status, "waiting_approval"),
+		),
+		columns: {
+			conversationId: true,
+		},
+	});
+	const pendingApprovalByConversationId = new Set(
+		waitingApprovalRuns
+			.map((row) => row.conversationId)
+			.filter((id): id is string => typeof id === "string" && id.length > 0),
+	);
+
+	const pendingApprovalExecutions = await db.query.aiToolExecutions.findMany({
+		where: and(
+			inArray(aiToolExecutions.conversationId, allowedIds),
+			eq(aiToolExecutions.requiresApproval, true),
+			eq(aiToolExecutions.status, "pending"),
+		),
+		columns: {
+			conversationId: true,
+		},
+	});
+	for (const row of pendingApprovalExecutions) {
+		const conversationId = row.conversationId;
+		if (typeof conversationId === "string" && conversationId.length > 0) {
+			pendingApprovalByConversationId.add(conversationId);
+		}
+	}
+
+	return Object.fromEntries(
+		allowedIds.map((conversationId) => {
+			const hasPendingApproval = pendingApprovalByConversationId.has(conversationId);
+			const isRunning =
+				!hasPendingApproval &&
+				(sendingByConversationId.has(conversationId) ||
+					runningByConversationId.has(conversationId));
+			return [conversationId, { isRunning, hasPendingApproval }] as const;
+		}),
+	);
+};
+
 export const updateConversation = async (
 	conversationId: string,
 	data: {

@@ -672,6 +672,10 @@ export const apiListConversations = z.object({
 	offset: z.number().min(0).optional().default(0),
 });
 
+export const apiConversationIndicators = z.object({
+	conversationIds: z.array(z.string()).max(100).optional().default([]),
+});
+
 export const apiUpdateConversation = z.object({
 	conversationId: z.string().min(1),
 	title: z.string().optional(),

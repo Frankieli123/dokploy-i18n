@@ -800,6 +800,10 @@ export function useChat(options: UseChatOptions = {}) {
 		return getMostRecentActiveAgentRunId((serverMessages || []) as Message[]);
 	}, [serverMessages]);
 
+	const hasActiveAgentRun = useMemo(() => {
+		return mostRecentActiveRunId !== null;
+	}, [mostRecentActiveRunId]);
+
 	useEffect(() => {
 		if (!conversationId) return;
 		setConversationAgentRunId(conversationId, mostRecentActiveRunId ?? null);
@@ -3913,16 +3917,17 @@ export function useChat(options: UseChatOptions = {}) {
 		setConversationId(normalized);
 	}, []);
 
-	return {
-		ensureConversation,
-		conversationId,
-		messages,
-		isLoading,
-		isLoadingByConversation,
-		areToolApprovalsDisabled,
-		setToolApprovalsDisabled,
-		toolBudgetMode,
-		setToolBudgetMode,
+		return {
+			ensureConversation,
+			conversationId,
+			messages,
+			isLoading,
+			hasActiveAgentRun,
+			isLoadingByConversation,
+			areToolApprovalsDisabled,
+			setToolApprovalsDisabled,
+			toolBudgetMode,
+			setToolBudgetMode,
 		canContinueChat,
 		continueChat,
 		toolOutcomes,

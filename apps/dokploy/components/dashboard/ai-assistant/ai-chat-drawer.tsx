@@ -236,14 +236,15 @@ export function AIChatDrawer({
 			enabled: isOpen,
 		});
 
-	const {
-		messages,
-		isLoading,
-		isLoadingByConversation,
-		conversationId,
-		areToolApprovalsDisabled,
-		setToolApprovalsDisabled,
-		canContinueChat,
+		const {
+			messages,
+			isLoading,
+			hasActiveAgentRun,
+			isLoadingByConversation,
+			conversationId,
+			areToolApprovalsDisabled,
+			setToolApprovalsDisabled,
+			canContinueChat,
 		continueChat,
 		send,
 		reset,
@@ -287,6 +288,8 @@ export function AIChatDrawer({
 		}
 		return out;
 	}, [pendingApprovalByConversation]);
+
+	const isBusy = isLoading || hasActiveAgentRun;
 
 	const previousConversationIdRef = useRef<string | undefined>(undefined);
 	useEffect(() => {
@@ -541,7 +544,7 @@ export function AIChatDrawer({
 			}
 		}
 
-		if (!selectedAiId || isLoading) return;
+			if (!selectedAiId || isBusy) return;
 
 		type ImageAttachment = {
 			type: "image";
@@ -596,19 +599,19 @@ export function AIChatDrawer({
 		await send(message, selectedAiId, isAgentMode, attachments);
 	};
 
-	const handleKeyPress = (e: React.KeyboardEvent) => {
-		if ((e.nativeEvent as { isComposing?: boolean }).isComposing) {
-			return;
-		}
-		if (e.key === "Enter" && !e.shiftKey) {
-			if (!hasAiConfigs || !selectedAiId || isLoading || !!pendingApproval) {
-				// Allow newline while sending is blocked (still lets user draft the next message).
+		const handleKeyPress = (e: React.KeyboardEvent) => {
+			if ((e.nativeEvent as { isComposing?: boolean }).isComposing) {
 				return;
 			}
-			e.preventDefault();
-			handleSend();
-		}
-	};
+			if (e.key === "Enter" && !e.shiftKey) {
+				if (!hasAiConfigs || !selectedAiId || isBusy || !!pendingApproval) {
+					// Allow newline while sending is blocked (still lets user draft the next message).
+					return;
+				}
+				e.preventDefault();
+				handleSend();
+			}
+		};
 
 	useEffect(() => {
 		const el = inputRef.current;
@@ -862,7 +865,7 @@ export function AIChatDrawer({
 							</div>
 
 							<div className="shrink-0">
-								{isLoading ? (
+								{isBusy ? (
 									<Button
 										onClick={stopGeneration}
 										variant="destructive"
@@ -900,16 +903,16 @@ export function AIChatDrawer({
 							className="hidden"
 							onChange={handleSelectImages}
 						/>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							className="h-8 w-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
-							disabled={!hasAiConfigs || isLoading || !!pendingApproval}
-							onClick={() => fileInputRef.current?.click()}
-							title="Attach images"
-							aria-label="Attach images"
-						>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon"
+								className="h-8 w-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+								disabled={!hasAiConfigs || isBusy || !!pendingApproval}
+								onClick={() => fileInputRef.current?.click()}
+								title="Attach images"
+								aria-label="Attach images"
+							>
 							<Plus className="h-5 w-5" />
 						</Button>
 
@@ -918,23 +921,23 @@ export function AIChatDrawer({
 								type="button"
 								variant="ghost"
 								className="h-8 w-auto shrink-0 px-2 text-xs text-muted-foreground hover:text-foreground hover:bg-transparent"
-								disabled={
-									!hasAiConfigs ||
-									isLoading ||
-									!!pendingApproval ||
-									!selectedAiId
-								}
-								onClick={() => void continueChat(selectedAiId)}
-							>
+									disabled={
+										!hasAiConfigs ||
+										isBusy ||
+										!!pendingApproval ||
+										!selectedAiId
+									}
+									onClick={() => void continueChat(selectedAiId)}
+								>
 								{t("ai.chat.continue")}
 							</Button>
 						)}
 
-						<Select
-							value={isAgentMode ? "agent" : "chat"}
-							onValueChange={(v) => setIsAgentMode(v === "agent")}
-							disabled={!hasAiConfigs || isLoading || !!pendingApproval}
-						>
+							<Select
+								value={isAgentMode ? "agent" : "chat"}
+								onValueChange={(v) => setIsAgentMode(v === "agent")}
+								disabled={!hasAiConfigs || isBusy || !!pendingApproval}
+							>
 							<SelectTrigger className="h-8 w-auto shrink-0 gap-2 border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:bg-transparent hover:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0">
 								<SelectValue>
 									<span className="flex items-center gap-1.5">
@@ -967,11 +970,11 @@ export function AIChatDrawer({
 							</SelectContent>
 						</Select>
 
-						<Select
-							value={areToolApprovalsDisabled ? "auto" : "manual"}
-							onValueChange={(v) => void setToolApprovalsDisabled(v === "auto")}
-							disabled={!hasAiConfigs || isLoading || !!pendingApproval}
-						>
+							<Select
+								value={areToolApprovalsDisabled ? "auto" : "manual"}
+								onValueChange={(v) => void setToolApprovalsDisabled(v === "auto")}
+								disabled={!hasAiConfigs || isBusy || !!pendingApproval}
+							>
 							<SelectTrigger className="h-8 w-auto shrink-0 gap-2 border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:bg-transparent hover:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0">
 								<SelectValue>
 									<span className="flex items-center gap-1.5">
@@ -1072,6 +1075,28 @@ function ConversationHistoryDialog(props: {
 		},
 	);
 
+	const conversationIds = useMemo(() => {
+		return Array.from(
+			new Set(
+				(conversations ?? [])
+					.map((c) =>
+						typeof c?.conversationId === "string" ? c.conversationId.trim() : "",
+					)
+					.filter((id) => id.length > 0),
+			),
+		);
+	}, [conversations]);
+
+	const { data: conversationIndicators, isLoading: isLoadingIndicators } =
+		api.ai.conversations.indicators.useQuery(
+			{ conversationIds },
+			{
+				enabled: open && conversationIds.length > 0,
+				refetchOnWindowFocus: false,
+				refetchInterval: open ? 2500 : false,
+			},
+		);
+
 	useEffect(() => {
 		if (!open) {
 			setSearch("");
@@ -1168,19 +1193,21 @@ function ConversationHistoryDialog(props: {
 								<p>{t("search.noResults")}</p>
 							</div>
 						) : (
-							filteredConversations.map((c) => {
-								const isCurrent =
-									c.conversationId === props.currentConversationId;
-								const isRunning = props.runningConversationIds.has(
-									c.conversationId,
-								);
-								const isPendingApproval =
-									props.pendingApprovalConversationIds.has(c.conversationId);
-								const title =
-									typeof c.title === "string" && c.title.trim().length > 0
-										? c.title
-										: t("ai.chat.untitled");
-								const ts =
+								filteredConversations.map((c) => {
+									const isCurrent =
+										c.conversationId === props.currentConversationId;
+									const indicator = conversationIndicators?.[c.conversationId];
+									const isRunning =
+										props.runningConversationIds.has(c.conversationId) ||
+										indicator?.isRunning === true;
+									const isPendingApproval =
+										props.pendingApprovalConversationIds.has(c.conversationId) ||
+										indicator?.hasPendingApproval === true;
+									const title =
+										typeof c.title === "string" && c.title.trim().length > 0
+											? c.title
+											: t("ai.chat.untitled");
+									const ts =
 									typeof c.updatedAt === "string" && c.updatedAt.length > 0
 										? c.updatedAt
 										: c.createdAt;
@@ -1191,39 +1218,43 @@ function ConversationHistoryDialog(props: {
 									lastSeenAt > 0
 										? lastSeenAt
 										: 0;
-								const updatedMs = Date.parse(ts ?? "");
-								const isUnread =
-									Number.isFinite(updatedMs) && updatedMs > lastSeenMs;
-								const showDoneCheck =
-									!isCurrent && !isRunning && !isPendingApproval && isUnread;
-								return (
-									<Button
-										key={c.conversationId}
-										variant={isCurrent ? "secondary" : "ghost"}
-										className="w-full min-w-0 justify-start h-auto px-3 py-2 flex-col items-start gap-1"
+									const updatedMs = Date.parse(ts ?? "");
+									const isUnread =
+										Number.isFinite(updatedMs) && updatedMs > lastSeenMs;
+									const showDoneCheck =
+										!isLoadingIndicators &&
+										!isCurrent &&
+										!isRunning &&
+										!isPendingApproval &&
+										isUnread;
+									return (
+										<Button
+											key={c.conversationId}
+											variant={isCurrent ? "secondary" : "ghost"}
+											className="w-full min-w-0 justify-start h-auto px-3 py-2 flex-col items-start gap-1"
 										onClick={() => {
 											props.onSelect(c.conversationId);
 											setOpen(false);
 										}}
 									>
-										<div className="flex w-full min-w-0 items-start gap-2">
-											<span className="min-w-0 flex-1 text-left text-sm font-medium whitespace-normal [overflow-wrap:anywhere] line-clamp-2">
-												{title}
-											</span>
-											{isRunning ? (
-												<span className="shrink-0 inline-flex items-center gap-1 text-xs text-muted-foreground">
-													<Loader2 className="h-3.5 w-3.5 animate-spin" />
+											<div className="flex w-full min-w-0 items-start gap-2">
+												<span className="min-w-0 flex-1 text-left text-sm font-medium whitespace-normal [overflow-wrap:anywhere] line-clamp-2">
+													{title}
 												</span>
-											) : isPendingApproval ? (
-												<span className="shrink-0 inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
-													<AlertTriangle className="h-3.5 w-3.5" />
-													{t("ai.chat.history.status.pendingApproval")}
-												</span>
-											) : showDoneCheck ? (
-												<CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
-											) : null}
-										</div>
-										<span className="text-xs text-muted-foreground tabular-nums">
+												{isPendingApproval ? (
+													<span className="shrink-0 inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+														<AlertTriangle className="h-3.5 w-3.5" />
+														{t("ai.chat.history.status.pendingApproval")}
+													</span>
+												) : isRunning ? (
+													<span className="shrink-0 inline-flex items-center gap-1 text-xs text-muted-foreground">
+														<Loader2 className="h-3.5 w-3.5 animate-spin" />
+													</span>
+												) : showDoneCheck ? (
+													<CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
+												) : null}
+											</div>
+											<span className="text-xs text-muted-foreground tabular-nums">
 											{new Date(ts).toLocaleString()}
 										</span>
 									</Button>
