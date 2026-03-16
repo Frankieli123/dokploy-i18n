@@ -197,7 +197,7 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 		{
 			retry: false,
 			refetchOnWindowFocus: false,
-			enabled: type === "compose" && !!id,
+			enabled: type === "compose" && !!id && isOpen,
 		},
 	);
 
