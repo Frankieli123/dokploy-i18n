@@ -292,6 +292,50 @@ function ThinkingBlock({
 	);
 }
 
+function splitInlineThinkContent(value: string): {
+	content: string;
+	reasoning: string;
+} {
+	const source = String(value ?? "");
+	if (!source) return { content: "", reasoning: "" };
+
+	const lower = source.toLowerCase();
+	const openTag = "<think>";
+	const closeTag = "</think>";
+	let cursor = 0;
+	const reasoningParts: string[] = [];
+
+	while (cursor < source.length) {
+		const rest = source.slice(cursor);
+		const whitespace = rest.match(/^\s*/)?.[0] ?? "";
+		const openIndex = cursor + whitespace.length;
+		if (!lower.startsWith(openTag, openIndex)) break;
+
+		cursor = openIndex + openTag.length;
+		const closeIndex = lower.indexOf(closeTag, cursor);
+		if (closeIndex === -1) {
+			return { content: source, reasoning: "" };
+		}
+
+		reasoningParts.push(
+			source
+				.slice(cursor, closeIndex)
+				.replace(/^\s*\n?/, "")
+				.replace(/\n+\s*$/, ""),
+		);
+		cursor = closeIndex + closeTag.length;
+	}
+
+	if (reasoningParts.length === 0) {
+		return { content: source, reasoning: "" };
+	}
+
+	return {
+		content: source.slice(cursor).replace(/^\s*\n?/, ""),
+		reasoning: reasoningParts.filter(Boolean).join("\n\n").trim(),
+	};
+}
+
 function getEffectiveExecutionId(toolCall: ToolCall): string {
 	if (
 		typeof toolCall.executionId === "string" &&
@@ -370,15 +414,21 @@ export function MessageBubble({
 		? message.attachments
 		: [];
 	const hasAttachments = attachments.length > 0;
+	const inlineThink = isUser
+		? { content: message.content ?? "", reasoning: "" }
+		: splitInlineThinkContent(displayedContent);
 	const bubbleText = (() => {
 		if (isUser) return message.content ?? "";
-		return displayedContent;
+		return inlineThink.content;
 	})();
 
 	const toolCalls = Array.isArray(message.toolCalls) ? message.toolCalls : [];
 	const hasToolCalls = toolCalls.length > 0;
-	const reasoningText =
+	const explicitReasoningText =
 		!isUser && typeof message.reasoning === "string" ? message.reasoning : "";
+	const reasoningText = explicitReasoningText.trim().length
+		? explicitReasoningText
+		: inlineThink.reasoning;
 	const hasReasoning = !isUser && reasoningText.trim().length > 0;
 
 	const approveHandler = areToolApprovalsDisabled
