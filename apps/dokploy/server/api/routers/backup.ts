@@ -74,6 +74,84 @@ interface RcloneFile {
 	};
 }
 
+interface RcloneSizeResult {
+	bytes?: number;
+}
+
+const runRcloneCommand = async (command: string, serverId?: string) => {
+	if (serverId) {
+		const result = await execAsyncRemote(serverId, command);
+		return result.stdout;
+	}
+
+	const result = await execAsync(command);
+	return result.stdout;
+};
+
+const getDirectorySize = async (
+	bucketPath: string,
+	filePath: string,
+	rcloneFlags: string[],
+	serverId?: string,
+) => {
+	const sizeCommand = `rclone size ${rcloneFlags.join(" ")} "${bucketPath}/${normalizeS3Path(filePath)}" --json 2>/dev/null`;
+
+	try {
+		const stdout = await runRcloneCommand(sizeCommand, serverId);
+		if (!stdout.trim()) return 0;
+
+		const sizeResult = JSON.parse(stdout) as RcloneSizeResult;
+		return sizeResult.bytes ?? 0;
+	} catch (error) {
+		console.error(`Error getting directory size for ${filePath}:`, error);
+		return 0;
+	}
+};
+
+const enrichDirectorySizes = async (
+	files: RcloneFile[],
+	bucketPath: string,
+	rcloneFlags: string[],
+	serverId?: string,
+) => {
+	const nextFiles = [...files];
+	const directoryIndexes = nextFiles.reduce<number[]>((acc, file, index) => {
+		if (file.IsDir) {
+			acc.push(index);
+		}
+		return acc;
+	}, []);
+
+	if (directoryIndexes.length === 0) return nextFiles;
+
+	const chunkSize = 5;
+	for (let index = 0; index < directoryIndexes.length; index += chunkSize) {
+		const chunk = directoryIndexes.slice(index, index + chunkSize);
+		const sizes = await Promise.all(
+			chunk.map((fileIndex) =>
+				getDirectorySize(
+					bucketPath,
+					nextFiles[fileIndex]?.Path || "",
+					rcloneFlags,
+					serverId,
+				),
+			),
+		);
+
+		chunk.forEach((fileIndex, sizeIndex) => {
+			const file = nextFiles[fileIndex];
+			if (!file) return;
+
+			nextFiles[fileIndex] = {
+				...file,
+				Size: sizes[sizeIndex] ?? file.Size,
+			};
+		});
+	}
+
+	return nextFiles;
+};
+
 export const backupRouter = createTRPCRouter({
 	create: protectedProcedure
 		.input(apiCreateBackup)
@@ -320,16 +398,10 @@ export const backupRouter = createTRPCRouter({
 
 				const searchPath = baseDir ? `${bucketPath}/${baseDir}` : bucketPath;
 				const listCommand = `rclone lsjson ${rcloneFlags.join(" ")} "${searchPath}" --no-mimetype --no-modtime 2>/dev/null`;
-
-				let stdout = "";
-
-				if (input.serverId) {
-					const result = await execAsyncRemote(input.serverId, listCommand);
-					stdout = result.stdout;
-				} else {
-					const result = await execAsync(listCommand);
-					stdout = result.stdout;
-				}
+				const stdout = await runRcloneCommand(
+					listCommand,
+					input.serverId || undefined,
+				);
 
 				let files: RcloneFile[] = [];
 				try {
@@ -348,16 +420,20 @@ export const backupRouter = createTRPCRouter({
 							Path: `${baseDir}${file.Path}`,
 						}))
 					: files;
+				const filteredResults = searchTerm
+					? results
+							.filter((file) =>
+								file.Path.toLowerCase().includes(searchTerm.toLowerCase()),
+							)
+							.slice(0, 100)
+					: results.slice(0, 100);
 
-				if (searchTerm) {
-					return results
-						.filter((file) =>
-							file.Path.toLowerCase().includes(searchTerm.toLowerCase()),
-						)
-						.slice(0, 100);
-				}
-
-				return results.slice(0, 100);
+				return await enrichDirectorySizes(
+					filteredResults,
+					bucketPath,
+					rcloneFlags,
+					input.serverId || undefined,
+				);
 			} catch (error) {
 				console.error("Error in listBackupFiles:", error);
 				throw new TRPCError({

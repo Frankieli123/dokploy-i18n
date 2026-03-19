@@ -48,68 +48,100 @@ const ALL_MOUNTS_VOLUME_NAME = "ALL";
 const ALL_MOUNTS_VOLUME_NAME_INTERNAL = "dokploy_all_mounts";
 
 const toUiVolumeName = (value?: string | null) =>
-	value === ALL_MOUNTS_VOLUME_NAME_INTERNAL ? ALL_MOUNTS_VOLUME_NAME : value || "";
+	value === ALL_MOUNTS_VOLUME_NAME_INTERNAL
+		? ALL_MOUNTS_VOLUME_NAME
+		: value || "";
 
 const isAllMountsValue = (value?: string | null) =>
 	["all", ALL_MOUNTS_VOLUME_NAME_INTERNAL].includes(
 		(value || "").trim().toLowerCase(),
 	);
 
+type MountSelectOption = {
+	Type?: string | null;
+	Source?: string | null;
+	Name?: string | null;
+	Destination?: string | null;
+};
+
+const getMountOptionValue = (mount: MountSelectOption) =>
+	mount.Type === "bind" ? mount.Source?.trim() || "" : mount.Name?.trim() || "";
+
+const getMountOptionLabel = (mount: MountSelectOption) =>
+	mount.Destination?.trim() || getMountOptionValue(mount);
+
+const renderMountSelectItem = (mount: MountSelectOption) => {
+	const value = getMountOptionValue(mount);
+	if (!value) return null;
+
+	const label = getMountOptionLabel(mount);
+
+	return (
+		<SelectItem
+			key={`${mount.Type}-${value}-${mount.Destination || ""}`}
+			value={value}
+			textValue={label}
+		>
+			<span className="whitespace-normal break-all text-left">{label}</span>
+		</SelectItem>
+	);
+};
+
 const createFormSchema = (t: (key: string) => string) =>
 	z
 		.object({
-				name: z.string().min(1, t("volumeBackups.validation.nameRequired")),
+			name: z.string().min(1, t("volumeBackups.validation.nameRequired")),
 			cronExpression: z
 				.string()
 				.min(1, t("volumeBackups.validation.cronRequired")),
-		volumeName: z
-			.string()
+			volumeName: z
+				.string()
 				.min(1, t("volumeBackups.validation.volumeNameRequired")),
-		prefix: z.string().min(1, t("backups.handle.validation.prefixRequired")),
-		keepLatestCount: z.coerce
-			.number()
-			.int()
+			prefix: z.string().min(1, t("backups.handle.validation.prefixRequired")),
+			keepLatestCount: z.coerce
+				.number()
+				.int()
 				.gte(1, t("volumeBackups.validation.keepLatestMin"))
-			.optional()
-			.nullable(),
-		turnOff: z.boolean().default(false),
-		enabled: z.boolean().default(true),
-		serviceType: z.enum([
-			"application",
-			"compose",
-			"postgres",
-			"mariadb",
-			"mongo",
-			"mysql",
-			"redis",
-		]),
-		serviceName: z.string(),
+				.optional()
+				.nullable(),
+			turnOff: z.boolean().default(false),
+			enabled: z.boolean().default(true),
+			serviceType: z.enum([
+				"application",
+				"compose",
+				"postgres",
+				"mariadb",
+				"mongo",
+				"mysql",
+				"redis",
+			]),
+			serviceName: z.string(),
 			destinationId: z
 				.string()
 				.min(1, t("volumeBackups.validation.destinationRequired")),
-	})
-	.superRefine((data, ctx) => {
-		const volumeName = data.volumeName.trim();
-		const isAbsolutePath =
-			volumeName.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(volumeName);
-		const isVolumeName = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(volumeName);
+		})
+		.superRefine((data, ctx) => {
+			const volumeName = data.volumeName.trim();
+			const isAbsolutePath =
+				volumeName.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(volumeName);
+			const isVolumeName = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(volumeName);
 
-		if (!isAbsolutePath && !isVolumeName) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: t("volumeBackups.validation.volumeNameInvalid"),
-				path: ["volumeName"],
-			});
-		}
+			if (!isAbsolutePath && !isVolumeName) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: t("volumeBackups.validation.volumeNameInvalid"),
+					path: ["volumeName"],
+				});
+			}
 
-		if (data.serviceType === "compose" && !data.serviceName) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
+			if (data.serviceType === "compose" && !data.serviceName) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
 					message: t("volumeBackups.validation.serviceNameRequired"),
-				path: ["serviceName"],
-			});
-		}
-	});
+					path: ["serviceName"],
+				});
+			}
+		});
 
 interface Props {
 	id?: string;
@@ -277,7 +309,11 @@ export const HandleVolumeBackups = ({
 		})
 			.then(() => {
 				toast.success(
-					`Volume backup ${volumeBackupId ? "updated" : "created"} successfully`,
+					t(
+						volumeBackupId
+							? "volumeBackups.handle.toast.update.success"
+							: "volumeBackups.handle.toast.create.success",
+					),
 				);
 				utils.volumeBackups.list.invalidate({
 					id,
@@ -287,7 +323,7 @@ export const HandleVolumeBackups = ({
 			})
 			.catch((error) => {
 				toast.error(
-					error instanceof Error ? error.message : "An unknown error occurred",
+					error instanceof Error ? error.message : t("common.unknownError"),
 				);
 			});
 	};
@@ -469,10 +505,7 @@ export const HandleVolumeBackups = ({
 																sideOffset={5}
 																className="max-w-[10rem]"
 															>
-																<p>
-																	Fetch: Will clone the repository and load the
-																	services
-																</p>
+																<p>{t("backups.restore.tooltip.fetch")}</p>
 															</TooltipContent>
 														</Tooltip>
 													</TooltipProvider>
@@ -499,11 +532,7 @@ export const HandleVolumeBackups = ({
 																sideOffset={5}
 																className="max-w-[10rem]"
 															>
-																<p>
-																	Cache: If you previously deployed this
-																	compose, it will read the services from the
-																	last deployment/fetch from the repository
-																</p>
+																<p>{t("backups.restore.tooltip.cache")}</p>
 															</TooltipContent>
 														</Tooltip>
 													</TooltipProvider>
@@ -549,25 +578,7 @@ export const HandleVolumeBackups = ({
 																</SelectTrigger>
 															</FormControl>
 															<SelectContent>
-													{mountsByService?.map((mount) => {
-														const value =
-															mount.Type === "bind" ? mount.Source : mount.Name;
-														if (!value) return null;
-														const label =
-															mount.Type === "bind"
-																? `${mount.Source} -> ${mount.Destination}`
-																: mount.Name;
-														return (
-															<SelectItem
-																key={`${mount.Type}-${value}-${mount.Destination || ""}`}
-																value={value}
-															>
-																<span className="whitespace-normal break-all text-left">
-																	{label}
-																</span>
-															</SelectItem>
-														);
-													})}
+																{mountsByService?.map(renderMountSelectItem)}
 															</SelectContent>
 														</Select>
 													</div>
@@ -627,25 +638,7 @@ export const HandleVolumeBackups = ({
 														</SelectTrigger>
 													</FormControl>
 													<SelectContent>
-													{mounts?.map((mount) => {
-														const value =
-															mount.Type === "bind" ? mount.Source : mount.Name;
-														if (!value) return null;
-														const label =
-															mount.Type === "bind"
-																? `${mount.Source} -> ${mount.Destination}`
-																: mount.Name;
-														return (
-															<SelectItem
-																key={`${mount.Type}-${value}-${mount.Destination || ""}`}
-																value={value}
-															>
-																<span className="whitespace-normal break-all text-left">
-																	{label}
-																</span>
-															</SelectItem>
-														);
-													})}
+														{mounts?.map(renderMountSelectItem)}
 													</SelectContent>
 												</Select>
 											</div>
@@ -683,9 +676,7 @@ export const HandleVolumeBackups = ({
 											)}
 											{...field}
 											value={
-												isAllMounts
-													? t("filter.all")
-													: (field.value ?? "")
+												isAllMounts ? t("filter.all") : (field.value ?? "")
 											}
 											onChange={(event) => {
 												if (isAllMounts) return;
@@ -708,14 +699,9 @@ export const HandleVolumeBackups = ({
 							name="prefix"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel>
-										{t("backups.field.prefixStorage")}
-									</FormLabel>
+									<FormLabel>{t("backups.field.prefixStorage")}</FormLabel>
 									<FormControl>
-										<Input
-											placeholder="/"
-											{...field}
-										/>
+										<Input placeholder="/" {...field} />
 									</FormControl>
 									<FormDescription>
 										{t("backups.handle.field.prefixDescription")}

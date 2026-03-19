@@ -3,7 +3,7 @@ import copy from "copy-to-clipboard";
 import { debounce } from "lodash";
 import { CheckIcon, ChevronsUpDown, Copy, RotateCcw } from "lucide-react";
 import { useTranslation } from "next-i18next";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -52,6 +52,63 @@ interface Props {
 	type: "application" | "compose";
 	serverId?: string;
 }
+
+const ALL_MOUNTS_VOLUME_NAME = "dokploy_all_mounts";
+const ALL_MOUNTS_BACKUP_BASE_NAME = "all_mounts";
+const ALL_MOUNTS_UI_VALUE = "ALL";
+
+const normalizeRestorePrefix = (value?: string | null) => {
+	const trimmed = (value || "").trim().replace(/\\/g, "/");
+	if (!trimmed || trimmed === "/") return "";
+	return `${trimmed.replace(/^\/+/, "").replace(/\/+$/, "")}/`;
+};
+
+const normalizeRestorePath = (value: string) =>
+	value.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+
+const isBindPath = (value: string) =>
+	value.startsWith("/") ||
+	value.startsWith("./") ||
+	value.startsWith("../") ||
+	/^[a-zA-Z]:[\\/]/.test(value);
+
+const isAllMountsVolumeName = (value: string) => {
+	const normalized = value.trim().toLowerCase();
+	return (
+		normalized === ALL_MOUNTS_VOLUME_NAME ||
+		normalized === ALL_MOUNTS_UI_VALUE.toLowerCase()
+	);
+};
+
+const toRestoreTargetValue = (value: string) =>
+	value === ALL_MOUNTS_VOLUME_NAME ? ALL_MOUNTS_UI_VALUE : value;
+
+const sha256 = async (value: string) => {
+	const digest = await globalThis.crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode(value),
+	);
+
+	return Array.from(new Uint8Array(digest))
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
+};
+
+const getBackupBaseName = async (source: string) => {
+	if (isAllMountsVolumeName(source)) {
+		return ALL_MOUNTS_BACKUP_BASE_NAME;
+	}
+
+	if (!isBindPath(source)) return source;
+
+	const normalized = source.replace(/\\/g, "/");
+	const baseName =
+		normalized.split("/").filter(Boolean).pop()?.trim() || "bind";
+	const safeBaseName = baseName.replace(/[^a-zA-Z0-9_.-]+/g, "_").slice(0, 32);
+	const hash = (await sha256(normalized)).slice(0, 12);
+
+	return `bind-${safeBaseName}-${hash}`;
+};
 
 const createRestoreVolumeBackupSchema = (t: (key: string) => string) =>
 	z.object({
@@ -102,6 +159,10 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 	const destinationId = form.watch("destinationId");
 	const volumeName = form.watch("volumeName");
 	const backupFile = form.watch("backupFile");
+	const autoFilledVolumeNameRef = useRef("");
+	const isAutoFilledAllMounts =
+		isAllMountsVolumeName(volumeName) &&
+		volumeName === autoFilledVolumeNameRef.current;
 
 	const debouncedSetSearch = debounce((value: string) => {
 		setDebouncedSearchTerm(value);
@@ -122,10 +183,90 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 			enabled: isOpen && !!destinationId,
 		},
 	);
+	const { data: configuredVolumeBackups = [] } =
+		api.volumeBackups.list.useQuery(
+			{
+				id,
+				volumeBackupType: type,
+			},
+			{
+				enabled: isOpen,
+			},
+		);
 
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 	const [filteredLogs, setFilteredLogs] = useState<LogLine[]>([]);
 	const [isDeploying, setIsDeploying] = useState(false);
+
+	useEffect(() => {
+		if (
+			!isOpen ||
+			form.getValues("volumeName") ||
+			configuredVolumeBackups.length !== 1
+		) {
+			return;
+		}
+
+		const defaultVolumeName = configuredVolumeBackups[0]?.volumeName || "";
+		if (!defaultVolumeName) return;
+
+		const nextValue = toRestoreTargetValue(defaultVolumeName);
+		autoFilledVolumeNameRef.current = nextValue;
+		form.setValue("volumeName", nextValue, {
+			shouldDirty: false,
+			shouldValidate: true,
+		});
+	}, [configuredVolumeBackups, form, isOpen]);
+
+	useEffect(() => {
+		if (!backupFile || configuredVolumeBackups.length === 0) return;
+
+		const syncVolumeNameFromBackupFile = async () => {
+			const normalizedBackupPath = normalizeRestorePath(backupFile);
+			const orderedConfigs = [...configuredVolumeBackups].sort(
+				(a, b) =>
+					normalizeRestorePrefix(b.prefix).length -
+					normalizeRestorePrefix(a.prefix).length,
+			);
+
+			for (const config of orderedConfigs) {
+				const normalizedPrefix = normalizeRestorePrefix(config.prefix);
+				const relativePath = normalizedPrefix
+					? normalizedBackupPath.startsWith(normalizedPrefix)
+						? normalizedBackupPath.slice(normalizedPrefix.length)
+						: null
+					: normalizedBackupPath;
+
+				if (!relativePath) continue;
+
+				const fileName =
+					relativePath.split("/").filter(Boolean).pop() || relativePath;
+				const backupBaseName = await getBackupBaseName(config.volumeName);
+
+				if (
+					fileName === backupBaseName ||
+					fileName.startsWith(`${backupBaseName}-`)
+				) {
+					const currentValue = form.getValues("volumeName");
+					const nextValue = toRestoreTargetValue(config.volumeName);
+
+					if (
+						!currentValue ||
+						currentValue === autoFilledVolumeNameRef.current
+					) {
+						autoFilledVolumeNameRef.current = nextValue;
+						form.setValue("volumeName", nextValue, {
+							shouldDirty: true,
+							shouldValidate: true,
+						});
+					}
+					return;
+				}
+			}
+		};
+
+		void syncVolumeNameFromBackupFile();
+	}, [backupFile, configuredVolumeBackups, form]);
 
 	api.volumeBackups.restoreVolumeBackupWithLogs.useSubscription(
 		{
@@ -419,6 +560,16 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 												"volumeBackups.restore.field.volumeNamePlaceholder",
 											)}
 											{...field}
+											value={
+												isAutoFilledAllMounts
+													? t("filter.all")
+													: (field.value ?? "")
+											}
+											onChange={(event) => {
+												if (isAutoFilledAllMounts) return;
+												field.onChange(event);
+											}}
+											readOnly={isAutoFilledAllMounts}
 										/>
 									</FormControl>
 									<FormMessage />
