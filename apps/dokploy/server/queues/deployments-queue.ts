@@ -14,6 +14,11 @@ import { type Job, Worker } from "bullmq";
 import type { DeploymentJob } from "./queue-types";
 import { redisConfig } from "./redis-connection";
 
+type DeploymentWorkerLike = Pick<Worker<DeploymentJob>, "run" | "close"> & {
+	cancelJob: (jobId: string) => Promise<void>;
+	cancelAllJobs: (reason?: string) => Promise<void>;
+};
+
 const createDeploymentWorker = () =>
 	new Worker(
 		"deployments",
@@ -91,6 +96,25 @@ const noopWorker = {
 	cancelAllJobs: () => Promise.resolve(),
 };
 
-export const deploymentWorker = !IS_CLOUD
-	? createDeploymentWorker()
-	: (noopWorker as unknown as Worker<DeploymentJob>);
+let workerInstance: DeploymentWorkerLike | null = null;
+
+const getDeploymentWorker = (): DeploymentWorkerLike => {
+	if (IS_CLOUD) {
+		return noopWorker;
+	}
+
+	if (!workerInstance) {
+		workerInstance =
+			createDeploymentWorker() as unknown as DeploymentWorkerLike;
+	}
+
+	return workerInstance;
+};
+
+export const deploymentWorker: DeploymentWorkerLike = {
+	run: () => getDeploymentWorker().run(),
+	close: () => getDeploymentWorker().close(),
+	cancelJob: (jobId: string) => getDeploymentWorker().cancelJob(jobId),
+	cancelAllJobs: (reason?: string) =>
+		getDeploymentWorker().cancelAllJobs(reason),
+};
