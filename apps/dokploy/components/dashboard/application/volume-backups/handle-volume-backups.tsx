@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { DatabaseZap, PenBoxIcon, PlusCircle, RefreshCw } from "lucide-react";
 import { useTranslation } from "next-i18next";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -62,10 +62,42 @@ type MountSelectOption = {
 	Source?: string | null;
 	Name?: string | null;
 	Destination?: string | null;
+	BackupValue?: string | null;
+	DisplayValue?: string | null;
 };
 
 const getMountOptionValue = (mount: MountSelectOption) =>
-	mount.Type === "bind" ? mount.Source?.trim() || "" : mount.Name?.trim() || "";
+	mount.DisplayValue?.trim() ||
+	(mount.Type === "bind"
+		? mount.Source?.trim() || ""
+		: mount.Name?.trim() || "");
+
+const getMountOptionSubmitValue = (mount: MountSelectOption) =>
+	mount.BackupValue?.trim() ||
+	(mount.Type === "bind"
+		? mount.Source?.trim() || ""
+		: mount.Name?.trim() || "");
+
+const resolveMountSelection = (
+	value: string | null | undefined,
+	mounts: MountSelectOption[],
+) => {
+	const normalizedValue = value?.trim();
+	if (!normalizedValue) return null;
+
+	const matchedMount = mounts.find((mount) => {
+		const formValue = getMountOptionValue(mount);
+		const submitValue = getMountOptionSubmitValue(mount);
+		return formValue === normalizedValue || submitValue === normalizedValue;
+	});
+
+	if (!matchedMount) return null;
+
+	return {
+		formValue: getMountOptionValue(matchedMount),
+		submitValue: getMountOptionSubmitValue(matchedMount),
+	};
+};
 
 const getMountOptionLabel = (mount: MountSelectOption) =>
 	mount.Destination?.trim() || getMountOptionValue(mount);
@@ -166,6 +198,10 @@ export const HandleVolumeBackups = ({
 	const [cacheType, setCacheType] = useState<CacheType>("cache");
 	const [keepLatestCountInput, setKeepLatestCountInput] = useState("");
 	const [isAllMountsLocked, setIsAllMountsLocked] = useState(false);
+	const selectedMountValueRef = useRef<{
+		formValue: string;
+		submitValue: string;
+	} | null>(null);
 
 	const utils = api.useUtils();
 	const formSchema = createFormSchema(t);
@@ -222,6 +258,7 @@ export const HandleVolumeBackups = ({
 	const toggleAllMounts = () => {
 		const nextLocked = !isAllMountsLocked;
 		setIsAllMountsLocked(nextLocked);
+		selectedMountValueRef.current = null;
 		form.setValue("volumeName", nextLocked ? ALL_MOUNTS_VOLUME_NAME : "", {
 			shouldDirty: true,
 			shouldTouch: true,
@@ -266,6 +303,49 @@ export const HandleVolumeBackups = ({
 		}
 	}, [form, volumeBackup, volumeBackupId, volumeName]);
 
+	const availableMountOptions = useMemo(() => {
+		if (volumeBackupType === "compose") {
+			return mountsByService || [];
+		}
+
+		if (volumeBackupType === "application") {
+			return mounts || [];
+		}
+
+		return [];
+	}, [mounts, mountsByService, volumeBackupType]);
+
+	useEffect(() => {
+		if (!isOpen || isAllMountsValue(form.getValues("volumeName"))) return;
+
+		const currentValue = form.getValues("volumeName")?.trim();
+		if (!currentValue) {
+			selectedMountValueRef.current = null;
+			return;
+		}
+
+		const matchedMount = resolveMountSelection(
+			currentValue,
+			availableMountOptions,
+		);
+		if (!matchedMount) {
+			selectedMountValueRef.current = null;
+			return;
+		}
+
+		const { formValue, submitValue } = matchedMount;
+		selectedMountValueRef.current =
+			formValue !== submitValue ? { formValue, submitValue } : null;
+
+		if (formValue !== currentValue) {
+			form.setValue("volumeName", formValue, {
+				shouldDirty: false,
+				shouldTouch: false,
+				shouldValidate: true,
+			});
+		}
+	}, [availableMountOptions, form, isOpen]);
+
 	const { mutateAsync, isLoading } = volumeBackupId
 		? api.volumeBackups.update.useMutation()
 		: api.volumeBackups.create.useMutation();
@@ -275,10 +355,22 @@ export const HandleVolumeBackups = ({
 
 		const preparedKeepLatestCount =
 			keepLatestCountInput === "" ? null : (values.keepLatestCount ?? null);
+		const selectedMount = selectedMountValueRef.current;
+		const resolvedMount = resolveMountSelection(
+			values.volumeName,
+			availableMountOptions,
+		);
+		const preparedVolumeName =
+			resolvedMount?.submitValue ??
+			(selectedMount &&
+			values.volumeName.trim() === selectedMount.formValue.trim()
+				? selectedMount.submitValue
+				: values.volumeName);
 
 		await mutateAsync({
 			...values,
 			keepLatestCount: preparedKeepLatestCount,
+			volumeName: preparedVolumeName,
 			destinationId: values.destinationId,
 			volumeBackupId: volumeBackupId || "",
 			serviceType: volumeBackupType,
@@ -563,6 +655,20 @@ export const HandleVolumeBackups = ({
 														<Select
 															onValueChange={(value) => {
 																if (isAllMounts) return;
+																const selectedMount = mountsByService?.find(
+																	(mount) =>
+																		getMountOptionValue(mount) === value,
+																);
+																selectedMountValueRef.current = selectedMount
+																	? {
+																			formValue:
+																				getMountOptionValue(selectedMount),
+																			submitValue:
+																				getMountOptionSubmitValue(
+																					selectedMount,
+																				),
+																		}
+																	: null;
 																field.onChange(value);
 															}}
 															value={field.value || ""}
@@ -623,6 +729,16 @@ export const HandleVolumeBackups = ({
 												<Select
 													onValueChange={(value) => {
 														if (isAllMounts) return;
+														const selectedMount = mounts?.find(
+															(mount) => getMountOptionValue(mount) === value,
+														);
+														selectedMountValueRef.current = selectedMount
+															? {
+																	formValue: getMountOptionValue(selectedMount),
+																	submitValue:
+																		getMountOptionSubmitValue(selectedMount),
+																}
+															: null;
 														field.onChange(value);
 													}}
 													value={field.value || ""}
@@ -680,6 +796,13 @@ export const HandleVolumeBackups = ({
 											}
 											onChange={(event) => {
 												if (isAllMounts) return;
+												if (
+													selectedMountValueRef.current &&
+													event.target.value.trim() !==
+														selectedMountValueRef.current.formValue.trim()
+												) {
+													selectedMountValueRef.current = null;
+												}
 												field.onChange(event);
 											}}
 											disabled={isAllMounts}

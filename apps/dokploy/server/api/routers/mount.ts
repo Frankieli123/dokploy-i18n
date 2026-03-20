@@ -81,10 +81,26 @@ export const mountRouter = createTRPCRouter({
 				if (mount.Type !== "bind") return false;
 
 				if (excludedDestinations.has(mount.Destination)) return false;
-				if (mount.Source.startsWith("/var/lib/docker/containers/")) return false;
+				if (mount.Source.startsWith("/var/lib/docker/containers/"))
+					return false;
 
 				return true;
 			});
-			return mounts;
+			return mounts?.map((mount) => {
+				const backupValue =
+					mount.Type === "bind" ? mount.Source || "" : mount.Name || "";
+				const fileMount = app.mounts.find(
+					(configuredMount) =>
+						configuredMount.type === "file" &&
+						configuredMount.mountPath === mount.Destination &&
+						configuredMount.filePath,
+				);
+
+				return {
+					...mount,
+					BackupValue: backupValue,
+					DisplayValue: fileMount?.filePath || backupValue,
+				};
+			});
 		}),
 });
