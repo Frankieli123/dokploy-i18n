@@ -115,7 +115,7 @@ export const restoreVolume = async (
 					INDEX=$((INDEX+1))
 					continue
 				fi
-				echo "Restoring docker volume: ${"$"}VOLUME_NAME (${ "$"}DEST)"
+				echo "Restoring docker volume: ${"$"}VOLUME_NAME (${"$"}DEST)"
 				if [ -z "$ENTRY_DIR" ]; then
 					echo "Unexpected file entry for volume mount: ${"$"}PREFIX"
 					exit 1
@@ -134,7 +134,7 @@ export const restoreVolume = async (
 				fi
 
 				if [ -n "$ENTRY_DIR" ]; then
-					echo "Restoring bind directory: ${"$"}HOST_PATH (${ "$"}DEST)"
+					echo "Restoring bind directory: ${"$"}HOST_PATH (${"$"}DEST)"
 					mkdir -p "${"$"}HOST_PATH"
 					docker run --rm \
 						--mount "type=bind,source=${"$"}HOST_PATH,target=/target" \
@@ -142,7 +142,7 @@ export const restoreVolume = async (
 						ubuntu \
 						bash -c "set -e; tar xvf /backup/${backupFileName} -C /target --overwrite --strip-components=${"$"}STRIP_COMPONENTS \\"${"$"}ENTRY_DIR\\""
 				else
-					echo "Restoring bind file: ${"$"}HOST_PATH (${ "$"}DEST)"
+					echo "Restoring bind file: ${"$"}HOST_PATH (${"$"}DEST)"
 					HOST_DIR=$(dirname "${"$"}HOST_PATH")
 					HOST_FILE=$(basename "${"$"}HOST_PATH")
 					mkdir -p "${"$"}HOST_DIR"
@@ -168,12 +168,30 @@ export const restoreVolume = async (
 			echo "=== ALL MOUNTS RESTORE FOR APPLICATION ==="
 			SERVICE_NAME=${shEscape(application.appName)}
 			ACTUAL_REPLICAS=$(docker service inspect "$SERVICE_NAME" --format "{{.Spec.Mode.Replicated.Replicas}}")
+			STOPPED_APPLICATION=0
+			restart_application() {
+				if [ "$STOPPED_APPLICATION" != "1" ]; then
+					return 0
+				fi
+				echo "Starting application to $ACTUAL_REPLICAS replicas"
+				docker service scale "$SERVICE_NAME"=$ACTUAL_REPLICAS
+			}
+			cleanup() {
+				STATUS=$?
+				if [ "$STATUS" -ne 0 ]; then
+					restart_application || echo "Failed to restart application: $SERVICE_NAME"
+				fi
+				exit $STATUS
+			}
+			trap cleanup EXIT
 			echo "Actual replicas: $ACTUAL_REPLICAS"
 			echo "Stopping application to 0 replicas"
 			docker service scale "$SERVICE_NAME"=0
+			STOPPED_APPLICATION=1
 			${restoreAllMountsCommand}
-			echo "Starting application to $ACTUAL_REPLICAS replicas"
-			docker service scale "$SERVICE_NAME"=$ACTUAL_REPLICAS
+			restart_application
+			STOPPED_APPLICATION=0
+			trap - EXIT
 			`;
 		}
 
@@ -187,6 +205,24 @@ export const restoreVolume = async (
 				REPLICAS_FILE=${shEscape(
 					path.join(volumeBackupPath, ".dokploy_all_mounts_stack_replicas.txt"),
 				)}
+				restore_stack_services() {
+					if [ ! -s "$REPLICAS_FILE" ]; then
+						return 0
+					fi
+					echo "Starting stack services..."
+					while IFS='|' read -r svc replicas; do
+						[ -n "$svc" ] || continue
+						docker service scale "${"$"}svc"="${"$"}replicas"
+					done < "$REPLICAS_FILE"
+				}
+				cleanup() {
+					STATUS=$?
+					if [ "$STATUS" -ne 0 ]; then
+						restore_stack_services || echo "Failed to restart stack services for: $STACK_NAME"
+					fi
+					exit $STATUS
+				}
+				trap cleanup EXIT
 				: > "$REPLICAS_FILE"
 				SERVICES=$(docker service ls --filter "label=com.docker.stack.namespace=$STACK_NAME" --format "{{.Name}}")
 				if [ -z "$SERVICES" ]; then
@@ -204,13 +240,8 @@ export const restoreVolume = async (
 					done
 				fi
 				${restoreAllMountsCommand}
-				if [ -s "$REPLICAS_FILE" ]; then
-					echo "Starting stack services..."
-					while IFS='|' read -r svc replicas; do
-						[ -n "$svc" ] || continue
-						docker service scale "${"$"}svc"="${"$"}replicas"
-					done < "$REPLICAS_FILE"
-				fi
+				restore_stack_services
+				trap - EXIT
 				`;
 			}
 
@@ -219,17 +250,33 @@ export const restoreVolume = async (
 			PROJECT_NAME=${shEscape(compose.appName)}
 			echo "Compose project: $PROJECT_NAME"
 			CONTAINERS=$(docker ps -a -q --filter "label=com.docker.compose.project=$PROJECT_NAME")
+			STOPPED_COMPOSE_CONTAINERS=0
+			restart_compose_containers() {
+				if [ "$STOPPED_COMPOSE_CONTAINERS" != "1" ] || [ -z "$CONTAINERS" ]; then
+					return 0
+				fi
+				echo "Starting compose containers..."
+				docker start $CONTAINERS
+			}
+			cleanup() {
+				STATUS=$?
+				if [ "$STATUS" -ne 0 ]; then
+					restart_compose_containers || echo "Failed to restart compose containers for: $PROJECT_NAME"
+				fi
+				exit $STATUS
+			}
+			trap cleanup EXIT
 			if [ -n "$CONTAINERS" ]; then
 				echo "Stopping compose containers..."
 				docker stop $CONTAINERS
+				STOPPED_COMPOSE_CONTAINERS=1
 			else
 				echo "No compose containers found for project: $PROJECT_NAME"
 			fi
 			${restoreAllMountsCommand}
-			if [ -n "$CONTAINERS" ]; then
-				echo "Starting compose containers..."
-				docker start $CONTAINERS
-			fi
+			restart_compose_containers
+			STOPPED_COMPOSE_CONTAINERS=0
+			trap - EXIT
 			`;
 		}
 

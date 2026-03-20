@@ -1,7 +1,13 @@
+import path from "node:path";
 import {
+	checkServiceAccess,
 	createVolumeBackup,
+	findApplicationById,
+	findComposeById,
+	findDestinationById,
 	findVolumeBackupById,
 	IS_CLOUD,
+	paths,
 	removeVolumeBackup,
 	removeVolumeBackupJob,
 	restoreVolume,
@@ -26,6 +32,25 @@ import { z } from "zod";
 import { removeJob, schedule, updateJob } from "@/server/utils/backup";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 
+const getFileMountDisplayValue = (
+	volumeName: string,
+	mounts: Array<{ type: string; filePath?: string | null }>,
+	baseFilesPath: string,
+) => {
+	const normalizedVolumeName = path.normalize(volumeName);
+	const matchedFileMount = mounts.find((mount) => {
+		if (mount.type !== "file" || !mount.filePath) return false;
+
+		const expectedSourcePath = path.normalize(
+			path.join(baseFilesPath, mount.filePath),
+		);
+
+		return expectedSourcePath === normalizedVolumeName;
+	});
+
+	return matchedFileMount?.filePath || volumeName;
+};
+
 export const volumeBackupsRouter = createTRPCRouter({
 	list: protectedProcedure
 		.input(
@@ -42,8 +67,8 @@ export const volumeBackupsRouter = createTRPCRouter({
 				]),
 			}),
 		)
-		.query(async ({ input }) => {
-			return await db.query.volumeBackups.findMany({
+		.query(async ({ input, ctx }) => {
+			const backups = await db.query.volumeBackups.findMany({
 				where: eq(volumeBackups[`${input.volumeBackupType}Id`], input.id),
 				with: {
 					application: true,
@@ -56,6 +81,90 @@ export const volumeBackupsRouter = createTRPCRouter({
 				},
 				orderBy: [desc(volumeBackups.createdAt)],
 			});
+
+			if (input.volumeBackupType === "application") {
+				if (ctx.user.role === "member") {
+					await checkServiceAccess(
+						ctx.user.id,
+						input.id,
+						ctx.session.activeOrganizationId,
+						"access",
+					);
+				}
+
+				const application = await findApplicationById(input.id);
+				if (
+					application.environment.project.organizationId !==
+					ctx.session.activeOrganizationId
+				) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You are not authorized to access these volume backups",
+					});
+				}
+
+				const { APPLICATIONS_PATH } = paths(!!application.serverId);
+				const baseFilesPath = path.join(
+					path.resolve(APPLICATIONS_PATH),
+					application.appName,
+					"files",
+				);
+
+				return backups.map((backup) => ({
+					...backup,
+					DisplayVolumeName: getFileMountDisplayValue(
+						backup.volumeName,
+						application.mounts,
+						baseFilesPath,
+					),
+					SubmitVolumeName: backup.volumeName,
+				}));
+			}
+
+			if (input.volumeBackupType === "compose") {
+				if (ctx.user.role === "member") {
+					await checkServiceAccess(
+						ctx.user.id,
+						input.id,
+						ctx.session.activeOrganizationId,
+						"access",
+					);
+				}
+
+				const compose = await findComposeById(input.id);
+				if (
+					compose.environment.project.organizationId !==
+					ctx.session.activeOrganizationId
+				) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You are not authorized to access these volume backups",
+					});
+				}
+
+				const { COMPOSE_PATH } = paths(!!compose.serverId);
+				const baseFilesPath = path.join(
+					path.resolve(COMPOSE_PATH),
+					compose.appName,
+					"files",
+				);
+
+				return backups.map((backup) => ({
+					...backup,
+					DisplayVolumeName: getFileMountDisplayValue(
+						backup.volumeName,
+						compose.mounts,
+						baseFilesPath,
+					),
+					SubmitVolumeName: backup.volumeName,
+				}));
+			}
+
+			return backups.map((backup) => ({
+				...backup,
+				DisplayVolumeName: backup.volumeName,
+				SubmitVolumeName: backup.volumeName,
+			}));
 		}),
 	create: protectedProcedure
 		.input(createVolumeBackupSchema)
@@ -162,7 +271,50 @@ export const volumeBackupsRouter = createTRPCRouter({
 				serverId: z.string().optional(),
 			}),
 		)
-		.subscription(async ({ input }) => {
+		.subscription(async ({ input, ctx }) => {
+			if (ctx.user.role === "member") {
+				await checkServiceAccess(
+					ctx.user.id,
+					input.id,
+					ctx.session.activeOrganizationId,
+					"access",
+				);
+			}
+
+			if (input.serviceType === "application") {
+				const application = await findApplicationById(input.id);
+				if (
+					application.environment.project.organizationId !==
+					ctx.session.activeOrganizationId
+				) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You are not authorized to restore this application",
+					});
+				}
+			}
+
+			if (input.serviceType === "compose") {
+				const compose = await findComposeById(input.id);
+				if (
+					compose.environment.project.organizationId !==
+					ctx.session.activeOrganizationId
+				) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You are not authorized to restore this compose service",
+					});
+				}
+			}
+
+			const destination = await findDestinationById(input.destinationId);
+			if (destination.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this destination",
+				});
+			}
+
 			return observable<string>((emit) => {
 				const runRestore = async () => {
 					try {

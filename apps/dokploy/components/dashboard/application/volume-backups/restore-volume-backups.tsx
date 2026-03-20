@@ -53,6 +53,14 @@ interface Props {
 	serverId?: string;
 }
 
+type ConfiguredRestoreTarget = {
+	volumeName: string;
+	prefix?: string | null;
+	serviceName?: string | null;
+	DisplayVolumeName?: string | null;
+	SubmitVolumeName?: string | null;
+};
+
 const ALL_MOUNTS_VOLUME_NAME = "dokploy_all_mounts";
 const ALL_MOUNTS_BACKUP_BASE_NAME = "all_mounts";
 const ALL_MOUNTS_UI_VALUE = "ALL";
@@ -82,6 +90,34 @@ const isAllMountsVolumeName = (value: string) => {
 
 const toRestoreTargetValue = (value: string) =>
 	value === ALL_MOUNTS_VOLUME_NAME ? ALL_MOUNTS_UI_VALUE : value;
+
+const getConfiguredRestoreDisplayValue = (config: ConfiguredRestoreTarget) =>
+	toRestoreTargetValue(
+		config.DisplayVolumeName?.trim() || config.volumeName.trim(),
+	);
+
+const getConfiguredRestoreSubmitValue = (config: ConfiguredRestoreTarget) =>
+	config.SubmitVolumeName?.trim() || config.volumeName.trim();
+
+const resolveConfiguredRestoreTarget = (
+	value: string | null | undefined,
+	configs: ConfiguredRestoreTarget[],
+) => {
+	const normalizedValue = value?.trim();
+	if (!normalizedValue) return null;
+
+	return (
+		configs.find((config) => {
+			const displayValue = getConfiguredRestoreDisplayValue(config);
+			const submitValue = getConfiguredRestoreSubmitValue(config);
+
+			return (
+				displayValue.trim() === normalizedValue ||
+				submitValue.trim() === normalizedValue
+			);
+		}) || null
+	);
+};
 
 const sha256 = async (value: string) => {
 	const digest = await globalThis.crypto.subtle.digest(
@@ -160,6 +196,12 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 	const volumeName = form.watch("volumeName");
 	const backupFile = form.watch("backupFile");
 	const autoFilledVolumeNameRef = useRef("");
+	const submittingVolumeNameRef = useRef<string | null>(null);
+	const selectedRestoreTargetRef = useRef<{
+		formValue: string;
+		submitValue: string;
+	} | null>(null);
+	const previousDestinationIdRef = useRef("");
 	const isAutoFilledAllMounts =
 		isAllMountsVolumeName(volumeName) &&
 		volumeName === autoFilledVolumeNameRef.current;
@@ -199,6 +241,47 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 	const [isDeploying, setIsDeploying] = useState(false);
 
 	useEffect(() => {
+		if (!isOpen) {
+			previousDestinationIdRef.current = destinationId;
+			return;
+		}
+
+		if (!previousDestinationIdRef.current) {
+			previousDestinationIdRef.current = destinationId;
+			return;
+		}
+
+		if (destinationId === previousDestinationIdRef.current) return;
+
+		previousDestinationIdRef.current = destinationId;
+		setSearch("");
+		setDebouncedSearchTerm("");
+		form.setValue("backupFile", "", {
+			shouldDirty: true,
+			shouldValidate: true,
+		});
+
+		const currentVolumeName = form.getValues("volumeName");
+		const shouldKeepSingleDefaultTarget =
+			configuredVolumeBackups.length === 1 &&
+			currentVolumeName ===
+				getConfiguredRestoreDisplayValue(configuredVolumeBackups[0]!);
+
+		if (
+			currentVolumeName === autoFilledVolumeNameRef.current &&
+			!shouldKeepSingleDefaultTarget
+		) {
+			autoFilledVolumeNameRef.current = "";
+			form.setValue("volumeName", "", {
+				shouldDirty: true,
+				shouldValidate: true,
+			});
+		}
+
+		selectedRestoreTargetRef.current = null;
+	}, [configuredVolumeBackups, destinationId, form, isOpen]);
+
+	useEffect(() => {
 		if (
 			!isOpen ||
 			form.getValues("volumeName") ||
@@ -207,11 +290,14 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 			return;
 		}
 
-		const defaultVolumeName = configuredVolumeBackups[0]?.volumeName || "";
-		if (!defaultVolumeName) return;
+		const defaultTarget = configuredVolumeBackups[0];
+		if (!defaultTarget?.volumeName) return;
 
-		const nextValue = toRestoreTargetValue(defaultVolumeName);
+		const nextValue = getConfiguredRestoreDisplayValue(defaultTarget);
+		const submitValue = getConfiguredRestoreSubmitValue(defaultTarget);
 		autoFilledVolumeNameRef.current = nextValue;
+		selectedRestoreTargetRef.current =
+			nextValue !== submitValue ? { formValue: nextValue, submitValue } : null;
 		form.setValue("volumeName", nextValue, {
 			shouldDirty: false,
 			shouldValidate: true,
@@ -219,7 +305,28 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 	}, [configuredVolumeBackups, form, isOpen]);
 
 	useEffect(() => {
-		if (!backupFile || configuredVolumeBackups.length === 0) return;
+		if (!backupFile) {
+			const currentVolumeName = form.getValues("volumeName");
+			const shouldKeepSingleDefaultTarget =
+				configuredVolumeBackups.length === 1 &&
+				currentVolumeName ===
+					getConfiguredRestoreDisplayValue(configuredVolumeBackups[0]!);
+
+			if (
+				currentVolumeName === autoFilledVolumeNameRef.current &&
+				!shouldKeepSingleDefaultTarget
+			) {
+				autoFilledVolumeNameRef.current = "";
+				selectedRestoreTargetRef.current = null;
+				form.setValue("volumeName", "", {
+					shouldDirty: true,
+					shouldValidate: true,
+				});
+			}
+			return;
+		}
+
+		if (configuredVolumeBackups.length === 0) return;
 
 		const syncVolumeNameFromBackupFile = async () => {
 			const normalizedBackupPath = normalizeRestorePath(backupFile);
@@ -248,13 +355,21 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 					fileName.startsWith(`${backupBaseName}-`)
 				) {
 					const currentValue = form.getValues("volumeName");
-					const nextValue = toRestoreTargetValue(config.volumeName);
+					const nextValue = getConfiguredRestoreDisplayValue(config);
+					const submitValue = getConfiguredRestoreSubmitValue(config);
 
 					if (
 						!currentValue ||
 						currentValue === autoFilledVolumeNameRef.current
 					) {
 						autoFilledVolumeNameRef.current = nextValue;
+						selectedRestoreTargetRef.current =
+							nextValue !== submitValue
+								? {
+										formValue: nextValue,
+										submitValue,
+									}
+								: null;
 						form.setValue("volumeName", nextValue, {
 							shouldDirty: true,
 							shouldValidate: true,
@@ -262,6 +377,24 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 					}
 					return;
 				}
+			}
+
+			const currentVolumeName = form.getValues("volumeName");
+			const shouldKeepSingleDefaultTarget =
+				configuredVolumeBackups.length === 1 &&
+				currentVolumeName ===
+					getConfiguredRestoreDisplayValue(configuredVolumeBackups[0]!);
+
+			if (
+				currentVolumeName === autoFilledVolumeNameRef.current &&
+				!shouldKeepSingleDefaultTarget
+			) {
+				autoFilledVolumeNameRef.current = "";
+				selectedRestoreTargetRef.current = null;
+				form.setValue("volumeName", "", {
+					shouldDirty: true,
+					shouldValidate: true,
+				});
 			}
 		};
 
@@ -274,7 +407,7 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 			serviceType: type,
 			serverId,
 			destinationId,
-			volumeName,
+			volumeName: submittingVolumeNameRef.current || volumeName,
 			backupFileName: backupFile,
 		},
 		{
@@ -286,8 +419,10 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 
 				if (
 					log.includes("Volume restore completed successfully") ||
-					log.includes("All mounts restore completed")
+					log.includes("All mounts restore completed") ||
+					log.includes("Volume restore failed!")
 				) {
+					submittingVolumeNameRef.current = null;
 					setIsDeploying(false);
 				}
 
@@ -296,12 +431,28 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 			},
 			onError(error) {
 				console.error("Restore logs error:", error);
+				submittingVolumeNameRef.current = null;
 				setIsDeploying(false);
 			},
 		},
 	);
 
-	const onSubmit = async () => {
+	const onSubmit = async (
+		values: z.infer<ReturnType<typeof createRestoreVolumeBackupSchema>>,
+	) => {
+		const selectedTarget = selectedRestoreTargetRef.current;
+		const resolvedTarget = resolveConfiguredRestoreTarget(
+			values.volumeName,
+			configuredVolumeBackups,
+		);
+		const preparedVolumeName = resolvedTarget
+			? getConfiguredRestoreSubmitValue(resolvedTarget)
+			: selectedTarget &&
+					values.volumeName.trim() === selectedTarget.formValue.trim()
+				? selectedTarget.submitValue
+				: values.volumeName;
+
+		submittingVolumeNameRef.current = preparedVolumeName;
 		setIsDeploying(true);
 	};
 
@@ -481,11 +632,15 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 																	value={file.Path}
 																	key={file.Path}
 																	onSelect={() => {
-																		form.setValue("backupFile", file.Path);
 																		if (file.IsDir) {
+																			form.setValue("backupFile", "", {
+																				shouldDirty: true,
+																				shouldValidate: true,
+																			});
 																			setSearch(`${file.Path}/`);
 																			setDebouncedSearchTerm(`${file.Path}/`);
 																		} else {
+																			form.setValue("backupFile", file.Path);
 																			setSearch(file.Path);
 																			setDebouncedSearchTerm(file.Path);
 																		}
@@ -567,6 +722,20 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 											}
 											onChange={(event) => {
 												if (isAutoFilledAllMounts) return;
+												if (
+													selectedRestoreTargetRef.current &&
+													event.target.value.trim() !==
+														selectedRestoreTargetRef.current.formValue.trim()
+												) {
+													selectedRestoreTargetRef.current = null;
+												}
+												if (
+													autoFilledVolumeNameRef.current &&
+													event.target.value.trim() !==
+														autoFilledVolumeNameRef.current.trim()
+												) {
+													autoFilledVolumeNameRef.current = "";
+												}
 												field.onChange(event);
 											}}
 											readOnly={isAutoFilledAllMounts}
@@ -594,6 +763,7 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 					onClose={() => {
 						setIsDrawerOpen(false);
 						setFilteredLogs([]);
+						submittingVolumeNameRef.current = null;
 						setIsDeploying(false);
 						// refetch();
 					}}
