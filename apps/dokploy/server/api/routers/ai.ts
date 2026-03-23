@@ -10,6 +10,7 @@ import {
 	apiDeleteAiMcpServer,
 	apiFindConversation,
 	apiGetAgentEvents,
+	apiGetExecutions,
 	apiGetMessages,
 	apiGetRun,
 	apiListAiMcpServers,
@@ -753,11 +754,7 @@ export const aiRouter = createTRPCRouter({
 			}),
 
 		getExecutions: protectedProcedure
-			.input(
-				z.object({
-					executionIds: z.array(z.string().min(1)).min(1).max(50),
-				}),
-			)
+			.input(apiGetExecutions)
 			.query(async ({ ctx, input }) => {
 				return await getToolExecutionsByIds({
 					executionIds: input.executionIds,

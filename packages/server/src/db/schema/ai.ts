@@ -199,31 +199,48 @@ export const apiListAiMcpServers = z.object({
 });
 
 export const apiCreateAiMcpServer = z
-	.union([
-		z.object({
-			name: z.string().min(1),
-			serverUrl: z.string().url(),
-			headers: z.record(z.string()).optional().default({}),
-			isEnabled: z.boolean().optional().default(true),
-		}),
-		z.object({
-			transportType: z.literal("http"),
-			name: z.string().min(1),
-			serverUrl: z.string().url(),
-			headers: z.record(z.string()).optional().default({}),
-			isEnabled: z.boolean().optional().default(true),
-		}),
-		z.object({
-			transportType: z.literal("stdio"),
-			name: z.string().min(1),
-			command: z.string().min(1),
-			args: z.array(z.string()).optional().default([]),
-			env: z.record(z.string()).optional().default({}),
-			cwd: z.string().optional().nullable(),
-			isEnabled: z.boolean().optional().default(true),
-			}),
-		])
-	;
+	.object({
+		transportType: z.enum(["http", "stdio"]).optional().default("http"),
+		name: z.string().min(1),
+		serverUrl: z.string().optional(),
+		headers: z.record(z.string()).optional().default({}),
+		command: z.string().optional(),
+		args: z.array(z.string()).optional().default([]),
+		env: z.record(z.string()).optional().default({}),
+		cwd: z.string().optional().nullable(),
+		isEnabled: z.boolean().optional().default(true),
+	})
+	.superRefine((input, ctx) => {
+		if (input.transportType === "stdio") {
+			if (!input.command?.trim()) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["command"],
+					message: "Command is required",
+				});
+			}
+			return;
+		}
+
+		if (!input.serverUrl?.trim()) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["serverUrl"],
+				message: "Server URL is required",
+			});
+			return;
+		}
+
+		try {
+			new URL(input.serverUrl);
+		} catch {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["serverUrl"],
+				message: "Invalid URL",
+			});
+		}
+	});
 
 export const apiUpdateAiMcpServer = z
 	.object({
@@ -669,16 +686,53 @@ export const apiFindConversation = z.object({
 	conversationId: z.string().min(1),
 });
 
+const parseNullableStringQueryValue = (value: unknown): unknown => {
+	if (value == null) return value;
+	if (typeof value !== "string") return value;
+
+	const trimmed = value.trim();
+	if (!trimmed) return undefined;
+	if (trimmed.toLowerCase() === "null") return null;
+	return trimmed;
+};
+
+const parseStringArrayQueryValue = (value: unknown): unknown => {
+	if (Array.isArray(value)) return value;
+	if (typeof value !== "string") return value;
+
+	const trimmed = value.trim();
+	if (!trimmed) return [];
+
+	try {
+		const parsed = JSON.parse(trimmed);
+		if (Array.isArray(parsed)) return parsed;
+	} catch {}
+
+	return trimmed
+		.split(",")
+		.map((item) => item.trim())
+		.filter((item) => item.length > 0);
+};
+
 export const apiListConversations = z.object({
 	projectId: z.string().optional(),
-	serverId: z.string().nullable().optional(),
+	serverId: z.preprocess(
+		parseNullableStringQueryValue,
+		z.string().nullable().optional(),
+	),
 	status: z.enum(["active", "archived"]).optional(),
 	limit: z.number().min(1).max(100).optional().default(20),
 	offset: z.number().min(0).optional().default(0),
 });
 
 export const apiConversationIndicators = z.object({
-	conversationIds: z.array(z.string()).max(100).optional().default([]),
+	conversationIds: z
+		.preprocess(
+			parseStringArrayQueryValue,
+			z.array(z.string()).max(100),
+		)
+		.optional()
+		.default([]),
 });
 
 export const apiUpdateConversation = z.object({
@@ -753,6 +807,13 @@ export const apiStartAgent = z
 
 export const apiGetRun = z.object({
 	runId: z.string().min(1),
+});
+
+export const apiGetExecutions = z.object({
+	executionIds: z.preprocess(
+		parseStringArrayQueryValue,
+		z.array(z.string().min(1)).min(1).max(50),
+	),
 });
 
 export const apiApproveExecution = z.object({

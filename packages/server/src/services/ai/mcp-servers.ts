@@ -614,23 +614,17 @@ export const listAiMcpServersByOrganizationId = async (params: {
 
 export const createAiMcpServer = async (
 	organizationId: string,
-	input:
-		| {
-				transportType?: "http";
-				name: string;
-				serverUrl: string;
-				headers?: Record<string, string>;
-				isEnabled?: boolean;
-		  }
-		| {
-				transportType: "stdio";
-				name: string;
-				command: string;
-				args?: string[];
-				env?: Record<string, string>;
-				cwd?: string | null;
-				isEnabled?: boolean;
-		  },
+	input: {
+		transportType?: "http" | "stdio";
+		name: string;
+		serverUrl?: string;
+		headers?: Record<string, string>;
+		command?: string;
+		args?: string[];
+		env?: Record<string, string>;
+		cwd?: string | null;
+		isEnabled?: boolean;
+	},
 ) => {
 	const name = String(input.name ?? "").trim();
 	const transportType = normalizeMcpTransportType(
