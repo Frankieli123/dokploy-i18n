@@ -1170,6 +1170,8 @@
 	"settings.ai.form.embeddingApiKey.description": "嵌入提供商的 API 密钥（仅在填写了嵌入 API 地址时使用）。",
 	"settings.ai.form.isEnabled.label": "启用 AI 功能",
 	"settings.ai.form.isEnabled.description": "开启或关闭 AI 相关功能。",
+	"settings.ai.form.requestDebugLogs.label": "请求调试日志",
+	"settings.ai.form.requestDebugLogs.description": "将此提供商的 AI 请求/响应调试日志（已脱敏）写入主服务器日志。仅在排障时启用。",
 	"settings.ai.toast.saveSuccess": "AI 配置保存成功",
 	"settings.ai.toast.saveError": "保存 AI 配置失败",
 	"settings.ai.toast.unknownError": "发生未知错误",

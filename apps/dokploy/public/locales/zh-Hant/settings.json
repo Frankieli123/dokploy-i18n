@@ -1146,6 +1146,8 @@
 	"settings.ai.form.embeddingApiKey.description": "嵌入提供者的 API 金鑰（僅在設定嵌入 API 網址時使用）。",
 	"settings.ai.form.isEnabled.label": "啟用 AI 功能",
 	"settings.ai.form.isEnabled.description": "開啟/關閉 AI 功能",
+	"settings.ai.form.requestDebugLogs.label": "請求偵錯日誌",
+	"settings.ai.form.requestDebugLogs.description": "將此提供者的 AI 請求/回應偵錯日誌（已脫敏）寫入主伺服器日誌。僅在排查問題時啟用。",
 	"settings.ai.toast.saveSuccess": "AI 設定儲存成功",
 	"settings.ai.toast.saveError": "儲存 AI 設定失敗",
 	"settings.ai.toast.unknownError": "未知錯誤",

@@ -1170,6 +1170,8 @@
 	"settings.ai.form.embeddingApiKey.description": "API key for the embedding provider (used only when Embedding API URL is set).",
 	"settings.ai.form.isEnabled.label": "Enable AI Features",
 	"settings.ai.form.isEnabled.description": "Turn on/off AI functionality",
+	"settings.ai.form.requestDebugLogs.label": "Request debug logs",
+	"settings.ai.form.requestDebugLogs.description": "Write redacted AI request/response debug logs to the main server logs for this provider. Use only while troubleshooting.",
 	"settings.ai.toast.saveSuccess": "AI settings saved successfully",
 	"settings.ai.toast.saveError": "Failed to save AI settings",
 	"settings.ai.toast.unknownError": "Unknown error",

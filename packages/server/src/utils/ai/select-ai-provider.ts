@@ -6,7 +6,456 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createMistral } from "@ai-sdk/mistral";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { logger } from "@dokploy/server/lib/logger";
 import { createOllama } from "ai-sdk-ollama";
+import { randomUUID } from "node:crypto";
+
+const LOG_STRING_PREVIEW_CHARS = 240;
+const LOG_ARRAY_SAMPLE_SIZE = 4;
+const LOG_OBJECT_KEY_LIMIT = 12;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSensitiveKey(key: string): boolean {
+	return /(authorization|api[-_]?key|token|secret|password|private[-_]?key|certificateData|contentbase64|pem|cookie|set-cookie)/i.test(
+		key,
+	);
+}
+
+function getRequestUrl(input: RequestInfo | URL): string {
+	if (typeof input === "string") return input;
+	if (input instanceof URL) return String(input);
+	return input.url;
+}
+
+function previewString(value: string, maxChars = LOG_STRING_PREVIEW_CHARS): string {
+	const compact = value.replace(/\s+/g, " ").trim();
+	if (compact.length <= maxChars) return compact;
+	return `${compact.slice(0, maxChars)}... (${compact.length} chars)`;
+}
+
+function redactForLog(
+	value: unknown,
+	options?: {
+		depth?: number;
+		key?: string;
+	},
+): unknown {
+	const depth = options?.depth ?? 0;
+	const key = options?.key ?? "";
+
+	if (value == null) return value;
+	if (depth >= 4) return "[Truncated]";
+
+	if (
+		isSensitiveKey(key) ||
+		(typeof value === "string" &&
+			/^Bearer\s+/i.test(value.trim()) &&
+			value.trim().length > 16)
+	) {
+		return typeof value === "string"
+			? `[REDACTED ${value.length} chars]`
+			: "[REDACTED]";
+	}
+
+	if (typeof value === "string") return previewString(value);
+	if (
+		typeof value === "number" ||
+		typeof value === "boolean" ||
+		typeof value === "bigint"
+	) {
+		return value;
+	}
+
+	if (Array.isArray(value)) {
+		if (value.length <= LOG_ARRAY_SAMPLE_SIZE) {
+			return value.map((item) =>
+				redactForLog(item, {
+					depth: depth + 1,
+					key,
+				}),
+			);
+		}
+		return {
+			count: value.length,
+			sample: value.slice(0, LOG_ARRAY_SAMPLE_SIZE).map((item) =>
+				redactForLog(item, {
+					depth: depth + 1,
+					key,
+				}),
+			),
+			truncated: true,
+		};
+	}
+
+	if (!isRecord(value)) return String(value);
+
+	const out: Record<string, unknown> = {};
+	let kept = 0;
+	for (const [entryKey, entryValue] of Object.entries(value)) {
+		if (kept >= LOG_OBJECT_KEY_LIMIT) {
+			out._truncatedKeys = true;
+			break;
+		}
+		out[entryKey] = redactForLog(entryValue, {
+			depth: depth + 1,
+			key: key ? `${key}.${entryKey}` : entryKey,
+		});
+		kept++;
+	}
+	return out;
+}
+
+function estimateContentChars(content: unknown): number {
+	if (typeof content === "string") return content.length;
+	if (!Array.isArray(content)) return 0;
+
+	let total = 0;
+	for (const item of content) {
+		if (typeof item === "string") {
+			total += item.length;
+			continue;
+		}
+		if (!isRecord(item)) continue;
+		if (typeof item.text === "string") total += item.text.length;
+		if (typeof item.input_text === "string") total += item.input_text.length;
+	}
+	return total;
+}
+
+function extractToolName(value: unknown): string | null {
+	if (!isRecord(value)) return null;
+	if (typeof value.name === "string" && value.name.trim().length > 0) {
+		return value.name.trim();
+	}
+	const fn = value.function;
+	if (isRecord(fn) && typeof fn.name === "string" && fn.name.trim().length > 0) {
+		return fn.name.trim();
+	}
+	return null;
+}
+
+function summarizeAssistantToolCall(value: unknown): Record<string, unknown> {
+	if (!isRecord(value)) return { type: typeof value };
+
+	const fn = isRecord(value.function) ? value.function : value;
+	const args = fn.arguments;
+	const summary: Record<string, unknown> = {
+		name:
+			typeof fn.name === "string" && fn.name.trim().length > 0
+				? fn.name.trim()
+				: "(unknown)",
+	};
+
+	if (typeof args === "string") {
+		summary.argumentsType = "string";
+		summary.argumentsChars = args.length;
+		try {
+			JSON.parse(args);
+			summary.argumentsJson = true;
+		} catch {
+			summary.argumentsJson = false;
+		}
+		try {
+			summary.argumentsPreview = redactForLog(JSON.parse(args), {
+				key: "arguments",
+			});
+		} catch {
+			summary.argumentsPreview = previewString(args);
+		}
+		return summary;
+	}
+
+	summary.argumentsType = typeof args;
+	if (typeof args !== "undefined") {
+		summary.argumentsPreview = redactForLog(args, { key: "arguments" });
+	}
+	return summary;
+}
+
+function summarizeAiRequest(payload: unknown): Record<string, unknown> {
+	if (!isRecord(payload)) return {};
+
+	const messages = Array.isArray(payload.messages) ? payload.messages : [];
+	const tools = Array.isArray(payload.tools) ? payload.tools : [];
+	const roleCounts: Record<string, number> = {};
+	let lastUserChars = 0;
+	let lastAssistantToolCalls: Record<string, unknown>[] = [];
+
+	for (const message of messages) {
+		if (!isRecord(message)) continue;
+		const role =
+			typeof message.role === "string" && message.role.trim().length > 0
+				? message.role.trim()
+				: "unknown";
+		roleCounts[role] = (roleCounts[role] ?? 0) + 1;
+
+		if (role === "user") {
+			lastUserChars = estimateContentChars(message.content);
+		}
+		if (role === "assistant" && Array.isArray(message.tool_calls)) {
+			lastAssistantToolCalls = message.tool_calls
+				.slice(-3)
+				.map((toolCall) => summarizeAssistantToolCall(toolCall));
+		}
+	}
+
+	return {
+		model: typeof payload.model === "string" ? payload.model : undefined,
+		stream: typeof payload.stream === "boolean" ? payload.stream : undefined,
+		messageCount: messages.length,
+		roleCounts,
+		lastUserChars,
+		toolsCount: tools.length,
+		toolNames: tools
+			.map((tool) => extractToolName(tool))
+			.filter((name): name is string => Boolean(name))
+			.slice(0, 10),
+		lastAssistantToolCalls,
+		toolChoice: redactForLog(payload.tool_choice ?? payload.toolChoice, {
+			key: "toolChoice",
+		}),
+		maxTokens:
+			typeof payload.max_tokens === "number"
+				? payload.max_tokens
+				: typeof payload.max_completion_tokens === "number"
+					? payload.max_completion_tokens
+					: typeof payload.maxOutputTokens === "number"
+						? payload.maxOutputTokens
+						: undefined,
+	};
+}
+
+function summarizeAiResponse(response: Response, durationMs: number) {
+	const upstreamRequestId =
+		response.headers.get("x-request-id") ??
+		response.headers.get("request-id") ??
+		response.headers.get("anthropic-request-id") ??
+		undefined;
+
+	return {
+		ok: response.ok,
+		status: response.status,
+		statusText: response.statusText || undefined,
+		durationMs,
+		contentType: response.headers.get("content-type") ?? undefined,
+		upstreamRequestId,
+	};
+}
+
+async function getResponseBodyPreview(response: Response): Promise<unknown> {
+	try {
+		const text = await response.clone().text();
+		if (!text) return undefined;
+		try {
+			return redactForLog(JSON.parse(text), { key: "responseBody" });
+		} catch {
+			return previewString(text, 1000);
+		}
+	} catch {
+		return undefined;
+	}
+}
+
+async function parseJsonRequestBody(body: unknown): Promise<unknown | null> {
+	if (typeof body === "string") {
+		try {
+			return JSON.parse(body) as unknown;
+		} catch {
+			return null;
+		}
+	}
+
+	if (body instanceof Uint8Array) {
+		try {
+			const text = new TextDecoder().decode(body);
+			return JSON.parse(text) as unknown;
+		} catch {
+			return null;
+		}
+	}
+
+	if (body instanceof ArrayBuffer) {
+		try {
+			const text = new TextDecoder().decode(new Uint8Array(body));
+			return JSON.parse(text) as unknown;
+		} catch {
+			return null;
+		}
+	}
+
+	return null;
+}
+
+function normalizeOpenAiAssistantToolArguments(payload: unknown): {
+	mutated: boolean;
+	issues: string[];
+} {
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+		return { mutated: false, issues: [] };
+	}
+
+	const obj = payload as Record<string, unknown>;
+	const messages = obj.messages;
+	if (!Array.isArray(messages)) return { mutated: false, issues: [] };
+
+	let mutated = false;
+	const issues: string[] = [];
+
+	for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+		const message = messages[messageIndex];
+		if (!message || typeof message !== "object" || Array.isArray(message)) continue;
+
+		const msg = message as Record<string, unknown>;
+		if (msg.role !== "assistant" || !Array.isArray(msg.tool_calls)) continue;
+
+		for (let toolIndex = 0; toolIndex < msg.tool_calls.length; toolIndex++) {
+			const toolCall = msg.tool_calls[toolIndex];
+			if (!toolCall || typeof toolCall !== "object" || Array.isArray(toolCall)) {
+				continue;
+			}
+
+			const fn = (toolCall as Record<string, unknown>).function;
+			if (!fn || typeof fn !== "object" || Array.isArray(fn)) continue;
+
+			const fnRecord = fn as Record<string, unknown>;
+			const toolName =
+				typeof fnRecord.name === "string" && fnRecord.name.trim().length > 0
+					? fnRecord.name.trim()
+					: "(unknown)";
+			const args = fnRecord.arguments;
+
+			if (typeof args === "string") {
+				try {
+					JSON.parse(args);
+				} catch {
+					issues.push(
+						`messages[${messageIndex}].tool_calls[${toolIndex}] ${toolName}: arguments is not valid JSON string`,
+					);
+				}
+				continue;
+			}
+
+			if (typeof args === "undefined") {
+				issues.push(
+					`messages[${messageIndex}].tool_calls[${toolIndex}] ${toolName}: arguments is missing`,
+				);
+				continue;
+			}
+
+			try {
+				fnRecord.arguments = JSON.stringify(args);
+				mutated = true;
+			} catch {
+				issues.push(
+					`messages[${messageIndex}].tool_calls[${toolIndex}] ${toolName}: arguments is not serializable`,
+				);
+			}
+		}
+	}
+
+	return { mutated, issues };
+}
+
+function createValidatedJsonFetch(
+	baseFetch: typeof fetch,
+	options: {
+		providerName: string;
+		debugEnabled?: boolean;
+		transform?: (payload: unknown) => void;
+	},
+): typeof fetch {
+	return async (input: RequestInfo | URL, init?: RequestInit) => {
+		const requestId = randomUUID();
+		const startedAt = Date.now();
+		const body = init?.body;
+		if (!body) return baseFetch(input, init);
+
+		const parsed = await parseJsonRequestBody(body);
+		if (parsed == null) return baseFetch(input, init);
+		const requestSummary = summarizeAiRequest(parsed);
+		const url = getRequestUrl(input);
+		const requestMeta = {
+			requestId,
+			provider: options.providerName,
+			method: init?.method ?? "POST",
+			url,
+			request: requestSummary,
+		};
+
+		if (options.debugEnabled) {
+			logger.info(requestMeta, "[AI] request");
+		}
+
+		const { mutated, issues } = normalizeOpenAiAssistantToolArguments(parsed);
+		if (issues.length > 0) {
+			logger.error(
+				{
+					...requestMeta,
+					issues,
+				},
+				"[AI] invalid outbound assistant tool arguments",
+			);
+			throw new Error(`Invalid outbound assistant tool arguments: ${issues[0]}`);
+		}
+
+		options.transform?.(parsed);
+		const nextInit =
+			!mutated && !options.transform
+				? init
+				: {
+						...init,
+						body: JSON.stringify(parsed),
+					};
+
+		try {
+			const response = await baseFetch(input, nextInit);
+			const responseMeta = summarizeAiResponse(response, Date.now() - startedAt);
+
+			if (!response.ok) {
+				logger.error(
+					{
+						...requestMeta,
+						response: responseMeta,
+						responseBodyPreview: await getResponseBodyPreview(response),
+					},
+					"[AI] upstream error response",
+				);
+			} else if (options.debugEnabled) {
+				logger.info(
+					{
+						requestId,
+						provider: options.providerName,
+						method: init?.method ?? "POST",
+						url,
+						response: responseMeta,
+					},
+					"[AI] response",
+				);
+			}
+
+			return response;
+		} catch (error) {
+			logger.error(
+				{
+					...requestMeta,
+					durationMs: Date.now() - startedAt,
+					error:
+						error instanceof Error
+							? {
+									name: error.name,
+									message: error.message,
+								}
+							: String(error),
+				},
+				"[AI] request failed",
+			);
+			throw error;
+		}
+	};
+}
 
 export function getProviderName(apiUrl: string) {
 	if (apiUrl.includes("api.openai.com")) return "openai";
@@ -155,51 +604,15 @@ function stripGeminiToolSchemaAdditionalProperties(payload: unknown): void {
 
 function createGeminiFetchWithArgsNormalization(
 	baseFetch: typeof fetch,
+	options?: {
+		debugEnabled?: boolean;
+	},
 ): typeof fetch {
-	return async (input: RequestInfo | URL, init?: RequestInit) => {
-		const body = init?.body;
-		if (!body) return baseFetch(input, init);
-
-		const parseJsonBody = async (value: unknown): Promise<unknown | null> => {
-			if (typeof value === "string") {
-				try {
-					return JSON.parse(value) as unknown;
-				} catch {
-					return null;
-				}
-			}
-
-			if (value instanceof Uint8Array) {
-				try {
-					const text = new TextDecoder().decode(value);
-					return JSON.parse(text) as unknown;
-				} catch {
-					return null;
-				}
-			}
-
-			if (value instanceof ArrayBuffer) {
-				try {
-					const text = new TextDecoder().decode(new Uint8Array(value));
-					return JSON.parse(text) as unknown;
-				} catch {
-					return null;
-				}
-			}
-
-			return null;
-		};
-
-		const parsed = await parseJsonBody(body);
-		if (parsed !== null) {
-			try {
-				normalizeGeminiRequestPayload(parsed);
-				return baseFetch(input, { ...init, body: JSON.stringify(parsed) });
-			} catch {}
-		}
-
-		return baseFetch(input, init);
-	};
+	return createValidatedJsonFetch(baseFetch, {
+		providerName: "gemini",
+		debugEnabled: options?.debugEnabled,
+		transform: normalizeGeminiRequestPayload,
+	});
 }
 
 function fixDeepSeekReasoningContent(value: unknown): void {
@@ -228,17 +641,15 @@ function fixDeepSeekReasoningContent(value: unknown): void {
 
 function createDeepSeekFetchWithReasoningNormalization(
 	baseFetch: typeof fetch,
+	options?: {
+		debugEnabled?: boolean;
+	},
 ): typeof fetch {
-	return async (input: RequestInfo | URL, init?: RequestInit) => {
-		if (init?.body && typeof init.body === "string") {
-			try {
-				const parsed = JSON.parse(init.body) as unknown;
-				fixDeepSeekReasoningContent(parsed);
-				return baseFetch(input, { ...init, body: JSON.stringify(parsed) });
-			} catch {}
-		}
-		return baseFetch(input, init);
-	};
+	return createValidatedJsonFetch(baseFetch, {
+		providerName: "deepseek",
+		debugEnabled: options?.debugEnabled,
+		transform: fixDeepSeekReasoningContent,
+	});
 }
 
 export function normalizeAiApiUrl(config: {
@@ -332,6 +743,7 @@ export function selectAIProvider(config: {
 	apiUrl: string;
 	apiKey: string;
 	providerType?: string | null;
+	requestDebugLogs?: boolean | null;
 }) {
 	const detectedProvider = getProviderName(config.apiUrl);
 	const providerName = config.providerType
@@ -349,11 +761,19 @@ export function selectAIProvider(config: {
 			return createOpenAI({
 				apiKey: config.apiKey,
 				baseURL: normalizedApiUrl,
+				fetch: createValidatedJsonFetch(globalThis.fetch, {
+					debugEnabled: config.requestDebugLogs === true,
+					providerName: "openai",
+				}),
 			});
 		case "azure":
 			return createAzure({
 				apiKey: config.apiKey,
 				baseURL: normalizedApiUrl,
+				fetch: createValidatedJsonFetch(globalThis.fetch, {
+					debugEnabled: config.requestDebugLogs === true,
+					providerName: "azure",
+				}),
 			});
 		case "anthropic":
 			return createAnthropic({
@@ -364,6 +784,10 @@ export function selectAIProvider(config: {
 			return createCohere({
 				baseURL: normalizedApiUrl,
 				apiKey: config.apiKey,
+				fetch: createValidatedJsonFetch(globalThis.fetch, {
+					debugEnabled: config.requestDebugLogs === true,
+					providerName: "cohere",
+				}),
 			});
 		case "perplexity":
 			return createOpenAICompatible({
@@ -372,11 +796,19 @@ export function selectAIProvider(config: {
 				headers: {
 					Authorization: `Bearer ${config.apiKey}`,
 				},
+				fetch: createValidatedJsonFetch(globalThis.fetch, {
+					debugEnabled: config.requestDebugLogs === true,
+					providerName: "perplexity",
+				}),
 			});
 		case "mistral":
 			return createMistral({
 				baseURL: normalizedApiUrl,
 				apiKey: config.apiKey,
+				fetch: createValidatedJsonFetch(globalThis.fetch, {
+					debugEnabled: config.requestDebugLogs === true,
+					providerName: "mistral",
+				}),
 			});
 		case "ollama":
 			return createOllama({
@@ -387,6 +819,10 @@ export function selectAIProvider(config: {
 			return createDeepInfra({
 				baseURL: normalizedApiUrl,
 				apiKey: config.apiKey,
+				fetch: createValidatedJsonFetch(globalThis.fetch, {
+					debugEnabled: config.requestDebugLogs === true,
+					providerName: "deepinfra",
+				}),
 			});
 		case "deepseek":
 			return createOpenAICompatible({
@@ -395,13 +831,17 @@ export function selectAIProvider(config: {
 				headers: {
 					Authorization: `Bearer ${config.apiKey}`,
 				},
-				fetch: createDeepSeekFetchWithReasoningNormalization(globalThis.fetch),
+				fetch: createDeepSeekFetchWithReasoningNormalization(globalThis.fetch, {
+					debugEnabled: config.requestDebugLogs === true,
+				}),
 			});
 		case "gemini":
 			return createGoogleGenerativeAI({
 				apiKey: config.apiKey,
 				baseURL: normalizedApiUrl,
-				fetch: createGeminiFetchWithArgsNormalization(globalThis.fetch),
+				fetch: createGeminiFetchWithArgsNormalization(globalThis.fetch, {
+					debugEnabled: config.requestDebugLogs === true,
+				}),
 			});
 		case "openai_compatible":
 		case "custom":
@@ -411,6 +851,10 @@ export function selectAIProvider(config: {
 				headers: {
 					Authorization: `Bearer ${config.apiKey}`,
 				},
+				fetch: createValidatedJsonFetch(globalThis.fetch, {
+					debugEnabled: config.requestDebugLogs === true,
+					providerName: "openai_compatible",
+				}),
 			});
 		default:
 			throw new Error(`Unsupported AI provider: ${providerName}`);

@@ -1016,6 +1016,13 @@
       "when": 1766470000000,
       "tag": "0146_ai_playbook_vector_optimizations",
       "breakpoints": true
+    },
+    {
+      "idx": 145,
+      "version": "5",
+      "when": 1766480000000,
+      "tag": "0147_ai_request_debug_logs",
+      "breakpoints": true
     }
   ]
 }

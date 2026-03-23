@@ -1415,5 +1415,7 @@
     "settings.ai.mcpServers.test.status.error": "Error",
     "settings.ai.mcpServers.test.status.unknown": "Not tested",
     "settings.ai.mcpServers.test.tools": "Tools",
-    "settings.ai.mcpServers.test.latency": "Latency"
+    "settings.ai.mcpServers.test.latency": "Latency",
+    "settings.ai.form.requestDebugLogs.label": "Request debug logs",
+    "settings.ai.form.requestDebugLogs.description": "Write redacted AI request/response debug logs to the main server logs for this provider. Use only while troubleshooting."
 }

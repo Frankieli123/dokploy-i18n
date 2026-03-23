@@ -70,6 +70,7 @@ const baseAiSchema = z.object({
 	apiUrl: z.string().url(),
 	apiKey: z.string(),
 	model: z.string().min(1),
+	requestDebugLogs: z.boolean(),
 	isEnabled: z.boolean(),
 });
 
@@ -145,6 +146,7 @@ export const HandleAi = ({ aiId }: Props) => {
 			apiUrl: "https://api.openai.com/v1",
 			apiKey: "",
 			model: "",
+			requestDebugLogs: false,
 			isEnabled: true,
 		},
 	});
@@ -170,6 +172,7 @@ export const HandleAi = ({ aiId }: Props) => {
 					apiUrl: displayApiUrl,
 					apiKey: data?.apiKey ?? "",
 					model: data?.model ?? "",
+					requestDebugLogs: data?.requestDebugLogs ?? false,
 					isEnabled: data?.isEnabled ?? true,
 				});
 			}
@@ -524,6 +527,29 @@ export const HandleAi = ({ aiId }: Props) => {
 								}}
 							/>
 						)}
+
+						<FormField
+							control={form.control}
+							name="requestDebugLogs"
+							render={({ field }) => (
+								<FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+									<div className="space-y-0.5">
+										<FormLabel className="text-base">
+											{t("settings.ai.form.requestDebugLogs.label")}
+										</FormLabel>
+										<FormDescription>
+											{t("settings.ai.form.requestDebugLogs.description")}
+										</FormDescription>
+									</div>
+									<FormControl>
+										<Switch
+											checked={field.value}
+											onCheckedChange={field.onChange}
+										/>
+									</FormControl>
+								</FormItem>
+							)}
+						/>
 
 						<FormField
 							control={form.control}

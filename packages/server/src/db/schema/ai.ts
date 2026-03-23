@@ -1,18 +1,18 @@
 import { relations } from "drizzle-orm";
-	import {
-		boolean,
-		customType,
-		integer,
-		jsonb,
-		pgEnum,
-		pgTable,
-		text,
-		vector,
-	} from "drizzle-orm/pg-core";
-	import { createInsertSchema } from "drizzle-zod";
-	import { nanoid } from "nanoid";
-	import { z } from "zod";
-	import { organization } from "./account";
+import {
+	boolean,
+	customType,
+	integer,
+	jsonb,
+	pgEnum,
+	pgTable,
+	text,
+	vector,
+} from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { nanoid } from "nanoid";
+import { z } from "zod";
+import { organization } from "./account";
 import { projects } from "./project";
 import { server } from "./server";
 
@@ -66,49 +66,50 @@ export const aiProviderTypeSchema = z.enum([
 	"openai_compatible",
 ]);
 
-	// ============================================
-	// AI Configuration Table (existing)
-	// ============================================
+// ============================================
+// AI Configuration Table (existing)
+// ============================================
 
-	const vectorUntyped = customType<{
-		data: number[];
-		driverData: string;
-	}>({
-		dataType() {
-			return "vector";
-		},
-		toDriver(value) {
-			if (!Array.isArray(value)) return value as unknown as string;
-			return JSON.stringify(value);
-		},
-		fromDriver(value) {
-			if (typeof value !== "string") return value as unknown as number[];
-			return value
-				.slice(1, -1)
-				.split(",")
-				.map((v) => Number.parseFloat(v));
-		},
-	});
+const vectorUntyped = customType<{
+	data: number[];
+	driverData: string;
+}>({
+	dataType() {
+		return "vector";
+	},
+	toDriver(value) {
+		if (!Array.isArray(value)) return value as unknown as string;
+		return JSON.stringify(value);
+	},
+	fromDriver(value) {
+		if (typeof value !== "string") return value as unknown as number[];
+		return value
+			.slice(1, -1)
+			.split(",")
+			.map((v) => Number.parseFloat(v));
+	},
+});
 
-	export const ai = pgTable("ai", {
-		aiId: text("aiId")
-			.notNull()
-			.primaryKey()
-			.$defaultFn(() => nanoid()),
-		name: text("name").notNull(),
-		providerType: text("providerType").notNull().default("openai_compatible"),
-		apiUrl: text("apiUrl").notNull(),
-		apiKey: text("apiKey").notNull(),
-		model: text("model").notNull(),
-		embeddingModel: text("embeddingModel"),
-		embeddingProviderType: text("embeddingProviderType"),
-		embeddingApiUrl: text("embeddingApiUrl"),
-		embeddingApiKey: text("embeddingApiKey"),
-		isEnabled: boolean("isEnabled").notNull().default(true),
-		organizationId: text("organizationId")
-			.notNull()
-			.references(() => organization.id, { onDelete: "cascade" }), // Admin ID who created the AI settings
-		createdAt: text("createdAt")
+export const ai = pgTable("ai", {
+	aiId: text("aiId")
+		.notNull()
+		.primaryKey()
+		.$defaultFn(() => nanoid()),
+	name: text("name").notNull(),
+	providerType: text("providerType").notNull().default("openai_compatible"),
+	apiUrl: text("apiUrl").notNull(),
+	apiKey: text("apiKey").notNull(),
+	model: text("model").notNull(),
+	embeddingModel: text("embeddingModel"),
+	embeddingProviderType: text("embeddingProviderType"),
+	embeddingApiUrl: text("embeddingApiUrl"),
+	embeddingApiKey: text("embeddingApiKey"),
+	requestDebugLogs: boolean("requestDebugLogs").notNull().default(false),
+	isEnabled: boolean("isEnabled").notNull().default(true),
+	organizationId: text("organizationId")
+		.notNull()
+		.references(() => organization.id, { onDelete: "cascade" }), // Admin ID who created the AI settings
+	createdAt: text("createdAt")
 		.notNull()
 		.$defaultFn(() => new Date().toISOString()),
 });
@@ -248,51 +249,55 @@ export const apiTestAiMcpServer = z
 	})
 	.required();
 
-	const createSchema = createInsertSchema(ai, {
-		name: z.string().min(1, { message: "Name is required" }),
+const createSchema = createInsertSchema(ai, {
+	name: z.string().min(1, { message: "Name is required" }),
+	providerType: aiProviderTypeSchema.optional().default("openai_compatible"),
+	apiUrl: z.string().url({ message: "Please enter a valid URL" }),
+	apiKey: z.string(),
+	model: z.string().min(1, { message: "Model is required" }),
+	embeddingModel: z.string().trim().min(1).optional().nullable(),
+	embeddingProviderType: aiProviderTypeSchema.optional().nullable(),
+	embeddingApiUrl: z.string().url().optional().nullable(),
+	embeddingApiKey: z.string().optional().nullable(),
+	requestDebugLogs: z.boolean().optional().default(false),
+	isEnabled: z.boolean().optional(),
+});
+
+export const apiCreateAi = createSchema
+	.pick({
+		name: true,
+		providerType: true,
+		apiUrl: true,
+		apiKey: true,
+		model: true,
+		embeddingModel: true,
+		embeddingProviderType: true,
+		embeddingApiUrl: true,
+		embeddingApiKey: true,
+		requestDebugLogs: true,
+		isEnabled: true,
+	})
+	.required()
+	.extend({
 		providerType: aiProviderTypeSchema.optional().default("openai_compatible"),
-		apiUrl: z.string().url({ message: "Please enter a valid URL" }),
-		apiKey: z.string(),
-		model: z.string().min(1, { message: "Model is required" }),
 		embeddingModel: z.string().trim().min(1).optional().nullable(),
 		embeddingProviderType: aiProviderTypeSchema.optional().nullable(),
 		embeddingApiUrl: z.string().url().optional().nullable(),
 		embeddingApiKey: z.string().optional().nullable(),
-		isEnabled: z.boolean().optional(),
+		requestDebugLogs: z.boolean().optional().default(false),
 	});
 
-	export const apiCreateAi = createSchema
-		.pick({
-			name: true,
-			providerType: true,
-			apiUrl: true,
-			apiKey: true,
-			model: true,
-			embeddingModel: true,
-			embeddingProviderType: true,
-			embeddingApiUrl: true,
-			embeddingApiKey: true,
-			isEnabled: true,
-		})
-		.required()
-		.extend({
-			providerType: aiProviderTypeSchema.optional().default("openai_compatible"),
-			embeddingModel: z.string().trim().min(1).optional().nullable(),
-			embeddingProviderType: aiProviderTypeSchema.optional().nullable(),
-			embeddingApiUrl: z.string().url().optional().nullable(),
-			embeddingApiKey: z.string().optional().nullable(),
-		});
-
-	export const apiUpdateAi = createSchema
-		.partial()
-		.extend({
-			aiId: z.string().min(1),
-			embeddingModel: z.string().trim().min(1).optional().nullable(),
-			embeddingProviderType: aiProviderTypeSchema.optional().nullable(),
-			embeddingApiUrl: z.string().url().optional().nullable(),
-			embeddingApiKey: z.string().optional().nullable(),
-		})
-		.omit({ organizationId: true });
+export const apiUpdateAi = createSchema
+	.partial()
+	.extend({
+		aiId: z.string().min(1),
+		embeddingModel: z.string().trim().min(1).optional().nullable(),
+		embeddingProviderType: aiProviderTypeSchema.optional().nullable(),
+		embeddingApiUrl: z.string().url().optional().nullable(),
+		embeddingApiKey: z.string().optional().nullable(),
+		requestDebugLogs: z.boolean().optional(),
+	})
+	.omit({ organizationId: true });
 
 	// ============================================
 	// Agent Playbooks (organization-scoped memory)

@@ -72,6 +72,8 @@ type ToolPromptInfo = {
 	parameters?: string;
 };
 
+type MetaToolName = "tool_suggest" | "tool_search" | "tool_describe" | "tool_call";
+
 type ToolBudgetMode = "standard" | "max";
 
 const RISK_RANK = {
@@ -326,7 +328,15 @@ function describeZodParameters(schema: z.ZodTypeAny): string {
 	return lines.join("\n");
 }
 
-function buildMetaToolPromptInfo(): ToolPromptInfo[] {
+function buildMetaToolPromptInfo(params?: {
+	selectedNames?: readonly MetaToolName[];
+}): ToolPromptInfo[] {
+	const selected = new Set<MetaToolName>(params?.selectedNames ?? [
+		"tool_suggest",
+		"tool_search",
+		"tool_describe",
+		"tool_call",
+	]);
 	return [
 		{
 			name: "tool_suggest",
@@ -356,7 +366,9 @@ function buildMetaToolPromptInfo(): ToolPromptInfo[] {
 			riskLevel: "low",
 			requiresApproval: false,
 		},
-	];
+	].filter((tool): tool is ToolPromptInfo & { name: MetaToolName } =>
+		selected.has(tool.name as MetaToolName),
+	);
 }
 
 function sortToolsForPrompt(tools: Tool[]): Tool[] {
@@ -425,6 +437,75 @@ function buildToolCatalogPromptInfo(params: {
 			parameters: data.parameters,
 		};
 	});
+}
+
+function shouldEnableFullToolSearch(userMessage: string): boolean {
+	const text = userMessage.trim();
+	if (!text) return true;
+
+	if (
+		/(?:\btool_(?:search|suggest|describe)\b|\btool\s+catalog\b|\btool\s+list\b|\bmcp\b|\brouter\b|\bprocedure\b|\bschema\b|\bapi\b|工具|工具列表|工具目录|过程|路由|参数|入参|schema)/i.test(
+			text,
+		)
+	) {
+		return true;
+	}
+
+	if (
+		/(?:what can|which tool|which tools|search|find|explore|discover|suggest|recommend|如何|怎么|哪些|哪个|推荐|查找|搜索)/i.test(
+			text,
+		)
+	) {
+		const operationalSignals =
+			/(?:deploy|deployment|domain|certificate|ssl|https|docker|container|compose|server|file|repo|database|sql|backup|restore|restart|logs?|修复|部署|域名|证书|容器|服务器|数据库|备份|恢复|重启|日志)/i.test(
+				text,
+			);
+		if (!operationalSignals) return true;
+	}
+
+	return false;
+}
+
+function buildToolExposurePlan(params: {
+	userMessage: string;
+	projectId?: string;
+	serverId?: string;
+}): {
+	activeMetaTools: MetaToolName[];
+	promptTools: ToolPromptInfo[];
+} {
+	const enableFullSearch = shouldEnableFullToolSearch(params.userMessage);
+	const activeMetaTools: MetaToolName[] = enableFullSearch
+		? ["tool_suggest", "tool_search", "tool_describe", "tool_call"]
+		: ["tool_suggest", "tool_describe", "tool_call"];
+	const promptTools = buildMetaToolPromptInfo({
+		selectedNames: activeMetaTools,
+	}).concat(
+		buildToolCatalogPromptInfo({
+			userMessage: params.userMessage,
+			projectId: params.projectId,
+			serverId: params.serverId,
+			maxTools: enableFullSearch ? 14 : 10,
+		}),
+	);
+
+	return {
+		activeMetaTools,
+		promptTools,
+	};
+}
+
+function resolveActiveToolNames<TTools extends Record<string, unknown>>(
+	tools: TTools,
+	activeMetaTools: readonly MetaToolName[],
+): Array<Extract<keyof TTools, string>> {
+	const out: Array<Extract<keyof TTools, string>> = [];
+	for (const name of activeMetaTools) {
+		if (name in tools) {
+			out.push(name as Extract<keyof TTools, string>);
+		}
+	}
+	return out;
 }
 
 function tokenizeToolSearchQuery(query: string): string[] {
@@ -3315,17 +3396,18 @@ function buildChatTools(params: {
 					const normalizedToolName = input.toolName.trim();
 					input.toolName = normalizedToolName;
 
+					const recordCandidates = [
+						inputAny.params,
+						inputAny.input,
+						inputAny.args,
+						input.params,
+					].filter(isRecord) as Record<string, unknown>[];
+					const preferredRecord =
+						recordCandidates.find((candidate) => Object.keys(candidate).length > 0) ??
+						recordCandidates[0];
 					const rawParams: Record<string, unknown> = {
-						...(isRecord(inputAny.params)
-						? (inputAny.params as Record<string, unknown>)
-						: isRecord(inputAny.input)
-							? (inputAny.input as Record<string, unknown>)
-							: isRecord(inputAny.args)
-								? (inputAny.args as Record<string, unknown>)
-								: isRecord(input.params)
-									? (input.params as Record<string, unknown>)
-									: {}),
-				};
+						...(preferredRecord ?? {}),
+					};
 
 				// Common LLM mistake: provide tool params at the top-level instead of inside `params`.
 				for (const [k, v] of Object.entries(inputAny)) {
@@ -3349,6 +3431,13 @@ function buildChatTools(params: {
 					typeof rawParams.procedureName === "string"
 				) {
 					rawParams.procedureName = rawParams.procedureName.trim();
+				}
+				if (
+					input.toolName === "trpc_procedure_call" &&
+					typeof rawParams.input === "undefined" &&
+					typeof inputAny.input !== "undefined"
+				) {
+					rawParams.input = inputAny.input;
 				}
 				if (
 					input.toolName === "trpc_procedure_call" &&
@@ -3550,11 +3639,20 @@ function buildChatTools(params: {
 						if (input.toolName.includes(".")) {
 							const trpcTool = toolRegistry.get("trpc_procedure_call");
 							if (trpcTool) {
-								const wrappedInput = rawParams.input ?? rawParams.params ?? rawParams;
-								const wrapped =
-									typeof wrappedInput === "object" && wrappedInput !== null
-										? (wrappedInput as Record<string, unknown>)
-										: {};
+								const wrappedCandidate = (() => {
+									if (isRecord(rawParams.input)) return rawParams.input;
+									if (isRecord(rawParams.params)) return rawParams.params;
+									const filteredEntries = Object.entries(rawParams).filter(
+										([key]) =>
+											key !== "procedureName" &&
+											key !== "input" &&
+											key !== "params",
+									);
+									return Object.fromEntries(filteredEntries);
+								})();
+								const wrapped = isRecord(wrappedCandidate)
+									? { ...wrappedCandidate }
+									: {};
 								rawParams.procedureName = input.toolName;
 								if (Object.keys(wrapped).length > 0) {
 									rawParams.input = wrapped;
@@ -4057,6 +4155,111 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function looksLikePemBlock(value: string): boolean {
+	return /-----BEGIN [A-Z0-9 ]+-----/.test(value);
+}
+
+function looksLikeBase64Blob(value: string): boolean {
+	const compact = value.replace(/\s+/g, "");
+	if (compact.length < 512 || compact.length % 4 !== 0) return false;
+	return /^[A-Za-z0-9+/=]+$/.test(compact);
+}
+
+function summarizeValueForModelContext(
+	value: unknown,
+	options?: {
+		depth?: number;
+		key?: string;
+	},
+): unknown {
+	const depth = options?.depth ?? 0;
+	const key = options?.key ?? "";
+
+	if (value == null) return value;
+	if (depth >= 4) return "[Depth omitted]";
+
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		if (looksLikePemBlock(trimmed)) {
+			return `[PEM omitted; ${value.length} chars]`;
+		}
+		if (
+			/(?:^|\.)(?:certificateData|privateKey|contentBase64|base64|pem)$/i.test(key) ||
+			looksLikeBase64Blob(trimmed)
+		) {
+			return `[Binary/blob omitted; ${value.length} chars]`;
+		}
+		if (value.length > 800) {
+			return `${value.slice(0, 300)}… (${value.length} chars total)`;
+		}
+		return value;
+	}
+
+	if (
+		typeof value === "number" ||
+		typeof value === "boolean" ||
+		typeof value === "bigint"
+	) {
+		return value;
+	}
+
+	if (Array.isArray(value)) {
+		const sampleSize = 5;
+		if (value.length <= sampleSize) {
+			return value.map((item) =>
+				summarizeValueForModelContext(item, {
+					depth: depth + 1,
+					key,
+				}),
+			);
+		}
+		return {
+			count: value.length,
+			sample: value.slice(0, sampleSize).map((item) =>
+				summarizeValueForModelContext(item, {
+					depth: depth + 1,
+					key,
+				}),
+			),
+			truncated: true,
+		};
+	}
+
+	if (!isRecord(value)) return String(value);
+
+	const out: Record<string, unknown> = {};
+	let kept = 0;
+	for (const [entryKey, entryValue] of Object.entries(value)) {
+		if (kept >= 20) {
+			out._truncatedKeys = true;
+			break;
+		}
+		if (
+			/(?:^|\.)(?:certificateData|privateKey|contentBase64|pem|preview)$/i.test(
+				`${key}.${entryKey}`,
+			)
+		) {
+			if (typeof entryValue === "string") {
+				out[entryKey] = `[Omitted; ${entryValue.length} chars]`;
+			} else {
+				out[entryKey] = "[Omitted]";
+			}
+			kept++;
+			continue;
+		}
+		out[entryKey] = summarizeValueForModelContext(entryValue, {
+			depth: depth + 1,
+			key: key ? `${key}.${entryKey}` : entryKey,
+		});
+		kept++;
+	}
+	return out;
+}
+
+function summarizeJsonForModelContext(value: unknown, maxLen: number): string {
+	return safeJsonForPrompt(summarizeValueForModelContext(value), maxLen);
+}
+
 function getRetryableToolCallFailures(toolResults: unknown): {
 	failures: Record<string, unknown>[];
 	successfulTools: string[];
@@ -4456,13 +4659,13 @@ async function generateToolOutcomeSummary(params: {
 
 	const toolCallsText = params.toolCalls
 		.map((tc) => {
-			return `tool_call_id: ${tc.id}\ntool: ${tc.name}\nargs:\n${safeJsonForPrompt(tc.arguments, 2000)}`;
+			return `tool_call_id: ${tc.id}\ntool: ${tc.name}\nargs:\n${summarizeJsonForModelContext(tc.arguments, 1200)}`;
 		})
 		.join("\n\n");
 
 	const toolResultsText = params.toolResults
 		.map((tr) => {
-			return `tool_call_id: ${tr.toolCallId}\ntool: ${tr.toolName}\nresult:\n${safeJsonForPrompt(tr.result, 3000)}`;
+			return `tool_call_id: ${tr.toolCallId}\ntool: ${tr.toolName}\nresult:\n${summarizeJsonForModelContext(tr.result, 1600)}`;
 		})
 		.join("\n\n");
 
@@ -4529,8 +4732,8 @@ async function buildToolExecutionContextMessage(params: {
 	maxExecutions?: number;
 	maxChars?: number;
 }): Promise<string> {
-	const maxExecutions = Math.min(Math.max(params.maxExecutions ?? 10, 1), 30);
-	const maxChars = Math.min(Math.max(params.maxChars ?? 14000, 2000), 50000);
+	const maxExecutions = Math.min(Math.max(params.maxExecutions ?? 6, 1), 20);
+	const maxChars = Math.min(Math.max(params.maxChars ?? 8000, 1500), 30000);
 
 	const executions = await db.query.aiToolExecutions.findMany({
 		where: eq(aiToolExecutions.conversationId, params.conversationId),
@@ -4557,14 +4760,14 @@ async function buildToolExecutionContextMessage(params: {
 
 			const paramsText =
 				e.parameters && typeof e.parameters === "object"
-					? `params:\n${safeJsonForPrompt(e.parameters, 2000)}`
+					? `params:\n${summarizeJsonForModelContext(e.parameters, 1200)}`
 					: "";
 
 			const resultText =
 				e.result && typeof e.result === "object"
-					? `result:\n${safeJsonForPrompt(e.result, 4000)}`
+					? `result:\n${summarizeJsonForModelContext(e.result, 1800)}`
 					: e.error
-						? `error:\n${safeTruncateString(String(e.error), 2000)}`
+						? `error:\n${safeTruncateString(String(e.error), 1000)}`
 						: "";
 
 			return [header, paramsText, resultText].filter(Boolean).join("\n");
@@ -4715,17 +4918,13 @@ export const chat = async ({
 			playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
 		} catch {}
 
+	const toolExposurePlan = buildToolExposurePlan({
+		userMessage: message,
+		projectId: conversation.projectId || undefined,
+		serverId: conversation.serverId || undefined,
+	});
 	const baseSystemPrompt = [
-		buildSystemPrompt(
-			conversationForPrompt,
-			buildMetaToolPromptInfo().concat(
-				buildToolCatalogPromptInfo({
-					userMessage: message,
-					projectId: conversation.projectId || undefined,
-					serverId: conversation.serverId || undefined,
-				}),
-			),
-		),
+		buildSystemPrompt(conversationForPrompt, toolExposurePlan.promptTools),
 		playbookPrompt,
 	]
 		.filter((s) => typeof s === "string" && s.trim().length > 0)
@@ -4761,6 +4960,10 @@ export const chat = async ({
 		messageId: userMessageId,
 		toolApprovalsDisabled,
 	});
+	const activeTools = resolveActiveToolNames(
+		tools,
+		toolExposurePlan.activeMetaTools,
+	);
 
 	const initialSystemMode = getInitialSystemMode(aiSettings);
 
@@ -4852,6 +5055,7 @@ export const chat = async ({
 				system: systemMode === "system" ? effectiveSystemPrompt : undefined,
 				messages: nextMessages,
 				tools: withTools ? tools : undefined,
+				activeTools: withTools ? activeTools : undefined,
 				stopWhen: stepCountIs(toolStepBudget),
 			});
 		};
@@ -5442,17 +5646,13 @@ export const chatStream = async (
 			playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
 		} catch {}
 
+		const toolExposurePlan = buildToolExposurePlan({
+			userMessage: message,
+			projectId: conversation.projectId || undefined,
+			serverId: conversation.serverId || undefined,
+		});
 		const baseSystemPrompt = [
-			buildSystemPrompt(
-				conversationForPrompt,
-				buildMetaToolPromptInfo().concat(
-					buildToolCatalogPromptInfo({
-						userMessage: message,
-						projectId: conversation.projectId || undefined,
-						serverId: conversation.serverId || undefined,
-					}),
-				),
-			),
+			buildSystemPrompt(conversationForPrompt, toolExposurePlan.promptTools),
 			playbookPrompt,
 		]
 			.filter((s) => typeof s === "string" && s.trim().length > 0)
@@ -5487,6 +5687,10 @@ export const chatStream = async (
 		messageId: userMessageId,
 		toolApprovalsDisabled,
 	});
+	const activeTools = resolveActiveToolNames(
+		tools,
+		toolExposurePlan.activeMetaTools,
+	);
 
 	const initialSystemMode = getInitialSystemMode(aiSettings);
 
@@ -5589,6 +5793,7 @@ export const chatStream = async (
 					: undefined,
 			messages: nextMessages,
 			tools: withTools ? tools : undefined,
+			activeTools: withTools ? activeTools : undefined,
 			stopWhen,
 			abortSignal: options.abortSignal,
 		});
@@ -6656,6 +6861,7 @@ export const chatStream = async (
 			? String((conversation.metadata as { summary?: unknown }).summary)
 			: "";
 	const uiLocale = getUiLocaleFromMetadata(conversation.metadata);
+	const availableToolNames = new Set(availableTools.map((tool) => tool.name));
 
 	const toolList = availableTools
 		.map((t) => {
@@ -6671,10 +6877,32 @@ export const chatStream = async (
 		})
 		.join("\n");
 
+	const toolUsageGuideline = (() => {
+		const hasSuggest = availableToolNames.has("tool_suggest");
+		const hasSearch = availableToolNames.has("tool_search");
+		const hasDescribe = availableToolNames.has("tool_describe");
+
+		if (hasSearch) {
+			return "Tools: if you know the exact tool + params, call tool_call directly; otherwise use tool_suggest/tool_search/tool_describe, then tool_call.";
+		}
+		if (hasSuggest && hasDescribe) {
+			return "Tools: if you know the exact tool + params, call tool_call directly; otherwise use tool_suggest and tool_describe to stay within the preselected tool set, then tool_call.";
+		}
+		if (hasDescribe) {
+			return "Tools: prefer the preselected tools above. If one seems correct but params are unclear, use tool_describe, then tool_call.";
+		}
+		return "Tools: prefer the preselected tools above and call tool_call directly when you know the exact tool + params.";
+	})();
+
+	const toolScopeGuideline = availableToolNames.has("tool_search")
+		? "Tool scope: only the tools listed above are preselected for this turn; if you need something else, use tool_suggest/tool_search first."
+		: "Tool scope: only the tools listed above are preselected for this turn; prefer them first and avoid broad exploration unless blocked.";
+
 	const guidelines = `Guidelines:
 - Language: ${buildReplyLanguageInstruction(uiLocale)}
 - Be concise; ask at most 1-3 focused questions only if blocking.
-- Tools: if you know the exact tool + params, call tool_call directly; otherwise use tool_suggest/tool_search/tool_describe, then tool_call.
+- ${toolUsageGuideline}
+- ${toolScopeGuideline}
 - tRPC: procedures are NOT tools. To find procedures, use tool_call -> trpc_procedure_suggest (preferred) or trpc_procedure_search (params must include {query}). To call a procedure, use tool_call -> trpc_procedure_call OR call tool_call with toolName="<router>.<procedure>" and params=<procedure input> (it will be routed to trpc_procedure_call). Queries run without approval; mutations may require approval.
 - MCP: MCP servers expose tools dynamically. MCP tool names use the format "mcp/<mcpServerId>/<toolName>". Use tool_search (query: "mcp" or server/tool name) to discover them, tool_describe for schemas, then tool_call with params as the MCP tool arguments object.
  - Approvals (critical): if a tool requires approval AND tool approvals are manual, you MUST create a tool_call that returns status="pending_approval" (do not ask in natural language without a tool_call). Include ALL required params (including any confirm literal); do NOT send empty params as a placeholder. Tell the user to approve/reject in the UI (or type "批准/拒绝"). If tool approvals are disabled for this conversation, proceed without asking for approval.
@@ -7161,6 +7389,11 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 	const toolBudgetMode = getToolBudgetModeFromMetadata(conversation.metadata);
 	const toolStepBudget = getToolStepBudget(toolBudgetMode);
 	const agenticEnabled = toolApprovalsDisabled;
+	const toolExposurePlan = buildToolExposurePlan({
+		userMessage: typeof run.goal === "string" ? run.goal : "",
+		projectId: conversation.projectId || undefined,
+		serverId: conversation.serverId || undefined,
+	});
 		const tools = buildChatTools({
 			conversationId: run.conversationId,
 			runId,
@@ -7168,6 +7401,10 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			messageId: assistantMessageId || undefined,
 			toolApprovalsDisabled,
 		});
+	const activeTools = resolveActiveToolNames(
+		tools,
+		toolExposurePlan.activeMetaTools,
+	);
 
 	const provider = selectAIProvider(aiSettings);
 	const model = provider(aiSettings.model);
@@ -7347,16 +7584,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			} catch {}
 
 		const baseSystemPrompt = [
-			buildSystemPrompt(
-				conversation,
-				buildMetaToolPromptInfo().concat(
-					buildToolCatalogPromptInfo({
-						userMessage: goal,
-						projectId: conversation.projectId || undefined,
-						serverId: conversation.serverId || undefined,
-					}),
-				),
-			),
+			buildSystemPrompt(conversation, toolExposurePlan.promptTools),
 			playbookPrompt,
 		]
 			.filter((s) => typeof s === "string" && s.trim().length > 0)
@@ -7409,6 +7637,7 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			system: systemMode === "system" ? effectiveSystemPrompt : undefined,
 			messages: nextMessages,
 			tools: withTools ? tools : undefined,
+			activeTools: withTools ? activeTools : undefined,
 			stopWhen: stepCountIs(toolStepBudget),
 			abortSignal: runAbortController.signal,
 		});
@@ -8323,17 +8552,13 @@ async function autoContinueAfterApprovedToolExecution(params: {
 				playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
 			} catch {}
 
+		const toolExposurePlan = buildToolExposurePlan({
+			userMessage: lastUserMessageForTools,
+			projectId: conversation.projectId || undefined,
+			serverId: conversation.serverId || undefined,
+		});
 		const baseSystemPrompt = [
-			buildSystemPrompt(
-				conversation,
-				buildMetaToolPromptInfo().concat(
-					buildToolCatalogPromptInfo({
-						userMessage: lastUserMessageForTools,
-						projectId: conversation.projectId || undefined,
-						serverId: conversation.serverId || undefined,
-					}),
-				),
-			),
+			buildSystemPrompt(conversation, toolExposurePlan.promptTools),
 			playbookPrompt,
 		]
 			.filter((s) => typeof s === "string" && s.trim().length > 0)
@@ -8358,6 +8583,10 @@ async function autoContinueAfterApprovedToolExecution(params: {
 			conversation.metadata,
 		),
 	});
+	const activeTools = resolveActiveToolNames(
+		tools,
+		toolExposurePlan.activeMetaTools,
+	);
 	const toolBudgetMode = getToolBudgetModeFromMetadata(conversation.metadata);
 	const toolStepBudget = getToolStepBudget(toolBudgetMode);
 
@@ -8382,6 +8611,7 @@ async function autoContinueAfterApprovedToolExecution(params: {
 			system: systemMode === "system" ? systemPrompt : undefined,
 			messages: nextMessages,
 			tools: withTools ? tools : undefined,
+			activeTools: withTools ? activeTools : undefined,
 			stopWhen: stepCountIs(toolStepBudget),
 		});
 	};
