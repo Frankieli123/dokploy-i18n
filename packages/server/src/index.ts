@@ -111,6 +111,7 @@ export * from "./utils/providers/github";
 export * from "./utils/providers/github-public";
 export * from "./utils/providers/gitlab";
 export * from "./utils/providers/raw";
+export * from "./utils/panel-domains";
 export * from "./utils/schedules/index";
 export * from "./utils/schedules/utils";
 export * from "./utils/servers/remote-docker";

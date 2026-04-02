@@ -10,6 +10,7 @@ import { db } from "../db";
 import * as schema from "../db/schema";
 import { getUserByToken } from "../services/admin";
 import { updateUser } from "../services/user";
+import { buildPanelTrustedOrigins } from "../utils/panel-domains";
 import {
 	getInvitationEmailContent,
 	getResetPasswordEmailContent,
@@ -54,12 +55,12 @@ const { handler, api } = betterAuth({
 			});
 
 			if (admin) {
-				return [
-					...(admin.user.serverIp
-						? [`http://${admin.user.serverIp}:3000`]
-						: []),
-					...(admin.user.host ? [`https://${admin.user.host}`] : []),
-				];
+				return buildPanelTrustedOrigins({
+					serverIp: admin.user.serverIp,
+					host: admin.user.host,
+					additionalHosts: admin.user.additionalHosts,
+					https: admin.user.https,
+				});
 			}
 			return [];
 		},

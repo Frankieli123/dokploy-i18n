@@ -37,13 +37,14 @@ import {
 	stopLogCleanup,
 	updateLetsEncryptEmail,
 	updateServerById,
-	updateServerTraefik,
-	updateUser,
 	writeConfig,
 	writeMainConfig,
 	writeTraefikConfigInPath,
 	writeTraefikSetup,
 } from "@dokploy/server";
+import { updateUser } from "@dokploy/server/services/user";
+import { parsePanelDomainsInput } from "@dokploy/server/utils/panel-domains";
+import { updateServerTraefik } from "@dokploy/server/utils/traefik/web-server";
 import { generateOpenApiDocument } from "@dokploy/trpc-openapi";
 import { TRPCError } from "@trpc/server";
 import { eq, sql } from "drizzle-orm";
@@ -276,13 +277,27 @@ export const settingsRouter = createTRPCRouter({
 			if (IS_CLOUD) {
 				return true;
 			}
+			const currentUser = await findUserById(ctx.user.id);
+			const legacyProtocol = (input.https ?? currentUser.https)
+				? "https"
+				: "http";
+			const rawDomains =
+				input.domains?.trim() ||
+				(input.host?.trim()
+					? `${legacyProtocol}://${input.host.trim()}`
+					: "");
+			const parsedDomains = parsePanelDomainsInput(rawDomains);
+			const certificateType = parsedDomains.https
+				? (input.certificateType ?? "none")
+				: "none";
 			const user = await updateUser(ctx.user.id, {
-				host: input.host,
+				host: parsedDomains.primaryHost,
+				additionalHosts: parsedDomains.additionalHosts,
 				...(input.letsEncryptEmail && {
 					letsEncryptEmail: input.letsEncryptEmail,
 				}),
-				certificateType: input.certificateType,
-				https: input.https,
+				certificateType,
+				https: parsedDomains.https,
 			});
 
 			if (!user) {
@@ -292,8 +307,16 @@ export const settingsRouter = createTRPCRouter({
 				});
 			}
 
-			updateServerTraefik(user, input.host);
-			if (input.letsEncryptEmail) {
+			updateServerTraefik(
+				user,
+				parsedDomains.primaryHost,
+				parsedDomains.additionalHosts,
+			);
+			if (
+				parsedDomains.https &&
+				certificateType === "letsencrypt" &&
+				input.letsEncryptEmail
+			) {
 				updateLetsEncryptEmail(input.letsEncryptEmail);
 			}
 

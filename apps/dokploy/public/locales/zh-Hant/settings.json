@@ -1417,5 +1417,16 @@
 	"settings.gitProviders.github.edit.mirrorPrefixLabel": "Mirror Prefix URL (Git Clone)",
 	"settings.gitProviders.github.edit.mirrorPrefixPlaceholder": "e.g. https://ghproxy.com/",
 	"settings.gitProviders.github.edit.apiProxyLabel": "GitHub API Proxy URL",
-	"settings.gitProviders.github.edit.apiProxyPlaceholder": "e.g. http://1.2.3.4:7890"
+	"settings.gitProviders.github.edit.apiProxyPlaceholder": "e.g. http://1.2.3.4:7890",
+	"settings.server.domain.form.domainsPlaceholder": "https://panel.example.com,https://admin.example.com",
+	"settings.server.domain.form.domainsDescription": "?????????? URL???????????????",
+	"settings.server.domain.form.domainsProtocolDetected": "? URL ???????{{protocol}}",
+	"settings.server.domain.validation.domainsRequired": "?????????",
+	"settings.server.domain.validation.fullUrlsRequired": "?????????? URL??? https://panel.example.com,https://admin.example.com",
+	"settings.server.domain.validation.protocolUnsupported": "??? http:// ? https:// URL",
+	"settings.server.domain.validation.protocolMismatch": "??????????????",
+	"settings.server.domain.validation.credentialsUnsupported": "???????????????",
+	"settings.server.domain.validation.portsUnsupported": "????????????",
+	"settings.server.domain.validation.pathsUnsupported": "?????????????????",
+	"settings.server.domain.validation.hostRequired": "????????"
 }

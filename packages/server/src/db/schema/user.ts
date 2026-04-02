@@ -11,6 +11,7 @@ import {
 import { createInsertSchema } from "drizzle-zod";
 import { nanoid } from "nanoid";
 import { z } from "zod";
+import { parsePanelDomainsInput } from "../../utils/panel-domains";
 import { account, apikey, organization } from "./account";
 import { backups } from "./backups";
 import { projects } from "./project";
@@ -54,6 +55,7 @@ export const user = pgTable("user", {
 	certificateType: certificateType("certificateType").notNull().default("none"),
 	https: boolean("https").notNull().default(false),
 	host: text("host"),
+	additionalHosts: jsonb("additionalHosts").$type<string[]>().notNull().default([]),
 	letsEncryptEmail: text("letsEncryptEmail"),
 	sshPrivateKey: text("sshPrivateKey"),
 	updateTagsUrl: text("updateTagsUrl"),
@@ -212,17 +214,62 @@ export const apiSaveSSHKey = createSchema
 	})
 	.required();
 
-export const apiAssignDomain = createSchema
-	.pick({
-		host: true,
-		certificateType: true,
-		letsEncryptEmail: true,
-		https: true,
+export const apiAssignDomain = z
+	.object({
+		domains: z.string().trim().optional(),
+		host: z.string().trim().optional(),
+		certificateType: z.enum(["letsencrypt", "none", "custom"]).optional(),
+		letsEncryptEmail: z.string().trim().optional(),
+		https: z.boolean().optional(),
 	})
-	.required()
-	.partial({
-		letsEncryptEmail: true,
-		https: true,
+	.superRefine((input, ctx) => {
+		const domainsInput =
+			input.domains?.trim() ||
+			(input.host?.trim()
+				? `${input.https ? "https" : "http"}://${input.host.trim()}`
+				: "");
+
+		if (!domainsInput) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["domains"],
+				message: "Add at least one domain",
+			});
+			return;
+		}
+
+		let parsed;
+		try {
+			parsed = parsePanelDomainsInput(domainsInput);
+		} catch (error) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["domains"],
+				message:
+					error instanceof Error ? error.message : "Invalid panel domain list",
+			});
+			return;
+		}
+
+		if (parsed.https && !input.certificateType) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["certificateType"],
+				message: "Required",
+			});
+		}
+
+		if (
+			parsed.https &&
+			input.certificateType === "letsencrypt" &&
+			!input.letsEncryptEmail?.trim()
+		) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["letsEncryptEmail"],
+				message: "Required",
+			});
+		}
 	});
 
 export const apiUpdateDockerCleanup = createSchema

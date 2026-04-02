@@ -4,6 +4,10 @@ import { paths } from "@dokploy/server/constants";
 import type { User } from "@dokploy/server/services/user";
 import { parse, stringify } from "yaml";
 import {
+	buildPanelTraefikHostRule,
+	getPanelHosts,
+} from "../panel-domains";
+import {
 	loadOrCreateConfig,
 	removeTraefikConfig,
 	writeTraefikConfig,
@@ -14,20 +18,32 @@ import type { MainTraefikConfig } from "./types";
 export const updateServerTraefik = (
 	user: User | null,
 	newHost: string | null,
+	additionalHosts?: string[] | null,
 ) => {
 	const { https, certificateType } = user || {};
 	const appName = "dokploy";
 	const config: FileConfig = loadOrCreateConfig(appName);
+	const hosts = getPanelHosts({
+		host: newHost ?? user?.host,
+		additionalHosts: additionalHosts ?? user?.additionalHosts,
+	});
 
 	config.http = config.http || { routers: {}, services: {} };
 	config.http.routers = config.http.routers || {};
 	config.http.services = config.http.services || {};
 
+	if (hosts.length === 0) {
+		removeTraefikConfig(appName);
+		return;
+	}
+
+	const rule = buildPanelTraefikHostRule(hosts);
 	const currentRouterConfig = config.http.routers[`${appName}-router-app`] || {
-		rule: `Host(\`${newHost}\`)`,
+		rule,
 		service: `${appName}-service-app`,
 		entryPoints: ["web"],
 	};
+	currentRouterConfig.rule = rule;
 	config.http.routers[`${appName}-router-app`] = currentRouterConfig;
 
 	config.http.services = {
@@ -49,14 +65,14 @@ export const updateServerTraefik = (
 
 		if (certificateType === "letsencrypt") {
 			config.http.routers[`${appName}-router-app-secure`] = {
-				rule: `Host(\`${newHost}\`)`,
+				rule,
 				service: `${appName}-service-app`,
 				entryPoints: ["websecure"],
 				tls: { certResolver: "letsencrypt" },
 			};
 		} else {
 			config.http.routers[`${appName}-router-app-secure`] = {
-				rule: `Host(\`${newHost}\`)`,
+				rule,
 				service: `${appName}-service-app`,
 				entryPoints: ["websecure"],
 			};
@@ -66,7 +82,7 @@ export const updateServerTraefik = (
 		currentRouterConfig.middlewares = [];
 	}
 
-	if (newHost) {
+	if (hosts.length > 0) {
 		writeTraefikConfig(config, appName);
 	} else {
 		removeTraefikConfig(appName);

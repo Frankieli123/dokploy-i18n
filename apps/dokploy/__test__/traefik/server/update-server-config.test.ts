@@ -5,12 +5,11 @@ vi.mock("node:fs", () => ({
 	default: fs,
 }));
 
-import type { FileConfig, User } from "@dokploy/server";
-import {
-	createDefaultServerTraefikConfig,
-	loadOrCreateConfig,
-	updateServerTraefik,
-} from "@dokploy/server";
+import { createDefaultServerTraefikConfig } from "@dokploy/server/setup/traefik-setup";
+import type { User } from "@dokploy/server/services/user";
+import { loadOrCreateConfig } from "@dokploy/server/utils/traefik/application";
+import type { FileConfig } from "@dokploy/server/utils/traefik/file-types";
+import { updateServerTraefik } from "@dokploy/server/utils/traefik/web-server";
 import { beforeEach, expect, test, vi } from "vitest";
 
 const baseAdmin: User = {
@@ -47,6 +46,7 @@ const baseAdmin: User = {
 	serverIp: null,
 	certificateType: "none",
 	host: null,
+	additionalHosts: [],
 	letsEncryptEmail: null,
 	sshPrivateKey: null,
 	enableAutoCheckUpdates: true,
@@ -106,6 +106,28 @@ test("Should change only host when no certificate", () => {
 	const config: FileConfig = loadOrCreateConfig("dokploy");
 
 	expect(config.http?.routers?.["dokploy-router-app-secure"]).toBeUndefined();
+});
+
+test("Should support multiple panel hosts in the same router rule", () => {
+	updateServerTraefik(
+		{
+			...baseAdmin,
+			additionalHosts: ["admin.example.com"],
+			https: true,
+			certificateType: "letsencrypt",
+		},
+		"panel.example.com",
+		["admin.example.com"],
+	);
+
+	const config: FileConfig = loadOrCreateConfig("dokploy");
+
+	expect(config.http?.routers?.["dokploy-router-app"]?.rule).toBe(
+		"Host(`panel.example.com`) || Host(`admin.example.com`)",
+	);
+	expect(config.http?.routers?.["dokploy-router-app-secure"]?.rule).toBe(
+		"Host(`panel.example.com`) || Host(`admin.example.com`)",
+	);
 });
 
 test("Should not touch config without host", () => {

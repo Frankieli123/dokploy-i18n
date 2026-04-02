@@ -31,26 +31,74 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
+import {
+	formatPanelDomainsDisplay,
+	parsePanelDomainsInput,
+	parsePanelDomainsInputResult,
+} from "@/utils/panel-domains";
 import { api } from "@/utils/api";
 
 const baseServerDomainSchema = z.object({
-	domain: z.string(),
+	domains: z.string(),
 	letsEncryptEmail: z.string(),
-	https: z.boolean().optional(),
 	certificateType: z.enum(["letsencrypt", "none", "custom"]),
 });
 
+function getPanelDomainErrorMessage(
+	t: (key: string, options?: Record<string, unknown>) => string,
+	message: string,
+) {
+	const errorMap: Record<string, string> = {
+		"Add at least one domain":
+			"settings.server.domain.validation.domainsRequired",
+		"Use full URLs separated by commas, for example https://panel.example.com,https://admin.example.com":
+			"settings.server.domain.validation.fullUrlsRequired",
+		"Only http:// and https:// URLs are supported":
+			"settings.server.domain.validation.protocolUnsupported",
+		"All panel domains must use the same protocol":
+			"settings.server.domain.validation.protocolMismatch",
+		"Domains cannot include credentials":
+			"settings.server.domain.validation.credentialsUnsupported",
+		"Custom ports are not supported for panel domains":
+			"settings.server.domain.validation.portsUnsupported",
+		"Paths, query strings, and hashes are not supported for panel domains":
+			"settings.server.domain.validation.pathsUnsupported",
+		"Domain host is required":
+			"settings.server.domain.validation.hostRequired",
+	};
+
+	return t(errorMap[message] || "settings.server.domain.assignError");
+}
+
 const createServerDomainSchema = (t: (key: string) => string) =>
 	baseServerDomainSchema.superRefine((data, ctx) => {
-		if (data.https && !data.certificateType) {
+		let parsedDomains;
+		try {
+			parsedDomains = parsePanelDomainsInput(data.domains);
+		} catch (error) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["domains"],
+				message:
+					error instanceof Error
+						? getPanelDomainErrorMessage(t, error.message)
+						: t("settings.server.domain.assignError"),
+			});
+			return;
+		}
+
+		if (parsedDomains.https && !data.certificateType) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
 				path: ["certificateType"],
 				message: t("settings.server.domain.validation.certificateRequired"),
 			});
 		}
-		if (data.certificateType === "letsencrypt" && !data.letsEncryptEmail) {
+		if (
+			parsedDomains.https &&
+			data.certificateType === "letsencrypt" &&
+			!data.letsEncryptEmail
+		) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
 				path: ["letsEncryptEmail"],
@@ -72,34 +120,58 @@ export const WebDomain = () => {
 
 	const form = useForm<AddServerDomain>({
 		defaultValues: {
-			domain: "",
+			domains: "",
 			certificateType: "none",
 			letsEncryptEmail: "",
-			https: false,
 		},
 		resolver: zodResolver(schema),
 	});
-	const https = form.watch("https");
-	const domain = form.watch("domain") || "";
-	const host = data?.user?.host || "";
-	const hasChanged = domain !== host;
+	const domainsValue = form.watch("domains") || "";
+	const parsedDomainsResult = parsePanelDomainsInputResult(domainsValue);
+	const parsedDomains = parsedDomainsResult.data;
+	const https = parsedDomains?.https ?? (data?.user?.https || false);
+	const currentDomainsDisplay = formatPanelDomainsDisplay({
+		host: data?.user?.host,
+		additionalHosts: data?.user?.additionalHosts,
+		https: data?.user?.https,
+	});
+	const hasChanged = domainsValue !== currentDomainsDisplay;
 	useEffect(() => {
 		if (data) {
 			form.reset({
-				domain: data?.user?.host || "",
+				domains: formatPanelDomainsDisplay({
+					host: data?.user?.host,
+					additionalHosts: data?.user?.additionalHosts,
+					https: data?.user?.https,
+				}),
 				certificateType: data?.user?.certificateType,
 				letsEncryptEmail: data?.user?.letsEncryptEmail || "",
-				https: data?.user?.https || false,
 			});
 		}
 	}, [form, form.reset, data]);
 
 	const onSubmit = async (data: AddServerDomain) => {
+		let parsed;
+		try {
+			parsed = parsePanelDomainsInput(data.domains);
+		} catch (error) {
+			form.setError("domains", {
+				type: "manual",
+				message:
+					error instanceof Error
+						? getPanelDomainErrorMessage(t, error.message)
+						: t("settings.server.domain.assignError"),
+			});
+			return;
+		}
+
 		await mutateAsync({
-			host: data.domain,
-			letsEncryptEmail: data.letsEncryptEmail,
-			certificateType: data.certificateType,
-			https: data.https,
+			domains: parsed.domainsDisplay,
+			letsEncryptEmail:
+				parsed.https && data.certificateType === "letsencrypt"
+					? data.letsEncryptEmail
+					: "",
+			certificateType: parsed.https ? data.certificateType : "none",
 		})
 			.then(async () => {
 				await refetch();
@@ -144,111 +216,123 @@ export const WebDomain = () => {
 							>
 								<FormField
 									control={form.control}
-									name="domain"
+									name="domains"
 									render={({ field }) => {
 										return (
-											<FormItem>
+											<FormItem className="md:col-span-2">
 												<FormLabel>
 													{t("settings.server.domain.form.domain")}
 												</FormLabel>
 												<FormControl>
 													<Input
 														className="w-full"
-														placeholder={"dokploy.com"}
+														placeholder={t(
+															"settings.server.domain.form.domainsPlaceholder",
+														)}
 														{...field}
 													/>
 												</FormControl>
+												<FormDescription>
+													{t(
+														"settings.server.domain.form.domainsDescription",
+													)}
+												</FormDescription>
+												{parsedDomains && (
+													<FormDescription>
+														{t(
+															"settings.server.domain.form.domainsProtocolDetected",
+															{
+																protocol: parsedDomains.https
+																	? "HTTPS"
+																	: "HTTP",
+															},
+														)}
+													</FormDescription>
+												)}
+												{!parsedDomains &&
+													domainsValue.trim() &&
+													parsedDomainsResult.error && (
+														<FormDescription className="text-destructive">
+															{getPanelDomainErrorMessage(
+																t,
+																parsedDomainsResult.error,
+															)}
+														</FormDescription>
+													)}
 												<FormMessage />
 											</FormItem>
 										);
 									}}
 								/>
 
-								<FormField
-									control={form.control}
-									name="letsEncryptEmail"
-									render={({ field }) => {
-										return (
-											<FormItem>
-												<FormLabel>
-													{t("settings.server.domain.form.letsEncryptEmail")}
-												</FormLabel>
-												<FormControl>
-													<Input
-														className="w-full"
-														placeholder={"Dp4kz@example.com"}
-														{...field}
-													/>
-												</FormControl>
-												<FormMessage />
-											</FormItem>
-										);
-									}}
-								/>
-								<FormField
-									control={form.control}
-									name="https"
-									render={({ field }) => (
-										<FormItem className="flex flex-row items-center justify-between p-3 mt-4 border rounded-lg shadow-sm w-full col-span-2">
-											<div className="space-y-0.5">
-												<FormLabel>
-													{t("settings.server.domain.form.https.label")}
-												</FormLabel>
-												<FormDescription>
-													{t("settings.server.domain.form.https.description")}
-												</FormDescription>
-												<FormMessage />
-											</div>
-											<FormControl>
-												<Switch
-													checked={field.value}
-													onCheckedChange={field.onChange}
-												/>
-											</FormControl>
-										</FormItem>
-									)}
-								/>
 								{https && (
-									<FormField
-										control={form.control}
-										name="certificateType"
-										render={({ field }) => {
-											return (
-												<FormItem className="md:col-span-2">
-													<FormLabel>
-														{t("settings.server.domain.form.certificate.label")}
-													</FormLabel>
-													<Select
-														onValueChange={field.onChange}
-														value={field.value}
-													>
-														<FormControl>
-															<SelectTrigger>
-																<SelectValue
-																	placeholder={t(
-																		"settings.server.domain.form.certificate.placeholder",
+									<>
+										<FormField
+											control={form.control}
+											name="certificateType"
+											render={({ field }) => {
+												return (
+													<FormItem className="md:col-span-2">
+														<FormLabel>
+															{t("settings.server.domain.form.certificate.label")}
+														</FormLabel>
+														<Select
+															onValueChange={field.onChange}
+															value={field.value}
+														>
+															<FormControl>
+																<SelectTrigger>
+																	<SelectValue
+																		placeholder={t(
+																			"settings.server.domain.form.certificate.placeholder",
+																		)}
+																	/>
+																</SelectTrigger>
+															</FormControl>
+															<SelectContent>
+																<SelectItem value={"none"}>
+																	{t(
+																		"settings.server.domain.form.certificateOptions.none",
 																	)}
+																</SelectItem>
+																<SelectItem value={"letsencrypt"}>
+																	{t(
+																		"settings.server.domain.form.certificateOptions.letsencrypt",
+																	)}
+																</SelectItem>
+															</SelectContent>
+														</Select>
+														<FormMessage />
+													</FormItem>
+												);
+											}}
+										/>
+										{form.watch("certificateType") === "letsencrypt" && (
+											<FormField
+												control={form.control}
+												name="letsEncryptEmail"
+												render={({ field }) => {
+													return (
+														<FormItem className="md:col-span-2">
+															<FormLabel>
+																{t(
+																	"settings.server.domain.form.letsEncryptEmail",
+																)}
+															</FormLabel>
+															<FormControl>
+																<Input
+																	className="w-full"
+																	placeholder={"Dp4kz@example.com"}
+																	{...field}
 																/>
-															</SelectTrigger>
-														</FormControl>
-														<SelectContent>
-															<SelectItem value={"none"}>
-																{t(
-																	"settings.server.domain.form.certificateOptions.none",
-																)}
-															</SelectItem>
-															<SelectItem value={"letsencrypt"}>
-																{t(
-																	"settings.server.domain.form.certificateOptions.letsencrypt",
-																)}
-															</SelectItem>
-														</SelectContent>
-													</Select>
-													<FormMessage />
-												</FormItem>
-											);
-										}}
-									/>
+															</FormControl>
+															<FormMessage />
+														</FormItem>
+													);
+												}}
+											/>
+										)}
+									</>
 								)}
 
 								<div className="flex w-full justify-end col-span-2">

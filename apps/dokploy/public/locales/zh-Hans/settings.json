@@ -1417,5 +1417,16 @@
 	"settings.monitoring.form.callbackUrl.description": "接收监控通知的回调地址。",
 	"settings.monitoring.form.submit.saveChanges": "保存更改",
 	"settings.monitoring.toast.updateSuccess": "监控配置更新成功",
-	"settings.monitoring.toast.updateError": "更新监控配置时发生错误"
+	"settings.monitoring.toast.updateError": "更新监控配置时发生错误",
+	"settings.server.domain.form.domainsPlaceholder": "https://panel.example.com,https://admin.example.com",
+	"settings.server.domain.form.domainsDescription": "?????????? URL???????????????",
+	"settings.server.domain.form.domainsProtocolDetected": "? URL ???????{{protocol}}",
+	"settings.server.domain.validation.domainsRequired": "?????????",
+	"settings.server.domain.validation.fullUrlsRequired": "?????????? URL??? https://panel.example.com,https://admin.example.com",
+	"settings.server.domain.validation.protocolUnsupported": "??? http:// ? https:// URL",
+	"settings.server.domain.validation.protocolMismatch": "??????????????",
+	"settings.server.domain.validation.credentialsUnsupported": "?????????????",
+	"settings.server.domain.validation.portsUnsupported": "????????????",
+	"settings.server.domain.validation.pathsUnsupported": "?????????????????",
+	"settings.server.domain.validation.hostRequired": "????????"
 }
