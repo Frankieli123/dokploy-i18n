@@ -16,6 +16,8 @@ jobs:
   generate-and-commit:
     name: Generate OpenAPI and commit to Dokploy repo
     runs-on: ubuntu-latest
+    env:
+      DOCS_SYNC_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
     steps:
       - name: Checkout Dokploy repository
         uses: actions/checkout@v4
@@ -45,10 +47,10 @@ jobs:
       - name: Sync to website repository
         # Forks (e.g. user-owned repos) typically don't have push access to dokploy/website.
         # Keep the workflow green by only syncing when running under the dokploy org.
-        if: ${{ github.repository_owner == 'dokploy' && secrets.DOCS_SYNC_TOKEN != '' }}
+        if: ${{ github.repository_owner == 'dokploy' && env.DOCS_SYNC_TOKEN != '' }}
         run: |
           # Clona el repositorio de website
-          git clone https://x-access-token:${{ secrets.DOCS_SYNC_TOKEN }}@github.com/dokploy/website.git website-repo
+          git clone https://x-access-token:${DOCS_SYNC_TOKEN}@github.com/dokploy/website.git website-repo
           
           cd website-repo
           
