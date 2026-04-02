@@ -43,6 +43,9 @@ jobs:
           echo "✅ OpenAPI specification generated successfully"
 
       - name: Sync to website repository
+        # Forks (e.g. user-owned repos) typically don't have push access to dokploy/website.
+        # Keep the workflow green by only syncing when running under the dokploy org.
+        if: ${{ github.repository_owner == 'dokploy' && secrets.DOCS_SYNC_TOKEN != '' }}
         run: |
           # Clona el repositorio de website
           git clone https://x-access-token:${{ secrets.DOCS_SYNC_TOKEN }}@github.com/dokploy/website.git website-repo
@@ -67,4 +70,3 @@ jobs:
           git push
           
           echo "✅ OpenAPI synced to website successfully"
-
