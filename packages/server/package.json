@@ -19,7 +19,7 @@
     }
   },
   "scripts": {
-    "build": "npm run switch:prod && rimraf dist && tsc --project tsconfig.server.json && tsc-alias -p tsconfig.server.json",
+    "build": "npm run switch:prod && rimraf dist && node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --project tsconfig.server.json && tsc-alias -p tsconfig.server.json",
     "build:types": "tsc --emitDeclarationOnly --experimenta-dts",
     "switch:dev": "node scripts/switchToSrc.js",
     "switch:prod": "node scripts/switchToDist.js",
