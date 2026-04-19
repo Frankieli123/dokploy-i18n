@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { HelpCircle, Plus, Settings2, X } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -81,7 +81,7 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 	const [isOpen, setIsOpen] = useState(false);
 	const [isEnabled, setIsEnabled] = useState(false);
 	const { t } = useTranslation("common");
-	const { mutateAsync: updateApplication, isLoading } =
+	const { mutateAsync: updateApplication, isPending } =
 		api.application.update.useMutation();
 
 	const { data, refetch } = api.application.one.useQuery({ applicationId });
@@ -98,7 +98,7 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 			previewCertificateType: "none",
 			previewRequireCollaboratorPermissions: true,
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	const previewHttps = form.watch("previewHttps");
@@ -531,7 +531,7 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 							Cancel
 						</Button>
 						<Button
-							isLoading={isLoading}
+							isPending={isPending}
 							form="hook-form-delete-application"
 							type="submit"
 						>
@@ -544,3 +544,4 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 		</div>
 	);
 };
+

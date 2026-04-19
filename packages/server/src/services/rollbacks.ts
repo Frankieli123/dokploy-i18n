@@ -128,7 +128,7 @@ const deleteRollbackImage = async (image: string, serverId?: string | null) => {
 	const command = `docker image rm ${image} --force`;
 
 	if (serverId) {
-		await execAsyncRemote(command, serverId);
+		await execAsyncRemote(serverId, command);
 	} else {
 		await execAsync(command);
 	}

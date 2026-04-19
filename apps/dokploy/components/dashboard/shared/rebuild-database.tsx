@@ -1,4 +1,4 @@
-import { AlertTriangle, DatabaseIcon } from "lucide-react";
+﻿import { AlertTriangle, DatabaseIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
 import {
@@ -33,7 +33,7 @@ export const RebuildDatabase = ({ id, type }: Props) => {
 		redis: () => api.redis.rebuild.useMutation(),
 	};
 
-	const { mutateAsync, isLoading } = mutationMap[type]();
+	const { mutateAsync, isPending } = mutationMap[type]();
 
 	const handleRebuild = async () => {
 		try {
@@ -75,7 +75,7 @@ export const RebuildDatabase = ({ id, type }: Props) => {
 					<AlertDialog>
 						<AlertDialogTrigger asChild>
 							<Button
-								isLoading={isLoading}
+								isPending={isPending}
 								variant="outline"
 								className="w-full border-destructive/50 hover:bg-destructive/10 hover:text-destructive text-destructive"
 							>
@@ -109,7 +109,7 @@ export const RebuildDatabase = ({ id, type }: Props) => {
 									className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 									asChild
 								>
-									<Button isLoading={isLoading} type="submit">
+									<Button isPending={isPending} type="submit">
 										{t("database.rebuild.confirmButton")}
 									</Button>
 								</AlertDialogAction>
@@ -121,3 +121,4 @@ export const RebuildDatabase = ({ id, type }: Props) => {
 		</Card>
 	);
 };
+

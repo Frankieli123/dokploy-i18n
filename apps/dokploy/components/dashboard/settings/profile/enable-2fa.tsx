@@ -138,14 +138,14 @@ export const Enable2FA = () => {
 	};
 
 	const passwordForm = useForm<PasswordForm>({
-		resolver: zodResolver(passwordSchema),
+		resolver: zodResolver(passwordSchema as any) as any,
 		defaultValues: {
 			password: "",
 		},
 	});
 
 	const pinForm = useForm<PinForm>({
-		resolver: zodResolver(pinSchema),
+		resolver: zodResolver(pinSchema as any) as any,
 		defaultValues: {
 			pin: "",
 		},

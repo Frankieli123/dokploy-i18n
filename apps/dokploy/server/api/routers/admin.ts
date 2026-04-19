@@ -2,6 +2,7 @@ import {
 	findUserById,
 	IS_CLOUD,
 	setupWebMonitoring,
+	updateWebServerSettings,
 	updateUser,
 } from "@dokploy/server";
 import { TRPCError } from "@trpc/server";
@@ -28,6 +29,30 @@ export const adminRouter = createTRPCRouter({
 				}
 
 				await updateUser(user.id, {
+					metricsConfig: {
+						server: {
+							type: "Dokploy",
+							refreshRate: input.metricsConfig.server.refreshRate,
+							port: input.metricsConfig.server.port,
+							token: input.metricsConfig.server.token,
+							cronJob: input.metricsConfig.server.cronJob,
+							urlCallback: input.metricsConfig.server.urlCallback,
+							retentionDays: input.metricsConfig.server.retentionDays,
+							thresholds: {
+								cpu: input.metricsConfig.server.thresholds.cpu,
+								memory: input.metricsConfig.server.thresholds.memory,
+							},
+						},
+						containers: {
+							refreshRate: input.metricsConfig.containers.refreshRate,
+							services: {
+								include: input.metricsConfig.containers.services.include || [],
+								exclude: input.metricsConfig.containers.services.exclude || [],
+							},
+						},
+					},
+				});
+				await updateWebServerSettings({
 					metricsConfig: {
 						server: {
 							type: "Dokploy",

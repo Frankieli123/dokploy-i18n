@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { InfoIcon, Plus, Trash2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect } from "react";
@@ -108,7 +108,7 @@ export const ShowResources = ({ id, type }: Props) => {
 		mongo: () => api.mongo.update.useMutation(),
 	};
 
-	const { mutateAsync, isLoading } = mutationMap[type]
+	const { mutateAsync, isPending } = mutationMap[type]
 		? mutationMap[type]()
 		: api.mongo.update.useMutation();
 
@@ -120,7 +120,7 @@ export const ShowResources = ({ id, type }: Props) => {
 			memoryReservation: "",
 			ulimitsSwarm: [],
 		},
-		resolver: zodResolver(addResourcesSchema),
+		resolver: zodResolver(addResourcesSchema as any) as any,
 	});
 
 	const { fields, append, remove } = useFieldArray({
@@ -462,7 +462,7 @@ export const ShowResources = ({ id, type }: Props) => {
 							)}
 						</div>
 						<div className="flex w-full justify-end">
-							<Button isLoading={isLoading} type="submit">
+							<Button isPending={isPending} type="submit">
 								{t("button.save")}
 							</Button>
 						</div>
@@ -472,3 +472,4 @@ export const ShowResources = ({ id, type }: Props) => {
 		</Card>
 	);
 };
+

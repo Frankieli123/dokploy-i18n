@@ -76,7 +76,7 @@ export const ShowCustomCommand = ({ id, type }: Props) => {
 			command: "",
 			args: [],
 		},
-		resolver: zodResolver(createAddDockerImageSchema(t)),
+		resolver: zodResolver(createAddDockerImageSchema(t) as any) as any,
 	});
 
 	const { fields, append, remove } = useFieldArray({

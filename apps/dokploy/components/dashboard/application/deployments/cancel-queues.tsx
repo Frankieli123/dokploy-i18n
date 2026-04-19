@@ -1,4 +1,4 @@
-import { Paintbrush } from "lucide-react";
+﻿import { Paintbrush } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
 import {
@@ -22,7 +22,7 @@ interface Props {
 
 export const CancelQueues = ({ id, type }: Props) => {
 	const { t } = useTranslation("common");
-	const { mutateAsync, isLoading } =
+	const { mutateAsync, isPending } =
 		type === "application"
 			? api.application.cleanQueues.useMutation()
 			: api.compose.cleanQueues.useMutation();
@@ -35,7 +35,7 @@ export const CancelQueues = ({ id, type }: Props) => {
 	return (
 		<AlertDialog>
 			<AlertDialogTrigger asChild>
-				<Button variant="destructive" className="w-fit" isLoading={isLoading}>
+				<Button variant="destructive" className="w-fit" isPending={isPending}>
 					{t("deployments.cancelQueues.button.open")}
 					<Paintbrush className="size-4" />
 				</Button>
@@ -72,3 +72,4 @@ export const CancelQueues = ({ id, type }: Props) => {
 		</AlertDialog>
 	);
 };
+

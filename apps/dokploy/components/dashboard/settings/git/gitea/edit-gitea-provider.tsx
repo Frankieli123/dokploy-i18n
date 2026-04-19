@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBoxIcon } from "lucide-react";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
@@ -56,11 +56,11 @@ export const EditGiteaProvider = ({ giteaId }: Props) => {
 	const [open, setOpen] = useState(false);
 	const {
 		data: gitea,
-		isLoading,
+		isPending,
 		refetch,
 	} = api.gitea.one.useQuery({ giteaId });
-	const { mutateAsync, isLoading: isUpdating } = api.gitea.update.useMutation();
-	const { mutateAsync: testConnection, isLoading: isTesting } =
+	const { mutateAsync, isPending: isUpdating } = api.gitea.update.useMutation();
+	const { mutateAsync: testConnection, isPending: isTesting } =
 		api.gitea.testConnection.useMutation();
 	const url = useUrl();
 	const utils = api.useUtils();
@@ -112,7 +112,7 @@ export const EditGiteaProvider = ({ giteaId }: Props) => {
 	}, [router.query, router.isReady, refetch]);
 
 	const form = useForm<z.infer<typeof schema>>({
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 		defaultValues: {
 			name: "",
 			giteaUrl: "https://gitea.com",
@@ -197,7 +197,7 @@ export const EditGiteaProvider = ({ giteaId }: Props) => {
 		}
 	};
 
-	if (isLoading) {
+	if (isPending) {
 		return (
 			<Button variant="ghost" size="icon" disabled>
 				<PenBoxIcon className="h-4 w-4 text-muted-foreground" />
@@ -343,7 +343,7 @@ export const EditGiteaProvider = ({ giteaId }: Props) => {
 								type="button"
 								variant="outline"
 								onClick={handleTestConnection}
-								isLoading={isTesting}
+								isPending={isTesting}
 							>
 								{t("settings.gitProviders.gitea.edit.testButton")}
 							</Button>
@@ -367,7 +367,7 @@ export const EditGiteaProvider = ({ giteaId }: Props) => {
 								{t("settings.gitProviders.gitea.edit.connectButton")}
 							</Button>
 
-							<Button type="submit" isLoading={isUpdating}>
+							<Button type="submit" isPending={isUpdating}>
 								{t("settings.gitProviders.gitea.edit.saveButton")}
 							</Button>
 						</div>
@@ -377,3 +377,4 @@ export const EditGiteaProvider = ({ giteaId }: Props) => {
 		</Dialog>
 	);
 };
+

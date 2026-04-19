@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateGitlab,
 	gitlab,
@@ -10,7 +11,7 @@ import { eq } from "drizzle-orm";
 export type Gitlab = typeof gitlab.$inferSelect;
 
 export const createGitlab = async (
-	input: typeof apiCreateGitlab._type,
+	input: z.infer<typeof apiCreateGitlab>,
 	organizationId: string,
 	userId: string,
 ) => {

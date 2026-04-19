@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { Dices } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -77,15 +77,15 @@ export const AddPreviewDomain = ({
 		},
 	);
 
-	const { mutateAsync, isError, error, isLoading } = domainId
+	const { mutateAsync, isError, error, isPending } = domainId
 		? api.domain.update.useMutation()
 		: api.domain.create.useMutation();
 
-	const { mutateAsync: generateDomain, isLoading: isLoadingGenerate } =
+	const { mutateAsync: generateDomain, isPending: isPendingGenerate } =
 		api.domain.generateDomain.useMutation();
 
 	const form = useForm<Domain>({
-		resolver: zodResolver(domain),
+		resolver: zodResolver(domain as any) as any,
 	});
 
 	useEffect(() => {
@@ -102,7 +102,7 @@ export const AddPreviewDomain = ({
 		if (!domainId) {
 			form.reset({});
 		}
-	}, [form, form.reset, data, isLoading]);
+	}, [form, form.reset, data, isPending]);
 
 	const dictionary = {
 		success: domainId
@@ -181,7 +181,7 @@ export const AddPreviewDomain = ({
 															<Button
 																variant="secondary"
 																type="button"
-																isLoading={isLoadingGenerate}
+																isPending={isPendingGenerate}
 																onClick={() => {
 																	generateDomain({
 																		appName: previewDeployment?.appName || "",
@@ -328,7 +328,7 @@ export const AddPreviewDomain = ({
 					</form>
 
 					<DialogFooter>
-						<Button isLoading={isLoading} form="hook-form" type="submit">
+						<Button isPending={isPending} form="hook-form" type="submit">
 							{dictionary.submit}
 						</Button>
 					</DialogFooter>
@@ -337,3 +337,4 @@ export const AddPreviewDomain = ({
 		</Dialog>
 	);
 };
+

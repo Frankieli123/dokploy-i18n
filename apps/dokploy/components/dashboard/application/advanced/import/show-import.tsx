@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { Code2, Globe2, HardDrive } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -71,11 +71,11 @@ export const ShowImport = ({ composeId }: Props) => {
 	} | null>(null);
 
 	const utils = api.useUtils();
-	const { mutateAsync: processTemplate, isLoading: isLoadingTemplate } =
+	const { mutateAsync: processTemplate, isPending: isPendingTemplate } =
 		api.compose.processTemplate.useMutation();
 	const {
 		mutateAsync: importTemplate,
-		isLoading: isImporting,
+		isPending: isImporting,
 		isSuccess: isImportSuccess,
 	} = api.compose.import.useMutation();
 
@@ -83,7 +83,7 @@ export const ShowImport = ({ composeId }: Props) => {
 		defaultValues: {
 			base64: "",
 		},
-		resolver: zodResolver(ImportSchema),
+		resolver: zodResolver(ImportSchema as any) as any,
 	});
 
 	useEffect(() => {
@@ -185,7 +185,7 @@ export const ShowImport = ({ composeId }: Props) => {
 									type="button"
 									className="w-fit"
 									variant="outline"
-									isLoading={isLoadingTemplate}
+									isPending={isPendingTemplate}
 									onClick={handleLoadTemplate}
 								>
 									{t("importTemplate.button.load")}
@@ -323,7 +323,7 @@ export const ShowImport = ({ composeId }: Props) => {
 											{t("button.cancel")}
 										</Button>
 										<Button
-											isLoading={isImporting}
+											isPending={isImporting}
 											type="submit"
 											onClick={form.handleSubmit(onSubmit)}
 											className="w-fit"
@@ -368,3 +368,4 @@ export const ShowImport = ({ composeId }: Props) => {
 		</>
 	);
 };
+

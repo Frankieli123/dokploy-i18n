@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateGitea,
 	gitea,
@@ -10,7 +11,7 @@ import { eq } from "drizzle-orm";
 export type Gitea = typeof gitea.$inferSelect;
 
 export const createGitea = async (
-	input: typeof apiCreateGitea._type,
+	input: z.infer<typeof apiCreateGitea>,
 	organizationId: string,
 	userId: string,
 ) => {

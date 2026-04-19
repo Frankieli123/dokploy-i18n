@@ -1,4 +1,9 @@
-import { normalizeS3Path } from "@dokploy/server/utils/backups/utils";
+import {
+	buildS3ObjectPath,
+	buildS3RemotePath,
+	joinS3Path,
+	normalizeS3Path,
+} from "@dokploy/server/utils/backups/utils";
 import { describe, expect, test } from "vitest";
 
 describe("normalizeS3Path", () => {
@@ -57,5 +62,33 @@ describe("normalizeS3Path", () => {
 		expect(normalizeS3Path("instance-backups/")).toBe("instance-backups/");
 		expect(normalizeS3Path("/instance-backups/")).toBe("instance-backups/");
 		expect(normalizeS3Path("instance-backups")).toBe("instance-backups/");
+	});
+});
+
+describe("joinS3Path", () => {
+	test("should normalize and join segments", () => {
+		expect(joinS3Path("app", "prefix/nested")).toBe("app/prefix/nested");
+		expect(joinS3Path(" app ", "/prefix/", "file.sql.gz")).toBe(
+			"app/prefix/file.sql.gz",
+		);
+		expect(joinS3Path("", "/", "file.sql.gz")).toBe("file.sql.gz");
+	});
+});
+
+describe("buildS3RemotePath", () => {
+	test("should build remote path with optional segments", () => {
+		expect(buildS3RemotePath("bucket")).toBe(":s3:bucket");
+		expect(buildS3RemotePath("bucket", "app", "prefix")).toBe(
+			":s3:bucket/app/prefix",
+		);
+	});
+});
+
+describe("buildS3ObjectPath", () => {
+	test("should build object path with optional segments", () => {
+		expect(buildS3ObjectPath("backup.sql.gz", "app", "prefix")).toBe(
+			"app/prefix/backup.sql.gz",
+		);
+		expect(buildS3ObjectPath("backup.sql.gz", "", "/")).toBe("backup.sql.gz");
 	});
 });

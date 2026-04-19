@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateBitbucket,
 	type apiUpdateBitbucket,
@@ -11,7 +12,7 @@ import { eq } from "drizzle-orm";
 export type Bitbucket = typeof bitbucket.$inferSelect;
 
 export const createBitbucket = async (
-	input: typeof apiCreateBitbucket._type,
+	input: z.infer<typeof apiCreateBitbucket>,
 	organizationId: string,
 	userId: string,
 ) => {
@@ -65,7 +66,7 @@ export const findBitbucketById = async (bitbucketId: string) => {
 
 export const updateBitbucket = async (
 	bitbucketId: string,
-	input: typeof apiUpdateBitbucket._type,
+	input: z.infer<typeof apiUpdateBitbucket>,
 ) => {
 	return await db.transaction(async (tx) => {
 		// First get the current bitbucket provider to get gitProviderId

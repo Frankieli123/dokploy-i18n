@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import {
 	CheckIcon,
 	ChevronsUpDown,
@@ -207,7 +207,7 @@ export const HandleBackup = ({
 	const [isOpen, setIsOpen] = useState(false);
 	const { t } = useTranslation("common");
 
-	const { data, isLoading } = api.destination.all.useQuery();
+	const { data, isPending } = api.destination.all.useQuery();
 	const { data: backup } = api.backup.one.useQuery(
 		{
 			backupId: backupId ?? "",
@@ -217,7 +217,7 @@ export const HandleBackup = ({
 		},
 	);
 	const [cacheType, setCacheType] = useState<CacheType>("cache");
-	const { mutateAsync: createBackup, isLoading: isCreatingPostgresBackup } =
+	const { mutateAsync: createBackup, isPending: isCreatingPostgresBackup } =
 		backupId
 			? api.backup.update.useMutation()
 			: api.backup.create.useMutation();
@@ -235,12 +235,12 @@ export const HandleBackup = ({
 			backupType: backupType,
 			metadata: {},
 		},
-		resolver: zodResolver(createBackupSchema(t)),
+		resolver: zodResolver(createBackupSchema(t) as any) as any,
 	});
 
 	const {
 		data: services,
-		isFetching: isLoadingServices,
+		isFetching: isPendingServices,
 		error: errorServices,
 		refetch: refetchServices,
 	} = api.compose.loadServices.useQuery(
@@ -441,8 +441,8 @@ export const HandleBackup = ({
 															!field.value && "text-muted-foreground",
 														)}
 													>
-														{isLoading
-															? t("loading")
+														{isPending
+															? t("pending")
 															: field.value
 																? data?.find(
 																		(destination) =>
@@ -464,9 +464,9 @@ export const HandleBackup = ({
 														)}
 														className="h-9"
 													/>
-													{isLoading && (
+													{isPending && (
 														<span className="py-6 text-center text-sm">
-															{t("loading")}
+															{t("pending")}
 														</span>
 													)}
 													<CommandEmpty>
@@ -553,7 +553,7 @@ export const HandleBackup = ({
 																<Button
 																	variant="secondary"
 																	type="button"
-																	isLoading={isLoadingServices}
+																	isPending={isPendingServices}
 																	onClick={() => {
 																		if (cacheType === "fetch") {
 																			refetchServices();
@@ -580,7 +580,7 @@ export const HandleBackup = ({
 																<Button
 																	variant="secondary"
 																	type="button"
-																	isLoading={isLoadingServices}
+																	isPending={isPendingServices}
 																	onClick={() => {
 																		if (cacheType === "cache") {
 																			refetchServices();
@@ -851,7 +851,7 @@ export const HandleBackup = ({
 						</div>
 						<DialogFooter>
 							<Button
-								isLoading={isCreatingPostgresBackup}
+								isPending={isCreatingPostgresBackup}
 								form="hook-form-add-backup"
 								type="submit"
 							>
@@ -864,3 +864,4 @@ export const HandleBackup = ({
 		</Dialog>
 	);
 };
+

@@ -1,6 +1,7 @@
 import { paths } from "@dokploy/server/constants";
 import { findAdmin } from "@dokploy/server/services/admin";
 import { updateUser } from "@dokploy/server/services/user";
+import { updateWebServerSettings, getWebServerSettings } from "@dokploy/server/services/web-server-settings";
 import { stat } from "node:fs/promises";
 import { scheduledJobs, scheduleJob } from "node-schedule";
 import { execAsync } from "../process/execAsync";
@@ -42,6 +43,9 @@ export const startLogCleanup = async (
 			await updateUser(admin.user.id, {
 				logCleanupCron: cronExpression,
 			});
+			await updateWebServerSettings({
+				logCleanupCron: cronExpression,
+			});
 		}
 
 		return true;
@@ -64,6 +68,9 @@ export const stopLogCleanup = async (): Promise<boolean> => {
 			await updateUser(admin.user.id, {
 				logCleanupCron: null,
 			});
+			await updateWebServerSettings({
+				logCleanupCron: null,
+			});
 		}
 
 		return true;
@@ -77,8 +84,8 @@ export const getLogCleanupStatus = async (): Promise<{
 	enabled: boolean;
 	cronExpression: string | null;
 }> => {
-	const admin = await findAdmin();
-	const cronExpression = admin?.user.logCleanupCron ?? null;
+	const settings = await getWebServerSettings().catch(() => null);
+	const cronExpression = settings?.logCleanupCron ?? null;
 	return {
 		enabled: cronExpression !== null,
 		cronExpression,

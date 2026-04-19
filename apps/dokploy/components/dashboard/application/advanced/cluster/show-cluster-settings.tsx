@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { Server } from "lucide-react";
 import Link from "next/link";
 import { useTranslation } from "next-i18next";
@@ -78,7 +78,7 @@ export const ShowClusterSettings = ({ id, type }: Props) => {
 		mongo: () => api.mongo.update.useMutation(),
 	};
 
-	const { mutateAsync, isLoading } = mutationMap[type]
+	const { mutateAsync, isPending } = mutationMap[type]
 		? mutationMap[type]()
 		: api.mongo.update.useMutation();
 
@@ -92,7 +92,7 @@ export const ShowClusterSettings = ({ id, type }: Props) => {
 				: {}),
 			replicas: data?.replicas || 1,
 		},
-		resolver: zodResolver(ClusterSchema),
+		resolver: zodResolver(ClusterSchema as any) as any,
 	});
 
 	useEffect(() => {
@@ -261,7 +261,7 @@ export const ShowClusterSettings = ({ id, type }: Props) => {
 						)}
 
 						<div className="flex justify-end">
-							<Button isLoading={isLoading} type="submit" className="w-fit">
+							<Button isPending={isPending} type="submit" className="w-fit">
 								{t("settings.cluster.service.saveButton")}
 							</Button>
 						</div>
@@ -271,3 +271,4 @@ export const ShowClusterSettings = ({ id, type }: Props) => {
 		</Card>
 	);
 };
+

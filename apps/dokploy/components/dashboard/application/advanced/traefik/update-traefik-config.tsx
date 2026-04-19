@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -70,14 +70,14 @@ export const UpdateTraefikConfig = ({ applicationId }: Props) => {
 		{ enabled: !!applicationId },
 	);
 
-	const { mutateAsync, isLoading, error, isError } =
+	const { mutateAsync, isPending, error, isError } =
 		api.application.updateTraefikConfig.useMutation();
 
 	const form = useForm<UpdateTraefikConfig>({
 		defaultValues: {
 			traefikConfig: "",
 		},
-		resolver: zodResolver(UpdateTraefikConfigSchema),
+		resolver: zodResolver(UpdateTraefikConfigSchema as any) as any,
 	});
 
 	useEffect(() => {
@@ -125,7 +125,7 @@ export const UpdateTraefikConfig = ({ applicationId }: Props) => {
 			}}
 		>
 			<DialogTrigger asChild>
-				<Button isLoading={isLoading}>
+				<Button isPending={isPending}>
 					{t("traefik.config.button.modify")}
 				</Button>
 			</DialogTrigger>
@@ -189,7 +189,7 @@ routers:
 
 					<DialogFooter>
 						<Button
-							isLoading={isLoading}
+							isPending={isPending}
 							form="hook-form-update-traefik-config"
 							type="submit"
 						>
@@ -201,3 +201,4 @@ routers:
 		</Dialog>
 	);
 };
+

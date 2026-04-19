@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -51,14 +51,14 @@ export const ShowExternalPostgresCredentials = ({ postgresId }: Props) => {
 	const { t } = useTranslation("common");
 	const { data: ip } = api.settings.getIp.useQuery();
 	const { data, refetch } = api.postgres.one.useQuery({ postgresId });
-	const { mutateAsync, isLoading } =
+	const { mutateAsync, isPending } =
 		api.postgres.saveExternalPort.useMutation();
 	const getIp = data?.server?.ipAddress || ip;
 	const [connectionUrl, setConnectionUrl] = useState("");
 
 	const form = useForm<DockerProvider>({
 		defaultValues: {},
-		resolver: zodResolver(createDockerProviderSchema(t)),
+		resolver: zodResolver(createDockerProviderSchema(t) as any) as any,
 	});
 
 	useEffect(() => {
@@ -173,7 +173,7 @@ export const ShowExternalPostgresCredentials = ({ postgresId }: Props) => {
 								)}
 
 								<div className="flex justify-end">
-									<Button type="submit" isLoading={isLoading}>
+									<Button type="submit" isPending={isPending}>
 										{t("button.save")}
 									</Button>
 								</div>
@@ -185,3 +185,4 @@ export const ShowExternalPostgresCredentials = ({ postgresId }: Props) => {
 		</>
 	);
 };
+

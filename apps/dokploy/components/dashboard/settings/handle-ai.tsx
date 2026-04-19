@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Check, ChevronDown, PenBoxIcon, PlusIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
@@ -132,14 +132,14 @@ export const HandleAi = ({ aiId }: Props) => {
 			enabled: !!aiId,
 		},
 	);
-	const { mutateAsync, isLoading } = aiId
+	const { mutateAsync, isPending } = aiId
 		? api.ai.update.useMutation()
 		: api.ai.create.useMutation();
 
 	const schema = createAiSchema(t);
 
 	const form = useForm<Schema>({
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 		defaultValues: {
 			name: "",
 			providerType: "openai_compatible",
@@ -185,7 +185,11 @@ export const HandleAi = ({ aiId }: Props) => {
 	const providerType = form.watch("providerType");
 
 	const isOllama = providerType === "ollama";
-	const { data: models, isLoading: isLoadingServerModels } =
+	const {
+		data: models,
+		isLoading: isPendingServerModels,
+		error: fetchModelsError,
+	} =
 		api.ai.getModels.useQuery(
 			{
 				apiUrl: apiUrl ?? "",
@@ -194,13 +198,16 @@ export const HandleAi = ({ aiId }: Props) => {
 			},
 			{
 				enabled: !!apiUrl && (isOllama || !!apiKey),
-				onError: (error) => {
-					setError(
-						t("settings.ai.models.fetchError", { error: error.message }),
-					);
-				},
 			},
 		);
+
+	useEffect(() => {
+		if (fetchModelsError) {
+			setError(
+				t("settings.ai.models.fetchError", { error: fetchModelsError.message }),
+			);
+		}
+	}, [fetchModelsError, t]);
 
 	const onSubmit = async (data: Schema) => {
 		try {
@@ -423,19 +430,19 @@ export const HandleAi = ({ aiId }: Props) => {
 							/>
 						)}
 
-						{isLoadingServerModels && (
+						{isPendingServerModels && (
 							<span className="text-sm text-muted-foreground">
 								{t("settings.ai.models.loading")}
 							</span>
 						)}
 
-						{!isLoadingServerModels && !models?.length && (
+						{!isPendingServerModels && !models?.length && (
 							<span className="text-sm text-muted-foreground">
 								{t("settings.ai.models.empty")}
 							</span>
 						)}
 
-						{!isLoadingServerModels && models && models.length > 0 && (
+						{!isPendingServerModels && models && models.length > 0 && (
 							<FormField
 								control={form.control}
 								name="model"
@@ -575,7 +582,7 @@ export const HandleAi = ({ aiId }: Props) => {
 						/>
 
 						<div className="flex justify-end  gap-2 pt-4">
-							<Button type="submit" isLoading={isLoading}>
+							<Button type="submit" isPending={isPending}>
 								{aiId
 									? t("settings.common.update")
 									: t("settings.common.create")}
@@ -587,3 +594,4 @@ export const HandleAi = ({ aiId }: Props) => {
 		</Dialog>
 	);
 };
+

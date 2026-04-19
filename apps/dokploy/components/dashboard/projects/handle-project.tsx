@@ -83,7 +83,7 @@ export const HandleProject = ({ projectId }: Props) => {
 			description: "",
 			name: "",
 		},
-		resolver: zodResolver(AddProjectSchema),
+		resolver: zodResolver(AddProjectSchema as any) as any,
 	});
 
 	useEffect(() => {

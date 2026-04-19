@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBoxIcon, PlusIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useMemo, useState } from "react";
@@ -78,7 +78,7 @@ export const HandleDestinations = ({ destinationId }: Props) => {
 	const { data: servers } = api.server.withSSHKey.useQuery();
 	const { data: isCloud } = api.settings.isCloud.useQuery();
 
-	const { mutateAsync, isError, error, isLoading } = destinationId
+	const { mutateAsync, isError, error, isPending } = destinationId
 		? api.destination.update.useMutation()
 		: api.destination.create.useMutation();
 
@@ -94,7 +94,7 @@ export const HandleDestinations = ({ destinationId }: Props) => {
 
 	const {
 		mutateAsync: testConnection,
-		isLoading: isLoadingConnection,
+		isPending: isPendingConnection,
 		error: connectionError,
 		isError: isErrorConnection,
 	} = api.destination.testConnection.useMutation();
@@ -110,7 +110,7 @@ export const HandleDestinations = ({ destinationId }: Props) => {
 			endpoint: "",
 			serverId: undefined,
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	useEffect(() => {
@@ -502,7 +502,7 @@ export const HandleDestinations = ({ destinationId }: Props) => {
 								<Button
 									type="button"
 									variant="secondary"
-									isLoading={isLoadingConnection}
+									isPending={isPendingConnection}
 									onClick={async () => {
 										await handleTestConnection(form.getValues("serverId"));
 									}}
@@ -512,7 +512,7 @@ export const HandleDestinations = ({ destinationId }: Props) => {
 							</div>
 						) : (
 							<Button
-								isLoading={isLoadingConnection}
+								isPending={isPendingConnection}
 								type="button"
 								variant="secondary"
 								onClick={async () => {
@@ -524,7 +524,7 @@ export const HandleDestinations = ({ destinationId }: Props) => {
 						)}
 
 						<Button
-							isLoading={isLoading}
+							isPending={isPending}
 							form="hook-form-destination-add"
 							type="submit"
 						>
@@ -538,3 +538,4 @@ export const HandleDestinations = ({ destinationId }: Props) => {
 		</Dialog>
 	);
 };
+

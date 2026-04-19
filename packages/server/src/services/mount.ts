@@ -1,6 +1,7 @@
 import path from "node:path";
 import { paths } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateMount,
 	mounts,
@@ -21,7 +22,7 @@ import { eq, type SQL, sql } from "drizzle-orm";
 
 export type Mount = typeof mounts.$inferSelect;
 
-export const createMount = async (input: typeof apiCreateMount._type) => {
+export const createMount = async (input: z.infer<typeof apiCreateMount>) => {
 	try {
 		const { serviceId, ...rest } = input;
 		const value = await db
@@ -246,6 +247,9 @@ export const findMountsByApplicationId = async (
 	switch (serviceType) {
 		case "application":
 			sqlChunks.push(eq(mounts.applicationId, serviceId));
+			break;
+		case "compose":
+			sqlChunks.push(eq(mounts.composeId, serviceId));
 			break;
 		case "postgres":
 			sqlChunks.push(eq(mounts.postgresId, serviceId));

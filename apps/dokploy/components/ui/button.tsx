@@ -38,6 +38,7 @@ export interface ButtonProps
 		VariantProps<typeof buttonVariants> {
 	asChild?: boolean;
 	isLoading?: boolean;
+	isPending?: boolean;
 	children?: React.ReactNode;
 }
 
@@ -49,6 +50,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 			size,
 			children,
 			isLoading = false,
+			isPending = false,
 			asChild = false,
 			...props
 		},
@@ -56,6 +58,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 	) => {
 		const Comp = asChild ? Slot : "button";
 		const type = props.type ?? undefined;
+		const pending = isLoading || isPending;
 
 		return (
 			<>
@@ -66,10 +69,10 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 					)}
 					ref={ref}
 					{...props}
-					disabled={isLoading || props.disabled}
+					disabled={pending || props.disabled}
 					type={type}
 				>
-					{isLoading && <Loader2 className="animate-spin" />}
+					{pending && <Loader2 className="animate-spin" />}
 					<Slottable>{children}</Slottable>
 				</Comp>
 			</>

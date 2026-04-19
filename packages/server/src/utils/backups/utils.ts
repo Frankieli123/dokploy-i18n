@@ -58,6 +58,53 @@ export const normalizeS3Path = (prefix: string) => {
 	return normalizedPrefix ? `${normalizedPrefix}/` : "";
 };
 
+const normalizeS3Segment = (value?: string | null) => {
+	const normalizedValue = (value || "").trim().replace(/\\/g, "/");
+	return normalizedValue.replace(/^\/+|\/+$/g, "");
+};
+
+export const joinS3Path = (...segments: Array<string | null | undefined>) =>
+	segments
+		.map((segment) => normalizeS3Segment(segment))
+		.filter(Boolean)
+		.join("/");
+
+export const buildS3RemotePath = (
+	bucket: string,
+	...segments: Array<string | null | undefined>
+) => {
+	const joinedPath = joinS3Path(...segments);
+	return joinedPath ? `:s3:${bucket}/${joinedPath}` : `:s3:${bucket}`;
+};
+
+export const buildS3ObjectPath = (
+	fileName: string,
+	...segments: Array<string | null | undefined>
+) => {
+	const basePath = joinS3Path(...segments);
+	return basePath ? `${basePath}/${fileName}` : fileName;
+};
+
+export const getBackupServiceAppName = (backup: BackupSchedule) => {
+	if (backup.databaseType === "web-server") {
+		return "";
+	}
+
+	if (backup.compose?.appName) {
+		return backup.serviceName
+			? `${backup.compose.appName}_${backup.serviceName}`
+			: backup.compose.appName;
+	}
+
+	return (
+		backup.postgres?.appName ||
+		backup.mysql?.appName ||
+		backup.mariadb?.appName ||
+		backup.mongo?.appName ||
+		""
+	);
+};
+
 export const getS3Credentials = (destination: Destination) => {
 	const { accessKey, secretAccessKey, region, endpoint, provider } =
 		destination;

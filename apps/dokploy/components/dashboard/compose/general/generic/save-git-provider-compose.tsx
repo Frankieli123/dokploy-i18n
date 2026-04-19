@@ -1,5 +1,5 @@
-import { zodResolver } from "@hookform/resolvers/zod";
-import { KeyRoundIcon, LockIcon, X } from "lucide-react";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
+import { HelpCircle, KeyRoundIcon, LockIcon, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
@@ -66,7 +66,7 @@ export const SaveGitProviderCompose = ({ composeId }: Props) => {
 	const router = useRouter();
 	const watchPathInputRef = useRef<HTMLInputElement | null>(null);
 
-	const { mutateAsync, isLoading } = api.compose.update.useMutation();
+	const { mutateAsync, isPending } = api.compose.update.useMutation();
 	const GitProviderSchema = createSchema(t);
 
 	const form = useForm<GitProvider>({
@@ -78,7 +78,7 @@ export const SaveGitProviderCompose = ({ composeId }: Props) => {
 			watchPaths: [],
 			enableSubmodules: false,
 		},
-		resolver: zodResolver(GitProviderSchema),
+		resolver: zodResolver(GitProviderSchema as any) as any,
 	});
 
 	useEffect(() => {
@@ -261,10 +261,8 @@ export const SaveGitProviderCompose = ({ composeId }: Props) => {
 									<FormLabel>{t("application.git.watchPathsLabel")}</FormLabel>
 									<TooltipProvider>
 										<Tooltip>
-											<TooltipTrigger>
-												<div className="size-4 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold">
-													?
-												</div>
+											<TooltipTrigger asChild>
+												<HelpCircle className="size-4 text-muted-foreground hover:text-foreground transition-colors cursor-pointer" />
 											</TooltipTrigger>
 											<TooltipContent className="max-w-[300px]">
 												<p>{t("application.git.watchPathsTooltip")}</p>
@@ -347,7 +345,7 @@ export const SaveGitProviderCompose = ({ composeId }: Props) => {
 				</div>
 
 				<div className="flex flex-row justify-end">
-					<Button type="submit" className="w-fit" isLoading={isLoading}>
+					<Button type="submit" className="w-fit" isPending={isPending}>
 						{t("button.save")}
 					</Button>
 				</div>
@@ -355,3 +353,4 @@ export const SaveGitProviderCompose = ({ composeId }: Props) => {
 		</Form>
 	);
 };
+

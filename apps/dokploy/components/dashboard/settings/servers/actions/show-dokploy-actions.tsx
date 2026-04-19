@@ -1,4 +1,4 @@
-import { useTranslation } from "next-i18next";
+﻿import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
 import { UpdateServerIp } from "@/components/dashboard/settings/web-server/update-server-ip";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import { GPUSupportModal } from "../gpu-support-modal";
 
 export const ShowDokployActions = () => {
 	const { t } = useTranslation("settings");
-	const { mutateAsync: reloadServer, isLoading } =
+	const { mutateAsync: reloadServer, isPending } =
 		api.settings.reloadServer.useMutation();
 
 	const { mutateAsync: cleanRedis } = api.settings.cleanRedis.useMutation();
@@ -28,8 +28,8 @@ export const ShowDokployActions = () => {
 
 	return (
 		<DropdownMenu>
-			<DropdownMenuTrigger asChild disabled={isLoading}>
-				<Button isLoading={isLoading} variant="outline">
+			<DropdownMenuTrigger asChild disabled={isPending}>
+				<Button isPending={isPending} variant="outline">
 					{t("settings.server.webServer.server.label")}
 				</Button>
 			</DropdownMenuTrigger>
@@ -134,3 +134,4 @@ export const ShowDokployActions = () => {
 		</DropdownMenu>
 	);
 };
+

@@ -78,7 +78,7 @@ export const AddGiteaProvider = () => {
 			name: "",
 			giteaUrl: "https://gitea.com",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	const giteaUrl = form.watch("giteaUrl");

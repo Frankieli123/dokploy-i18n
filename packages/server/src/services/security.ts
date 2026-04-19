@@ -90,15 +90,33 @@ export const updateSecurityById = async (
 	data: Partial<Security>,
 ) => {
 	try {
-		const response = await db
-			.update(security)
-			.set({
-				...data,
-			})
-			.where(eq(security.securityId, securityId))
-			.returning();
+		await db.transaction(async (tx) => {
+			const securityResponse = await findSecurityById(securityId);
+			const application = await findApplicationById(
+				securityResponse.applicationId,
+			);
 
-		return response[0];
+			await removeSecurityMiddleware(application, securityResponse);
+
+			const response = await tx
+				.update(security)
+				.set({
+					...data,
+				})
+				.where(eq(security.securityId, securityId))
+				.returning()
+				.then((res) => res[0]);
+
+			if (!response) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Security not found",
+				});
+			}
+
+			await createSecurityMiddleware(application, response);
+			return response;
+		});
 	} catch (error) {
 		const message =
 			error instanceof Error ? error.message : "Error updating this security";

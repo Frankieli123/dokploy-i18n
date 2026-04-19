@@ -2,6 +2,7 @@ import {
 	ChevronDown,
 	ChevronUp,
 	Clock,
+	Copy,
 	Loader2,
 	RefreshCcw,
 	RocketIcon,
@@ -10,6 +11,7 @@ import {
 import { useTranslation } from "next-i18next";
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import copy from "copy-to-clipboard";
 import { AlertBlock } from "@/components/shared/alert-block";
 import { DateTooltip } from "@/components/shared/date-tooltip";
 import { DialogAction } from "@/components/shared/dialog-action";
@@ -60,7 +62,7 @@ export const ShowDeployments = ({
 	const [activeLog, setActiveLog] = useState<
 		RouterOutputs["deployment"]["all"][number] | null
 	>(null);
-	const { data: deployments, isLoading: isLoadingDeployments } =
+	const { data: deployments, isPending: isPendingDeployments } =
 		api.deployment.allByType.useQuery(
 			{
 				id,
@@ -101,26 +103,31 @@ export const ShowDeployments = ({
 		return [...filteredJobs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 	}, [queuedJobs, deployments]);
 
-	const { mutateAsync: rollback, isLoading: isRollingBack } =
+	const { mutateAsync: rollback, isPending: isRollingBack } =
 		api.rollback.rollback.useMutation();
-	const { mutateAsync: killProcess, isLoading: isKillingProcess } =
+	const { mutateAsync: killProcess, isPending: isKillingProcess } =
 		api.deployment.killProcess.useMutation();
 
 	// Cancel deployment mutations
 	const {
 		mutateAsync: cancelApplicationDeployment,
-		isLoading: isCancellingApp,
+		isPending: isCancellingApp,
 	} = api.application.cancelDeployment.useMutation();
 	const {
 		mutateAsync: cancelComposeDeployment,
-		isLoading: isCancellingCompose,
+		isPending: isCancellingCompose,
 	} = api.compose.cancelDeployment.useMutation();
 
 	const [url, setUrl] = React.useState("");
 	const [expandedDescriptions, setExpandedDescriptions] = useState<Set<string>>(
 		new Set(),
 	);
-
+	const webhookUrl = useMemo(
+		() =>
+			`${url}/api/deploy${type === "compose" ? "/compose" : ""}/${refreshToken}`,
+		[url, refreshToken, type],
+	);
+	
 	const MAX_DESCRIPTION_LENGTH = 200;
 	const { t } = useTranslation("common");
 
@@ -247,7 +254,7 @@ export const ShowDeployments = ({
 								variant="destructive"
 								size="sm"
 								className="w-fit"
-								isLoading={
+								isPending={
 									type === "application" ? isCancellingApp : isCancellingCompose
 								}
 								onClick={async () => {
@@ -282,11 +289,27 @@ export const ShowDeployments = ({
 						<div className="flex flex-row items-center gap-2 flex-wrap">
 							<span>{t("deployments.webhook.label")}</span>
 							<div className="flex flex-row items-center gap-2">
-								<span className="break-all text-muted-foreground">
-									{`${url}/api/deploy${
-										type === "compose" ? "/compose" : ""
-									}/${refreshToken}`}
-								</span>
+								<Badge
+									role="button"
+									tabIndex={0}
+									aria-label="Copy webhook URL to clipboard"
+									className="p-2 rounded-md ml-1 mr-1 hover:border-primary hover:text-primary-foreground hover:bg-primary hover:cursor-pointer whitespace-normal break-all"
+									variant="outline"
+									onKeyDown={(event) => {
+										if (event.key === "Enter" || event.key === " ") {
+											event.preventDefault();
+											copy(webhookUrl);
+											toast.success("Copied to clipboard.");
+										}
+									}}
+									onClick={() => {
+										copy(webhookUrl);
+										toast.success("Copied to clipboard.");
+									}}
+								>
+									{webhookUrl}
+									<Copy className="h-4 w-4 ml-2" />
+								</Badge>
 								{(type === "application" || type === "compose") && (
 									<RefreshToken id={id} type={type} />
 								)}
@@ -295,7 +318,7 @@ export const ShowDeployments = ({
 					</div>
 				)}
 
-				{isLoadingDeployments ? (
+				{isPendingDeployments ? (
 					<div className="flex w-full flex-row items-center justify-center gap-3 pt-10 min-h-[25vh]">
 						<Loader2 className="size-6 text-muted-foreground animate-spin" />
 						<span className="text-base text-muted-foreground">
@@ -457,7 +480,7 @@ export const ShowDeployments = ({
 													<Button
 														variant="destructive"
 														size="sm"
-														isLoading={isKillingProcess}
+														isPending={isKillingProcess}
 													>
 														{t("deployments.kill.button")}
 													</Button>
@@ -497,7 +520,7 @@ export const ShowDeployments = ({
 														<Button
 															variant="secondary"
 															size="sm"
-															isLoading={isRollingBack}
+															isPending={isRollingBack}
 														>
 															<RefreshCcw className="size-4 text-primary group-hover:text-red-500" />
 															{t("deployments.rollback.button")}
@@ -522,3 +545,4 @@ export const ShowDeployments = ({
 		</Card>
 	);
 };
+

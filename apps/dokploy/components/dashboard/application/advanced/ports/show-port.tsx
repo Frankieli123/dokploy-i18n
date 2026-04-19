@@ -1,4 +1,4 @@
-import { Rss, Trash2 } from "lucide-react";
+﻿import { Rss, Trash2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
 import { AlertBlock } from "@/components/shared/alert-block";
@@ -27,7 +27,7 @@ export const ShowPorts = ({ applicationId }: Props) => {
 		{ enabled: !!applicationId },
 	);
 
-	const { mutateAsync: deletePort, isLoading: isRemoving } =
+	const { mutateAsync: deletePort, isPending: isRemoving } =
 		api.port.delete.useMutation();
 
 	return (
@@ -124,7 +124,7 @@ export const ShowPorts = ({ applicationId }: Props) => {
 													variant="ghost"
 													size="icon"
 													className="group hover:bg-red-500/10 "
-													isLoading={isRemoving}
+													isPending={isRemoving}
 												>
 													<Trash2 className="size-4 text-primary group-hover:text-red-500" />
 												</Button>
@@ -140,3 +140,4 @@ export const ShowPorts = ({ applicationId }: Props) => {
 		</Card>
 	);
 };
+

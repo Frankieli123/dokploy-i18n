@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import {
 	DatabaseZap,
 	Info,
@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
-import { type Control, useForm } from "react-hook-form";
+import { type Control, type FieldValues, type Path, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { AlertBlock } from "@/components/shared/alert-block";
@@ -135,12 +135,12 @@ interface Props {
 	scheduleType?: "application" | "compose" | "server" | "dokploy-server";
 }
 
-export const ScheduleFormField = ({
+export const ScheduleFormField = <TFieldValues extends FieldValues>({
 	name,
 	formControl,
 }: {
-	name: string;
-	formControl: Control<any>;
+	name: Path<TFieldValues>;
+	formControl: Control<TFieldValues>;
 }) => {
 	const { t } = useTranslation("common");
 	const [selectedOption, setSelectedOption] = useState("");
@@ -229,7 +229,7 @@ export const HandleSchedules = ({ id, scheduleId, scheduleType }: Props) => {
 	const utils = api.useUtils();
 	const formSchema = createFormSchema(t);
 	const form = useForm<z.infer<typeof formSchema>>({
-		resolver: zodResolver(formSchema),
+		resolver: zodResolver(formSchema as any) as any,
 		defaultValues: {
 			name: "",
 			cronExpression: "",
@@ -251,7 +251,7 @@ export const HandleSchedules = ({ id, scheduleId, scheduleType }: Props) => {
 
 	const {
 		data: services,
-		isFetching: isLoadingServices,
+		isFetching: isPendingServices,
 		error: errorServices,
 		refetch: refetchServices,
 	} = api.compose.loadServices.useQuery(
@@ -281,7 +281,7 @@ export const HandleSchedules = ({ id, scheduleId, scheduleType }: Props) => {
 		}
 	}, [form, schedule, scheduleId]);
 
-	const { mutateAsync, isLoading } = scheduleId
+	const { mutateAsync, isPending } = scheduleId
 		? api.schedule.update.useMutation()
 		: api.schedule.create.useMutation();
 
@@ -413,7 +413,7 @@ export const HandleSchedules = ({ id, scheduleId, scheduleType }: Props) => {
 															<Button
 																variant="secondary"
 																type="button"
-																isLoading={isLoadingServices}
+																isPending={isPendingServices}
 																onClick={() => {
 																	if (cacheType === "fetch") {
 																		refetchServices();
@@ -440,7 +440,7 @@ export const HandleSchedules = ({ id, scheduleId, scheduleType }: Props) => {
 															<Button
 																variant="secondary"
 																type="button"
-																isLoading={isLoadingServices}
+																isPending={isPendingServices}
 																onClick={() => {
 																	if (cacheType === "cache") {
 																		refetchServices();
@@ -601,7 +601,7 @@ export const HandleSchedules = ({ id, scheduleId, scheduleType }: Props) => {
 							)}
 						/>
 
-						<Button type="submit" isLoading={isLoading} className="w-full">
+						<Button type="submit" isPending={isPending} className="w-full">
 							{scheduleId
 								? t("schedules.form.submit.update")
 								: t("schedules.form.submit.create")}
@@ -612,3 +612,4 @@ export const HandleSchedules = ({ id, scheduleId, scheduleType }: Props) => {
 		</Dialog>
 	);
 };
+

@@ -1,0 +1,50 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"allowJs": false,
+		"checkJs": false,
+		"incremental": false,
+		"noUncheckedIndexedAccess": false,
+		"plugins": [],
+		"strict": false,
+		"paths": {
+			"@/*": ["./*"],
+			"@dokploy/server": ["./types/dokploy-server-shim.d.ts"],
+			"@dokploy/server/index": ["./types/dokploy-server-shim.d.ts"],
+			"@dokploy/server/db": ["../../packages/server/src/db/index.ts"],
+			"@dokploy/server/db/schema": ["../../packages/server/src/db/schema/index.ts"],
+			"@dokploy/server/db/schema/*": ["../../packages/server/src/db/schema/*"],
+			"@dokploy/server/utils/zod-compat": ["../../packages/server/src/utils/zod-compat.ts"],
+			"@dokploy/server/lib/auth": ["../../packages/server/src/lib/auth.ts"],
+			"@dokploy/server/services/proprietary/sso": ["../../packages/server/src/services/proprietary/sso.ts"],
+			"@dokploy/server/*": ["../../packages/server/dist/*"]
+		}
+	},
+	"include": [
+		"next-env.d.ts",
+		"pages/**/*.ts",
+		"pages/**/*.tsx",
+		"components/**/*.ts",
+		"components/**/*.tsx",
+		"hooks/**/*.ts",
+		"hooks/**/*.tsx",
+		"lib/**/*.ts",
+		"lib/**/*.tsx",
+		"utils/**/*.ts",
+		"utils/**/*.tsx",
+		"types/**/*.ts"
+	],
+	"exclude": [
+		"pages/api/**",
+		"server/**",
+		"scripts/**",
+		"**/__test__/**",
+		"**/*.test.ts",
+		"**/*.test.tsx",
+		".tmp",
+		"node_modules",
+		"dokploy",
+		"config",
+		"dist"
+	]
+}

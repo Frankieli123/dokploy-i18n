@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
 	CheckCircle2,
@@ -101,7 +101,7 @@ export function McpControlDialog() {
 
 	const {
 		data: servers,
-		isLoading: isLoadingServers,
+		isPending: isPendingServers,
 		isError: isServersError,
 		error: serversError,
 		refetch: refetchServers,
@@ -114,9 +114,9 @@ export function McpControlDialog() {
 			staleTime: 60_000,
 		},
 	);
-	const { mutateAsync: createServer, isLoading: isCreatingServer } =
+	const { mutateAsync: createServer, isPending: isCreatingServer } =
 		api.ai.mcpServers.create.useMutation();
-	const { mutateAsync: updateServer, isLoading: isUpdatingServer } =
+	const { mutateAsync: updateServer, isPending: isUpdatingServer } =
 		api.ai.mcpServers.update.useMutation();
 
 	const [formName, setFormName] = useState("");
@@ -415,7 +415,7 @@ export function McpControlDialog() {
 
 					<div className="mt-4 flex items-center justify-between gap-2">
 						<div className="text-xs text-muted-foreground">
-							{isLoadingServers
+							{isPendingServers
 								? t("common.loading")
 								: t("ai.chat.mcp.panel.count", { count: serverRows.length })}
 						</div>
@@ -609,7 +609,7 @@ export function McpControlDialog() {
 								</Button>
 							</div>
 						</div>
-					) : isLoadingServers ? (
+					) : isPendingServers ? (
 						<div className="flex items-center justify-center py-10 text-muted-foreground">
 							<Loader2 className="h-5 w-5 animate-spin" />
 						</div>
@@ -747,3 +747,4 @@ export function McpControlDialog() {
 		</Dialog>
 	);
 }
+

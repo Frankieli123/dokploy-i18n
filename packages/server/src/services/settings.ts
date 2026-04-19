@@ -600,15 +600,31 @@ export const checkPortInUse = async (
 	serverId?: string,
 ): Promise<{ isInUse: boolean; conflictingContainer?: string }> => {
 	try {
-		const command = `docker ps -a --format '{{.Names}}' | grep -v '^dokploy-traefik$' | while read name; do docker port "$name" 2>/dev/null | grep -q ':${port}' && echo "$name" && break; done || true`;
-		const { stdout } = serverId
-			? await execAsyncRemote(serverId, command)
-			: await execAsync(command);
-		const container = stdout.trim();
-		return {
-			isInUse: !!container,
-			conflictingContainer: container || undefined,
-		};
+		const dockerCommand = `docker ps -a --format '{{.Names}}' | grep -v '^dokploy-traefik$' | while read name; do docker port "$name" 2>/dev/null | grep -q ':${port}' && echo "$name" && break; done || true`;
+		const { stdout: dockerOut } = serverId
+			? await execAsyncRemote(serverId, dockerCommand)
+			: await execAsync(dockerCommand);
+		const container = dockerOut.trim();
+		if (container) {
+			return {
+				isInUse: true,
+				conflictingContainer: `container "${container}"`,
+			};
+		}
+
+		const hostCommand = `docker run --rm --net=host busybox sh -c 'nc -z 0.0.0.0 ${port} 2>/dev/null && echo in_use || echo free'`;
+		const { stdout: hostOut } = serverId
+			? await execAsyncRemote(serverId, hostCommand)
+			: await execAsync(hostCommand);
+
+		if (hostOut.includes("in_use")) {
+			return {
+				isInUse: true,
+				conflictingContainer: "a host-level service",
+			};
+		}
+
+		return { isInUse: false };
 	} catch (error) {
 		console.error("Error checking port availability:", error);
 		return { isInUse: false };

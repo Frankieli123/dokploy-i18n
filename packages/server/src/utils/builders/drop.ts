@@ -16,10 +16,11 @@ export const unzipDrop = async (zipFile: File, application: Application) => {
 
 	try {
 		const { appName } = application;
-		const { APPLICATIONS_PATH } = paths(!!application.serverId);
+		const targetServerId = application.buildServerId || application.serverId;
+		const { APPLICATIONS_PATH } = paths(!!targetServerId);
 		const outputPath = join(APPLICATIONS_PATH, appName, "code");
-		if (application.serverId) {
-			await recreateDirectoryRemote(outputPath, application.serverId);
+		if (targetServerId) {
+			await recreateDirectoryRemote(outputPath, targetServerId);
 		} else {
 			await recreateDirectory(outputPath);
 		}
@@ -45,8 +46,8 @@ export const unzipDrop = async (zipFile: File, application: Application) => {
 			? rootEntries[0]?.entryName.split("/")[0]
 			: "";
 
-		if (application.serverId) {
-			sftp = await getSFTPConnection(application.serverId);
+		if (targetServerId) {
+			sftp = await getSFTPConnection(targetServerId);
 		}
 		for (const entry of zipEntries) {
 			let filePath = entry.entryName;
@@ -61,29 +62,48 @@ export const unzipDrop = async (zipFile: File, application: Application) => {
 
 			if (!filePath) continue;
 
-			const fullPath = path.join(outputPath, filePath).replace(/\\/g, "/");
+			const resolvedOutputPath = path.resolve(outputPath);
+			const fullPath = path.join(outputPath, filePath);
+			if (!isWithinDirectory(resolvedOutputPath, fullPath)) {
+				throw new Error(
+					`Path traversal detected: resolved path escapes output directory: ${filePath}`,
+				);
+			}
+			const normalizedFullPath = fullPath.replace(/\\/g, "/");
 
-			if (application.serverId) {
+			if (isDangerousNode(entry)) {
+				throw new Error(
+					`Dangerous node entries are not allowed: ${entry.entryName}`,
+				);
+			}
+
+			if (targetServerId) {
 				if (!entry.isDirectory) {
 					if (sftp === null) throw new Error("No SFTP connection available");
 					try {
 						const dirPath = path.dirname(fullPath);
 						await execAsyncRemote(
-							application.serverId,
+							targetServerId,
 							`mkdir -p "${dirPath}"`,
 						);
-						await uploadFileToServer(sftp, entry.getData(), fullPath);
+						await uploadFileToServer(
+							sftp,
+							entry.getData(),
+							normalizedFullPath,
+						);
 					} catch (err) {
-						console.error(`Error uploading file ${fullPath}:`, err);
+						console.error(`Error uploading file ${normalizedFullPath}:`, err);
 						throw err;
 					}
 				}
 			} else {
 				if (entry.isDirectory) {
-					await fs.mkdir(fullPath, { recursive: true });
+					await fs.mkdir(normalizedFullPath, { recursive: true });
 				} else {
-					await fs.mkdir(path.dirname(fullPath), { recursive: true });
-					await fs.writeFile(fullPath, entry.getData());
+					await fs.mkdir(path.dirname(normalizedFullPath), {
+						recursive: true,
+					});
+					await fs.writeFile(normalizedFullPath, entry.getData());
 				}
 			}
 		}
@@ -116,6 +136,27 @@ const getSFTPConnection = async (serverId: string): Promise<SFTPWrapper> => {
 			});
 	});
 };
+
+function isDangerousNode(entry: AdmZip.IZipEntry) {
+	const type = (entry.header.attr >> 16) & 0o170000;
+
+	return (
+		type === 0o120000 ||
+		type === 0o060000 ||
+		type === 0o020000 ||
+		type === 0o010000
+	);
+}
+
+function isWithinDirectory(baseDir: string, targetPath: string) {
+	const resolvedBase = path.resolve(baseDir);
+	const resolvedTarget = path.resolve(targetPath);
+
+	return (
+		resolvedTarget === resolvedBase ||
+		resolvedTarget.startsWith(resolvedBase + path.sep)
+	);
+}
 
 const uploadFileToServer = (
 	sftp: SFTPWrapper,

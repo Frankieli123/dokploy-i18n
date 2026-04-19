@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -40,7 +40,7 @@ export const ShowTraefikFile = ({ path, serverId }: Props) => {
 	const {
 		data,
 		refetch,
-		isLoading: isLoadingFile,
+		isPending: isPendingFile,
 	} = api.settings.readTraefikFile.useQuery(
 		{
 			path,
@@ -53,7 +53,7 @@ export const ShowTraefikFile = ({ path, serverId }: Props) => {
 	const [canEdit, setCanEdit] = useState(true);
 	const [skipYamlValidation, setSkipYamlValidation] = useState(false);
 
-	const { mutateAsync, isLoading, error, isError } =
+	const { mutateAsync, isPending, error, isError } =
 		api.settings.updateTraefikFile.useMutation();
 
 	const form = useForm<UpdateServerMiddlewareConfig>({
@@ -61,7 +61,7 @@ export const ShowTraefikFile = ({ path, serverId }: Props) => {
 			traefikConfig: "",
 		},
 		disabled: canEdit,
-		resolver: zodResolver(UpdateServerMiddlewareConfigSchema),
+		resolver: zodResolver(UpdateServerMiddlewareConfigSchema as any) as any,
 	});
 
 	useEffect(() => {
@@ -103,7 +103,7 @@ export const ShowTraefikFile = ({ path, serverId }: Props) => {
 					className="w-full relative z-[5]"
 				>
 					<div className="flex flex-col overflow-auto">
-						{isLoadingFile ? (
+						{isPendingFile ? (
 							<div className="w-full flex-col gap-2 flex items-center justify-center h-[55vh]">
 								<span className="text-muted-foreground text-lg font-medium">
 									{t("traefik.config.loading")}
@@ -173,8 +173,8 @@ routers:
 					)}
 					<div className="flex justify-end">
 						<Button
-							isLoading={isLoading}
-							disabled={canEdit || isLoading}
+							isPending={isPending}
+							disabled={canEdit || isPending}
 							type="submit"
 						>
 							{t("button.update")}
@@ -185,3 +185,4 @@ routers:
 		</div>
 	);
 };
+

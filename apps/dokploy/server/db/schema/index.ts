@@ -1,1 +1,1 @@
-export * from "@dokploy/server/db/schema";
+export * from "../../../../../packages/server/src/db/schema/index";

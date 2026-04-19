@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { DatabaseZap, PenBoxIcon, PlusCircle, RefreshCw } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -206,7 +206,7 @@ export const HandleVolumeBackups = ({
 	const utils = api.useUtils();
 	const formSchema = createFormSchema(t);
 	const form = useForm<z.infer<typeof formSchema>>({
-		resolver: zodResolver(formSchema),
+		resolver: zodResolver(formSchema as any) as any,
 		defaultValues: {
 			name: "",
 			cronExpression: "",
@@ -234,7 +234,7 @@ export const HandleVolumeBackups = ({
 
 	const {
 		data: services,
-		isFetching: isLoadingServices,
+		isFetching: isPendingServices,
 		error: errorServices,
 		refetch: refetchServices,
 	} = api.compose.loadServices.useQuery(
@@ -346,7 +346,7 @@ export const HandleVolumeBackups = ({
 		}
 	}, [availableMountOptions, form, isOpen]);
 
-	const { mutateAsync, isLoading } = volumeBackupId
+	const { mutateAsync, isPending } = volumeBackupId
 		? api.volumeBackups.update.useMutation()
 		: api.volumeBackups.create.useMutation();
 
@@ -580,7 +580,7 @@ export const HandleVolumeBackups = ({
 																<Button
 																	variant="secondary"
 																	type="button"
-																	isLoading={isLoadingServices}
+																	isPending={isPendingServices}
 																	onClick={() => {
 																		if (cacheType === "fetch") {
 																			refetchServices();
@@ -607,7 +607,7 @@ export const HandleVolumeBackups = ({
 																<Button
 																	variant="secondary"
 																	type="button"
-																	isLoading={isLoadingServices}
+																	isPending={isPendingServices}
 																	onClick={() => {
 																		if (cacheType === "cache") {
 																			refetchServices();
@@ -914,7 +914,7 @@ export const HandleVolumeBackups = ({
 							)}
 						/>
 
-						<Button type="submit" isLoading={isLoading} className="w-full">
+						<Button type="submit" isPending={isPending} className="w-full">
 							{volumeBackupId
 								? t("volumeBackups.handle.button.update")
 								: t("volumeBackups.handle.button.create")}
@@ -925,3 +925,4 @@ export const HandleVolumeBackups = ({
 		</Dialog>
 	);
 };
+

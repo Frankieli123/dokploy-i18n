@@ -1,4 +1,4 @@
-import type { ServiceType } from "@dokploy/server/db/schema";
+﻿import type { ServiceType } from "@dokploy/server/db/schema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import copy from "copy-to-clipboard";
 import { Copy, Trash2 } from "lucide-react";
@@ -76,7 +76,7 @@ export const DeleteService = ({ id, type }: Props) => {
 		mongo: () => api.mongo.remove.useMutation(),
 		compose: () => api.compose.delete.useMutation(),
 	};
-	const { mutateAsync, isLoading } = mutationMap[type]
+	const { mutateAsync, isPending } = mutationMap[type]
 		? mutationMap[type]()
 		: api.mongo.remove.useMutation();
 	const { push } = useRouter();
@@ -85,7 +85,7 @@ export const DeleteService = ({ id, type }: Props) => {
 			projectName: "",
 			deleteVolumes: false,
 		},
-		resolver: zodResolver(deleteComposeSchema),
+		resolver: zodResolver(deleteComposeSchema as any) as any,
 	});
 
 	const onSubmit = async (formData: DeleteCompose) => {
@@ -132,7 +132,7 @@ export const DeleteService = ({ id, type }: Props) => {
 					variant="ghost"
 					size="icon"
 					className="group hover:bg-red-500/10 "
-					isLoading={isLoading}
+					isPending={isPending}
 				>
 					<Trash2 className="size-4 text-primary group-hover:text-red-500" />
 				</Button>
@@ -226,7 +226,7 @@ export const DeleteService = ({ id, type }: Props) => {
 					</Button>
 
 					<Button
-						isLoading={isLoading}
+						isPending={isPending}
 						disabled={isDisabled}
 						form="hook-form-delete-compose"
 						type="submit"
@@ -239,3 +239,4 @@ export const DeleteService = ({ id, type }: Props) => {
 		</Dialog>
 	);
 };
+

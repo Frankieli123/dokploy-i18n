@@ -55,3 +55,38 @@ export const cancelDeployment = async (cancelData: CancelDeploymentData) => {
 		throw error;
 	}
 };
+
+export type QueueJobRow = {
+	id: string;
+	name?: string;
+	data: Record<string, unknown>;
+	timestamp?: number;
+	processedOn?: number;
+	finishedOn?: number;
+	failedReason?: string;
+	state: string;
+};
+
+export const fetchDeployApiJobs = async (
+	serverId: string,
+): Promise<QueueJobRow[]> => {
+	try {
+		const result = await fetch(
+			`${process.env.SERVER_URL}/jobs?serverId=${encodeURIComponent(serverId)}`,
+			{
+				headers: {
+					"Content-Type": "application/json",
+					"X-API-Key": process.env.API_KEY || "NO-DEFINED",
+				},
+			},
+		);
+
+		if (!result.ok) {
+			return [];
+		}
+
+		return (await result.json()) as QueueJobRow[];
+	} catch {
+		return [];
+	}
+};

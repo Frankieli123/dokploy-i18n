@@ -1,0 +1,15 @@
+ALTER TABLE "user" ADD COLUMN "trustedOrigins" text[];--> statement-breakpoint
+CREATE TABLE "sso_provider" (
+	"id" text PRIMARY KEY NOT NULL,
+	"issuer" text NOT NULL,
+	"oidc_config" text,
+	"saml_config" text,
+	"provider_id" text NOT NULL,
+	"user_id" text,
+	"organization_id" text,
+	"domain" text NOT NULL,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	CONSTRAINT "sso_provider_provider_id_unique" UNIQUE("provider_id")
+);--> statement-breakpoint
+ALTER TABLE "sso_provider" ADD CONSTRAINT "sso_provider_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "sso_provider" ADD CONSTRAINT "sso_provider_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;

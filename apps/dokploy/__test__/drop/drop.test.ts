@@ -6,19 +6,21 @@ import { paths } from "@dokploy/server/constants";
 import AdmZip from "adm-zip";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-const { APPLICATIONS_PATH } = paths();
 vi.mock("@dokploy/server/constants", async (importOriginal) => {
 	const actual = await importOriginal();
 	return {
 		// @ts-ignore
 		...actual,
 		paths: () => ({
+			BASE_PATH: "./__test__/drop/zips/output",
 			APPLICATIONS_PATH: "./__test__/drop/zips/output",
 		}),
 	};
 });
 
-if (typeof window === "undefined") {
+const { APPLICATIONS_PATH } = paths();
+
+if (typeof globalThis.File === "undefined") {
 	const undici = require("undici");
 	globalThis.File = undici.File as any;
 	globalThis.FileList = undici.FileList as any;

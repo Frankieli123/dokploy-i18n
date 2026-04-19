@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+﻿import { Loader2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -41,7 +41,7 @@ export const ComposePaidMonitoring = ({
 	token,
 }: Props) => {
 	const { t } = useTranslation("common");
-	const { data, isLoading } = api.docker.getContainersByAppNameMatch.useQuery(
+	const { data, isPending } = api.docker.getContainersByAppNameMatch.useQuery(
 		{
 			appName: appName,
 			appType,
@@ -58,7 +58,7 @@ export const ComposePaidMonitoring = ({
 
 	const [containerId, setContainerId] = useState<string | undefined>();
 
-	const { mutateAsync: restart, isLoading: isRestarting } =
+	const { mutateAsync: restart, isPending: isRestarting } =
 		api.docker.restartContainer.useMutation();
 
 	useEffect(() => {
@@ -91,9 +91,9 @@ export const ComposePaidMonitoring = ({
 							value={containerAppName}
 						>
 							<SelectTrigger>
-								{isLoading ? (
+								{isPending ? (
 									<div className="flex flex-row gap-2 items-center justify-center text-sm text-muted-foreground">
-										<span>{t("loading")}</span>
+										<span>{t("pending")}</span>
 										<Loader2 className="animate-spin size-4" />
 									</div>
 								) : (
@@ -124,7 +124,7 @@ export const ComposePaidMonitoring = ({
 							</SelectContent>
 						</Select>
 						<Button
-							isLoading={isRestarting}
+							isPending={isRestarting}
 							onClick={async () => {
 								if (!containerId) return;
 								toast.success(
@@ -152,3 +152,4 @@ export const ComposePaidMonitoring = ({
 		</div>
 	);
 };
+

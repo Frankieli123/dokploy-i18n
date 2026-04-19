@@ -1,4 +1,4 @@
-import {
+﻿import {
 	ExternalLink,
 	FileText,
 	GitPullRequest,
@@ -38,21 +38,23 @@ export const ShowPreviewDeployments = ({ applicationId }: Props) => {
 	const { t } = useTranslation("common");
 	const { data } = api.application.one.useQuery({ applicationId });
 
-	const { mutateAsync: deletePreviewDeployment, isLoading } =
+	const { mutateAsync: deletePreviewDeployment, isPending } =
 		api.previewDeployment.delete.useMutation();
-	const { mutateAsync: redeployPreview, isLoading: isRedeploying } =
+	const { mutateAsync: redeployPreview, isPending: isRedeploying } =
 		api.previewDeployment.redeploy.useMutation();
 
 	const {
 		data: previewDeployments,
 		refetch: refetchPreviewDeployments,
-		isLoading: isLoadingPreviewDeployments,
+		isPending: isPendingPreviewDeployments,
 	} = api.previewDeployment.all.useQuery(
 		{ applicationId },
 		{
 			enabled: !!applicationId,
-			refetchInterval: (items) =>
-				items?.some((item) => item.previewStatus === "running") ? 2000 : false,
+			refetchInterval: (query) =>
+				query.state.data?.some((item) => item.previewStatus === "running")
+					? 2000
+					: false,
 		},
 	);
 
@@ -99,7 +101,7 @@ export const ShowPreviewDeployments = ({ applicationId }: Props) => {
 						<div className="flex flex-col gap-2 text-sm">
 							<span>{t("preview.intro")}</span>
 						</div>
-						{isLoadingPreviewDeployments ? (
+						{isPendingPreviewDeployments ? (
 							<div className="flex w-full flex-row items-center justify-center gap-3 min-h-[35vh]">
 								<Loader2 className="size-5 text-muted-foreground animate-spin" />
 								<span className="text-base text-muted-foreground">
@@ -251,7 +253,7 @@ export const ShowPreviewDeployments = ({ applicationId }: Props) => {
 															<Button
 																variant="ghost"
 																size="sm"
-																isLoading={isLoading}
+																isPending={isPending}
 																className="text-red-600 hover:text-red-700 hover:bg-red-50"
 															>
 																<Trash2 className="size-4" />
@@ -279,3 +281,4 @@ export const ShowPreviewDeployments = ({ applicationId }: Props) => {
 		</Card>
 	);
 };
+

@@ -2,8 +2,29 @@ import path from "node:path";
 import Docker from "dockerode";
 
 export const IS_CLOUD = process.env.IS_CLOUD === "true";
+export const DOKPLOY_DOCKER_API_VERSION =
+	process.env.DOKPLOY_DOCKER_API_VERSION || process.env.DOCKER_API_VERSION;
+export const DOKPLOY_DOCKER_HOST =
+	process.env.DOKPLOY_DOCKER_HOST || process.env.DOCKER_HOST;
+export const DOKPLOY_DOCKER_PORT = process.env.DOKPLOY_DOCKER_PORT
+	? Number(process.env.DOKPLOY_DOCKER_PORT)
+	: process.env.DOCKER_PORT
+		? Number(process.env.DOCKER_PORT)
+	: undefined;
 export const CLEANUP_CRON_JOB = "50 23 * * *";
-export const docker = new Docker();
+export const BETTER_AUTH_SECRET =
+	process.env.BETTER_AUTH_SECRET || "better-auth-secret-123456789";
+export const docker = new Docker({
+	...(DOKPLOY_DOCKER_API_VERSION && {
+		version: DOKPLOY_DOCKER_API_VERSION,
+	}),
+	...(DOKPLOY_DOCKER_HOST && {
+		host: DOKPLOY_DOCKER_HOST,
+	}),
+	...(DOKPLOY_DOCKER_PORT && {
+		port: DOKPLOY_DOCKER_PORT,
+	}),
+});
 
 export const paths = (isServer = false) => {
 	const BASE_PATH =
@@ -20,6 +41,7 @@ export const paths = (isServer = false) => {
 		LOGS_PATH: `${BASE_PATH}/logs`,
 		APPLICATIONS_PATH: `${BASE_PATH}/applications`,
 		COMPOSE_PATH: `${BASE_PATH}/compose`,
+		PATCH_REPOS_PATH: `${BASE_PATH}/patch-repos`,
 		SSH_PATH: `${BASE_PATH}/ssh`,
 		CERTIFICATES_PATH: `${DYNAMIC_TRAEFIK_PATH}/certificates`,
 		MONITORING_PATH: `${BASE_PATH}/monitoring`,

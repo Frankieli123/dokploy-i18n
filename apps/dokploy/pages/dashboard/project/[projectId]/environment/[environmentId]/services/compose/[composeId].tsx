@@ -18,6 +18,7 @@ import { ShowVolumes } from "@/components/dashboard/application/advanced/volumes
 import { ShowDeployments } from "@/components/dashboard/application/deployments/show-deployments";
 import { ShowDomains } from "@/components/dashboard/application/domains/show-domains";
 import { ShowEnvironment } from "@/components/dashboard/application/environment/show-enviroment";
+import { ShowPatches } from "@/components/dashboard/application/patches/show-patches";
 import { ShowSchedules } from "@/components/dashboard/application/schedules/show-schedules";
 import { ShowVolumeBackups } from "@/components/dashboard/application/volume-backups/show-volume-backups";
 import { AddCommandCompose } from "@/components/dashboard/compose/advanced/add-command";
@@ -61,6 +62,7 @@ type TabState =
 	| "deployments"
 	| "domains"
 	| "monitoring"
+	| "patches"
 	| "volumeBackups";
 
 const Service = (
@@ -83,6 +85,12 @@ const Service = (
 
 	const { data: auth } = api.user.get.useQuery();
 	const { data: isCloud } = api.settings.isCloud.useQuery();
+	const supportsPatches =
+		data?.sourceType === "github" ||
+		data?.sourceType === "gitlab" ||
+		data?.sourceType === "bitbucket" ||
+		data?.sourceType === "gitea" ||
+		data?.sourceType === "git";
 
 	return (
 		<div className="pb-10">
@@ -236,6 +244,11 @@ const Service = (
 												{t("tabs.volumeBackups")}
 											</TabsTrigger>
 											<TabsTrigger value="logs">{t("tabs.logs")}</TabsTrigger>
+											{supportsPatches && (
+												<TabsTrigger value="patches">
+													{t("tabs.patches")}
+												</TabsTrigger>
+											)}
 											{((data?.serverId && isCloud) || !data?.server) && (
 												<TabsTrigger value="monitoring">
 													{t("tabs.monitoring")}
@@ -346,6 +359,13 @@ const Service = (
 											)}
 										</div>
 									</TabsContent>
+									{supportsPatches && (
+										<TabsContent value="patches" className="w-full">
+											<div className="flex flex-col gap-4 pt-2.5">
+												<ShowPatches id={composeId} type="compose" />
+											</div>
+										</TabsContent>
+									)}
 
 									<TabsContent value="deployments" className="w-full pt-2.5">
 										<div className="flex flex-col gap-4 border rounded-lg">

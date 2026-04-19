@@ -32,7 +32,10 @@ const createSchema = (t: (key: string) => string) =>
 		}),
 	});
 
-type Schema = z.infer<ReturnType<typeof createSchema>>;
+type Schema = {
+	port: number;
+	username: string;
+};
 
 const DEFAULT_LOCAL_SERVER_DATA: Schema = {
 	port: 22,
@@ -63,7 +66,7 @@ const LocalServerConfig = ({ onSave }: Props) => {
 
 	const form = useForm<Schema>({
 		defaultValues: getLocalServerData(),
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	const onSubmit = (data: Schema) => {

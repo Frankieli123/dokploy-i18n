@@ -1030,6 +1030,62 @@
       "when": 1766490000000,
       "tag": "0148_panel_domain_aliases",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "5",
+      "when": 1766500000000,
+      "tag": "0149_patch_system",
+      "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "5",
+      "when": 1775865600000,
+      "tag": "0150_volume_backup_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "5",
+      "when": 1775870000000,
+      "tag": "0151_audit_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "5",
+      "when": 1775873600000,
+      "tag": "0152_web_server_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "5",
+      "when": 1775952000000,
+      "tag": "0153_sso_auth_alignment",
+      "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "5",
+      "when": 1776038400000,
+      "tag": "0154_organization_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "5",
+      "when": 1776200000000,
+      "tag": "0155_apikey_reference",
+      "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "5",
+      "when": 1776571200000,
+      "tag": "0156_environment_is_default",
+      "breakpoints": true
     }
   ]
 }

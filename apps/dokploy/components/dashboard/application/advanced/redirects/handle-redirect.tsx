@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBoxIcon, PlusIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -105,7 +105,7 @@ export const HandleRedirect = ({
 
 	const utils = api.useUtils();
 
-	const { mutateAsync, isLoading, error, isError } = redirectId
+	const { mutateAsync, isPending, error, isError } = redirectId
 		? api.redirects.update.useMutation()
 		: api.redirects.create.useMutation();
 
@@ -117,7 +117,7 @@ export const HandleRedirect = ({
 			regex: "",
 			replacement: "",
 		},
-		resolver: zodResolver(AddRedirectchema),
+		resolver: zodResolver(AddRedirectchema as any) as any,
 	});
 
 	useEffect(() => {
@@ -290,7 +290,7 @@ export const HandleRedirect = ({
 
 					<DialogFooter>
 						<Button
-							isLoading={isLoading}
+							isPending={isPending}
 							form="hook-form-add-redirect"
 							type="submit"
 						>
@@ -304,3 +304,4 @@ export const HandleRedirect = ({
 		</Dialog>
 	);
 };
+

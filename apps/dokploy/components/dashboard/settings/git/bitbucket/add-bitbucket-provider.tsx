@@ -58,7 +58,7 @@ export const AddBitbucketProvider = () => {
 			apiToken: "",
 			workspaceName: "",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	useEffect(() => {

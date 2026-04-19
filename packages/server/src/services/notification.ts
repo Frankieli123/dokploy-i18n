@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateDiscord,
 	type apiCreateEmail,
@@ -29,7 +30,7 @@ import { eq } from "drizzle-orm";
 export type Notification = typeof notifications.$inferSelect;
 
 export const createSlackNotification = async (
-	input: typeof apiCreateSlack._type,
+	input: z.infer<typeof apiCreateSlack>,
 	organizationId: string,
 ) => {
 	await db.transaction(async (tx) => {
@@ -57,6 +58,7 @@ export const createSlackNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
 				notificationType: "slack",
@@ -78,7 +80,7 @@ export const createSlackNotification = async (
 };
 
 export const updateSlackNotification = async (
-	input: typeof apiUpdateSlack._type,
+	input: z.infer<typeof apiUpdateSlack>,
 ) => {
 	await db.transaction(async (tx) => {
 		const newDestination = await tx
@@ -88,6 +90,7 @@ export const updateSlackNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
 				organizationId: input.organizationId,
@@ -119,7 +122,7 @@ export const updateSlackNotification = async (
 };
 
 export const createTelegramNotification = async (
-	input: typeof apiCreateTelegram._type,
+	input: z.infer<typeof apiCreateTelegram>,
 	organizationId: string,
 ) => {
 	await db.transaction(async (tx) => {
@@ -148,6 +151,7 @@ export const createTelegramNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
 				notificationType: "telegram",
@@ -169,7 +173,7 @@ export const createTelegramNotification = async (
 };
 
 export const updateTelegramNotification = async (
-	input: typeof apiUpdateTelegram._type,
+	input: z.infer<typeof apiUpdateTelegram>,
 ) => {
 	await db.transaction(async (tx) => {
 		const newDestination = await tx
@@ -179,6 +183,7 @@ export const updateTelegramNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
 				organizationId: input.organizationId,
@@ -211,7 +216,7 @@ export const updateTelegramNotification = async (
 };
 
 export const createDiscordNotification = async (
-	input: typeof apiCreateDiscord._type,
+	input: z.infer<typeof apiCreateDiscord>,
 	organizationId: string,
 ) => {
 	await db.transaction(async (tx) => {
@@ -239,6 +244,7 @@ export const createDiscordNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
 				notificationType: "discord",
@@ -260,7 +266,7 @@ export const createDiscordNotification = async (
 };
 
 export const updateDiscordNotification = async (
-	input: typeof apiUpdateDiscord._type,
+	input: z.infer<typeof apiUpdateDiscord>,
 ) => {
 	await db.transaction(async (tx) => {
 		const newDestination = await tx
@@ -270,6 +276,7 @@ export const updateDiscordNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
 				organizationId: input.organizationId,
@@ -301,7 +308,7 @@ export const updateDiscordNotification = async (
 };
 
 export const createEmailNotification = async (
-	input: typeof apiCreateEmail._type,
+	input: z.infer<typeof apiCreateEmail>,
 	organizationId: string,
 ) => {
 	await db.transaction(async (tx) => {
@@ -333,6 +340,7 @@ export const createEmailNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
 				notificationType: "email",
@@ -354,7 +362,7 @@ export const createEmailNotification = async (
 };
 
 export const updateEmailNotification = async (
-	input: typeof apiUpdateEmail._type,
+	input: z.infer<typeof apiUpdateEmail>,
 ) => {
 	await db.transaction(async (tx) => {
 		const newDestination = await tx
@@ -364,6 +372,7 @@ export const updateEmailNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
 				organizationId: input.organizationId,
@@ -399,7 +408,7 @@ export const updateEmailNotification = async (
 };
 
 export const createGotifyNotification = async (
-	input: typeof apiCreateGotify._type,
+	input: z.infer<typeof apiCreateGotify>,
 	organizationId: string,
 ) => {
 	await db.transaction(async (tx) => {
@@ -429,8 +438,10 @@ export const createGotifyNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
+				serverThreshold: input.serverThreshold,
 				notificationType: "gotify",
 				organizationId: organizationId,
 			})
@@ -449,7 +460,7 @@ export const createGotifyNotification = async (
 };
 
 export const updateGotifyNotification = async (
-	input: typeof apiUpdateGotify._type,
+	input: z.infer<typeof apiUpdateGotify>,
 ) => {
 	await db.transaction(async (tx) => {
 		const newDestination = await tx
@@ -459,8 +470,10 @@ export const updateGotifyNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
+				serverThreshold: input.serverThreshold,
 				organizationId: input.organizationId,
 			})
 			.where(eq(notifications.notificationId, input.notificationId))
@@ -489,7 +502,7 @@ export const updateGotifyNotification = async (
 };
 
 export const createNtfyNotification = async (
-	input: typeof apiCreateNtfy._type,
+	input: z.infer<typeof apiCreateNtfy>,
 	organizationId: string,
 ) => {
 	await db.transaction(async (tx) => {
@@ -519,8 +532,10 @@ export const createNtfyNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
+				serverThreshold: input.serverThreshold,
 				notificationType: "ntfy",
 				organizationId: organizationId,
 			})
@@ -539,7 +554,7 @@ export const createNtfyNotification = async (
 };
 
 export const updateNtfyNotification = async (
-	input: typeof apiUpdateNtfy._type,
+	input: z.infer<typeof apiUpdateNtfy>,
 ) => {
 	await db.transaction(async (tx) => {
 		const newDestination = await tx
@@ -549,8 +564,10 @@ export const updateNtfyNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
+				serverThreshold: input.serverThreshold,
 				organizationId: input.organizationId,
 			})
 			.where(eq(notifications.notificationId, input.notificationId))
@@ -610,7 +627,7 @@ export const removeNotificationById = async (notificationId: string) => {
 };
 
 export const createLarkNotification = async (
-	input: typeof apiCreateLark._type,
+	input: z.infer<typeof apiCreateLark>,
 	organizationId: string,
 ) => {
 	await db.transaction(async (tx) => {
@@ -637,6 +654,7 @@ export const createLarkNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
 				notificationType: "lark",
@@ -658,7 +676,7 @@ export const createLarkNotification = async (
 };
 
 export const updateLarkNotification = async (
-	input: typeof apiUpdateLark._type,
+	input: z.infer<typeof apiUpdateLark>,
 ) => {
 	await db.transaction(async (tx) => {
 		const newDestination = await tx
@@ -668,6 +686,7 @@ export const updateLarkNotification = async (
 				appDeploy: input.appDeploy,
 				appBuildError: input.appBuildError,
 				databaseBackup: input.databaseBackup,
+				volumeBackup: input.volumeBackup,
 				dokployRestart: input.dokployRestart,
 				dockerCleanup: input.dockerCleanup,
 				organizationId: input.organizationId,

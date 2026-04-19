@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { Folder, HelpCircle } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useState } from "react";
@@ -85,7 +85,7 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 	// Self-hosted: show only if there are remote servers (Dokploy is default, hide if no remote servers)
 	const shouldShowServerDropdown = hasServers;
 
-	const { mutateAsync, isLoading, error, isError } =
+	const { mutateAsync, isPending, error, isError } =
 		api.application.create.useMutation();
 
 	const form = useForm<AddApplicationForm>({
@@ -94,7 +94,7 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 			appName: `${slug}-`,
 			description: "",
 		},
-		resolver: zodResolver(createAddApplicationSchema(t)),
+		resolver: zodResolver(createAddApplicationSchema(t) as any) as any,
 	});
 
 	const onSubmit = async (data: AddApplicationForm) => {
@@ -296,7 +296,7 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 					</form>
 
 					<DialogFooter>
-						<Button isLoading={isLoading} form="hook-form" type="submit">
+						<Button isPending={isPending} form="hook-form" type="submit">
 							{t("button.create")}
 						</Button>
 					</DialogFooter>
@@ -305,3 +305,4 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 		</Dialog>
 	);
 };
+

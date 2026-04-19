@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBox } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -46,7 +46,7 @@ export const UpdatePostgres = ({ postgresId }: Props) => {
 	const [isOpen, setIsOpen] = useState(false);
 	const utils = api.useUtils();
 	const { t } = useTranslation("common");
-	const { mutateAsync, error, isError, isLoading } =
+	const { mutateAsync, error, isError, isPending } =
 		api.postgres.update.useMutation();
 	const { data } = api.postgres.one.useQuery(
 		{
@@ -61,7 +61,7 @@ export const UpdatePostgres = ({ postgresId }: Props) => {
 			description: data?.description ?? "",
 			name: data?.name ?? "",
 		},
-		resolver: zodResolver(createUpdatePostgresSchema(t)),
+		resolver: zodResolver(createUpdatePostgresSchema(t) as any) as any,
 	});
 	useEffect(() => {
 		if (data) {
@@ -156,7 +156,7 @@ export const UpdatePostgres = ({ postgresId }: Props) => {
 								/>
 								<DialogFooter>
 									<Button
-										isLoading={isLoading}
+										isPending={isPending}
 										form="hook-form-update-postgres"
 										type="submit"
 										className="flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-offset-2"
@@ -172,3 +172,4 @@ export const UpdatePostgres = ({ postgresId }: Props) => {
 		</Dialog>
 	);
 };
+

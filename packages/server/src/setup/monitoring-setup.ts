@@ -2,6 +2,7 @@ import { findServerById } from "@dokploy/server/services/server";
 import type { ContainerCreateOptions } from "dockerode";
 import { IS_CLOUD } from "../constants";
 import { findUserById } from "../services/admin";
+import { getWebServerSettings } from "../services/web-server-settings";
 import { getDokployImageTag } from "../services/settings";
 import { pullImage, pullRemoteImage } from "../utils/docker/utils";
 import { execAsync, execAsyncRemote } from "../utils/process/execAsync";
@@ -85,6 +86,8 @@ export const setupMonitoring = async (serverId: string) => {
 
 export const setupWebMonitoring = async (userId: string) => {
 	const user = await findUserById(userId);
+	const webServerSettings = await getWebServerSettings().catch(() => null);
+	const metricsConfig = webServerSettings?.metricsConfig ?? user?.metricsConfig;
 
 	const containerName = "dokploy-monitoring";
 	let imageName = "dokploy/monitoring:latest";
@@ -99,7 +102,7 @@ export const setupWebMonitoring = async (userId: string) => {
 
 	const settings: ContainerCreateOptions = {
 		name: containerName,
-		Env: [`METRICS_CONFIG=${JSON.stringify(user?.metricsConfig)}`],
+		Env: [`METRICS_CONFIG=${JSON.stringify(metricsConfig)}`],
 		Image: imageName,
 		HostConfig: {
 			// Memory: 100 * 1024 * 1024, // 100MB en bytes
@@ -110,9 +113,9 @@ export const setupWebMonitoring = async (userId: string) => {
 				Name: "always",
 			},
 			PortBindings: {
-				[`${user?.metricsConfig?.server?.port}/tcp`]: [
+				[`${metricsConfig?.server?.port}/tcp`]: [
 					{
-						HostPort: user?.metricsConfig?.server?.port.toString(),
+						HostPort: metricsConfig?.server?.port.toString(),
 					},
 				],
 			},
@@ -126,7 +129,7 @@ export const setupWebMonitoring = async (userId: string) => {
 			// NetworkMode: "host",
 		},
 		ExposedPorts: {
-			[`${user?.metricsConfig?.server?.port}/tcp`]: {},
+			[`${metricsConfig?.server?.port}/tcp`]: {},
 		},
 	};
 	const docker = await getRemoteDocker();

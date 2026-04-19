@@ -22,9 +22,12 @@ import { mountRouter } from "./routers/mount";
 import { mysqlRouter } from "./routers/mysql";
 import { notificationRouter } from "./routers/notification";
 import { organizationRouter } from "./routers/organization";
+import { patchRouter } from "./routers/patch";
 import { portRouter } from "./routers/port";
 import { postgresRouter } from "./routers/postgres";
 import { previewDeploymentRouter } from "./routers/preview-deployment";
+import { customRoleRouter } from "./routers/proprietary/custom-role";
+import { ssoRouter } from "./routers/proprietary/sso";
 import { projectRouter } from "./routers/project";
 import { redirectsRouter } from "./routers/redirects";
 import { redisRouter } from "./routers/redis";
@@ -62,17 +65,20 @@ export const appRouter = createTRPCRouter({
 	domain: domainRouter,
 	destination: destinationRouter,
 	backup: backupRouter,
+	customRole: customRoleRouter,
 	deployment: deploymentRouter,
 	previewDeployment: previewDeploymentRouter,
 	mounts: mountRouter,
 	certificates: certificateRouter,
 	settings: settingsRouter,
+	sso: ssoRouter,
 	security: securityRouter,
 	redirects: redirectsRouter,
 	port: portRouter,
 	registry: registryRouter,
 	cluster: clusterRouter,
 	notification: notificationRouter,
+	patch: patchRouter,
 	sshKey: sshRouter,
 	gitProvider: gitProviderRouter,
 	gitea: giteaRouter,

@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { DownloadIcon, PenBoxIcon, PlusIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -50,14 +50,14 @@ export const HandleSSHKeys = ({ sshKeyId }: Props) => {
 		},
 	);
 
-	const { mutateAsync, isError, error, isLoading } = sshKeyId
+	const { mutateAsync, isError, error, isPending } = sshKeyId
 		? api.sshKey.update.useMutation()
 		: api.sshKey.create.useMutation();
 
 	const generateMutation = api.sshKey.generate.useMutation();
 
 	const form = useForm<SSHKey>({
-		resolver: zodResolver(sshKeyCreate),
+		resolver: zodResolver(sshKeyCreate as any) as any,
 		defaultValues: {
 			name: "",
 			description: "",
@@ -163,7 +163,7 @@ export const HandleSSHKeys = ({ sshKeyId }: Props) => {
 							<div className="flex gap-4">
 								<Button
 									variant={"secondary"}
-									disabled={generateMutation.isLoading}
+									disabled={generateMutation.isPending}
 									className="max-sm:w-full"
 									onClick={() =>
 										onGenerateSSHKey({
@@ -176,7 +176,7 @@ export const HandleSSHKeys = ({ sshKeyId }: Props) => {
 								</Button>
 								<Button
 									variant={"secondary"}
-									disabled={generateMutation.isLoading}
+									disabled={generateMutation.isPending}
 									className="max-sm:w-full"
 									onClick={() =>
 										onGenerateSSHKey({
@@ -319,7 +319,7 @@ export const HandleSSHKeys = ({ sshKeyId }: Props) => {
 									</Button>
 								)}
 							</div>
-							<Button isLoading={isLoading} type="submit">
+							<Button isPending={isPending} type="submit">
 								{sshKeyId
 									? t("settings.common.update")
 									: t("settings.common.create")}
@@ -331,3 +331,4 @@ export const HandleSSHKeys = ({ sshKeyId }: Props) => {
 		</Dialog>
 	);
 };
+

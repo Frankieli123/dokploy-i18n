@@ -1,11 +1,9 @@
-import { db } from "@dokploy/server/db";
-import { notifications } from "@dokploy/server/db/schema";
 import DockerCleanupEmail from "@dokploy/server/emails/emails/docker-cleanup";
 import { renderAsync } from "@react-email/components";
 import { format } from "date-fns";
-import { and, eq } from "drizzle-orm";
 import { getDockerCleanupEmailContent } from "../i18n/backend";
 import {
+	dispatchNotifications,
 	sendDiscordNotification,
 	sendEmailNotification,
 	sendGotifyNotification,
@@ -21,23 +19,10 @@ export const sendDockerCleanupNotifications = async (
 ) => {
 	const date = new Date();
 	const unixDate = ~~(Number(date) / 1000);
-	const notificationList = await db.query.notifications.findMany({
-		where: and(
-			eq(notifications.dockerCleanup, true),
-			eq(notifications.organizationId, organizationId),
-		),
-		with: {
-			email: true,
-			discord: true,
-			telegram: true,
-			slack: true,
-			gotify: true,
-			ntfy: true,
-			lark: true,
-		},
-	});
-
-	for (const notification of notificationList) {
+	await dispatchNotifications({
+		eventFlag: "dockerCleanup",
+		organizationId,
+		send: async (notification) => {
 		const { email, discord, telegram, slack, gotify, ntfy, lark } =
 			notification;
 		try {
@@ -225,5 +210,6 @@ export const sendDockerCleanupNotifications = async (
 		} catch (error) {
 			console.log(error);
 		}
-	}
+		},
+	});
 };

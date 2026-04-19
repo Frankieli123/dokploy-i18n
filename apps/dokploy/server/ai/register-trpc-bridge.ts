@@ -12,6 +12,16 @@ import {
 } from "@dokploy/server/services/ai/trpc-bridge";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import {
+	getZodEnumValues,
+	getZodLiteralValue,
+	getZodObjectShape,
+	getZodTypeLabel,
+	getZodUnionOptions,
+	isZodKind,
+	isZodObject,
+	unwrapZodSchema,
+} from "@dokploy/server/utils/zod-compat";
 
 let cachedCallerHeaders: Record<string, string> | null = null;
 let cachedCallerHeadersAt = 0;
@@ -78,90 +88,17 @@ async function getCallerHeaders(): Promise<Record<string, string>> {
 	return cachedCallerHeaders;
 }
 
-function unwrapSchema(schema: z.ZodTypeAny): {
-	schema: z.ZodTypeAny;
-	optional: boolean;
-	nullable: boolean;
-	hasDefault: boolean;
-} {
-	let optional = false;
-	let nullable = false;
-	let hasDefault = false;
-	let current: z.ZodTypeAny = schema;
-
-	while (true) {
-		if (current instanceof z.ZodOptional) {
-			optional = true;
-			current = current._def.innerType;
-			continue;
-		}
-		if (current instanceof z.ZodNullable) {
-			nullable = true;
-			current = current._def.innerType;
-			continue;
-		}
-		if (current instanceof z.ZodDefault) {
-			hasDefault = true;
-			current = current._def.innerType;
-			continue;
-		}
-		if (current instanceof z.ZodEffects) {
-			current = current._def.schema;
-			continue;
-		}
-		if (current instanceof z.ZodBranded) {
-			current = current._def.type;
-			continue;
-		}
-		if (current instanceof z.ZodReadonly) {
-			current = current._def.innerType;
-			continue;
-		}
-		break;
-	}
-
-	return { schema: current, optional, nullable, hasDefault };
-}
-
-function getZodObjectShape(schema: z.ZodObject<any>): Record<string, z.ZodTypeAny> {
-	const def = schema._def as unknown as { shape?: unknown };
-	if (typeof def.shape === "function") {
-		return (def.shape as () => Record<string, z.ZodTypeAny>)();
-	}
-	return (schema as unknown as { shape: Record<string, z.ZodTypeAny> }).shape;
-}
-
-function getTypeLabel(schema: z.ZodTypeAny): string {
-	if (schema instanceof z.ZodString) return "string";
-	if (schema instanceof z.ZodNumber) return "number";
-	if (schema instanceof z.ZodBoolean) return "boolean";
-	if (schema instanceof z.ZodDate) return "date";
-	if (schema instanceof z.ZodEnum || schema instanceof z.ZodNativeEnum)
-		return "enum";
-	if (schema instanceof z.ZodArray) return "array";
-	if (schema instanceof z.ZodObject) return "object";
-	if (schema instanceof z.ZodLiteral) return "literal";
-	if (schema instanceof z.ZodUnion) return "union";
-	return "unknown";
-}
-
 function extractLiteralStringOptions(schema: z.ZodTypeAny): string[] {
-	const unwrapped = unwrapSchema(schema).schema;
-	if (unwrapped instanceof z.ZodLiteral) {
-		return typeof unwrapped._def.value === "string" ? [unwrapped._def.value] : [];
+	const unwrapped = unwrapZodSchema(schema).schema;
+	if (isZodKind(unwrapped, "literal")) {
+		const value = getZodLiteralValue(unwrapped);
+		return typeof value === "string" ? [value] : [];
 	}
-	if (unwrapped instanceof z.ZodEnum) {
-		return Array.isArray(unwrapped._def.values)
-			? (unwrapped._def.values as string[])
-			: [];
+	if (isZodKind(unwrapped, "enum")) {
+		return getZodEnumValues(unwrapped);
 	}
-	if (unwrapped instanceof z.ZodNativeEnum) {
-		return Object.values(
-			(unwrapped._def.values ?? {}) as Record<string, unknown>,
-		).filter((v): v is string => typeof v === "string");
-	}
-	if (unwrapped instanceof z.ZodUnion) {
-		const opts = (unwrapped._def.options as z.ZodTypeAny[]).flatMap((opt) =>
+	if (isZodKind(unwrapped, "union")) {
+		const opts = getZodUnionOptions(unwrapped).flatMap((opt: z.ZodTypeAny) =>
 			extractLiteralStringOptions(opt),
 		);
 		return Array.from(new Set(opts));
@@ -173,17 +110,19 @@ function buildExampleInput(schema: z.ZodTypeAny): {
 	inputExample: Record<string, unknown> | null;
 	fields?: Array<{ name: string; type: string; required: boolean }>;
 } {
-	const unwrapped = unwrapSchema(schema).schema;
-	if (!(unwrapped instanceof z.ZodObject)) return { inputExample: null };
+	const { schema: unwrapped } = unwrapZodSchema(schema);
+	if (!isZodObject(unwrapped)) return { inputExample: null };
 
 	const shape = getZodObjectShape(unwrapped);
 	const fields: Array<{ name: string; type: string; required: boolean }> = [];
 	const inputExample: Record<string, unknown> = {};
 
 	for (const [name, fieldSchema] of Object.entries(shape ?? {})) {
-		const { schema: base, optional, hasDefault } = unwrapSchema(fieldSchema);
+		const { schema: base, flags } = unwrapZodSchema(fieldSchema);
+		const optional = flags.optional;
+		const hasDefault = flags.hasDefault;
 		const required = !optional && !hasDefault;
-		const type = getTypeLabel(base);
+		const type = getZodTypeLabel(base);
 		fields.push({ name, type, required });
 
 		if (!required) continue;

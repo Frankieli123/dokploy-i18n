@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { AlertTriangle, Mail, PenBoxIcon, PlusIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -77,6 +77,7 @@ const createNotificationSchema = (t: (key: string) => string) => {
 		appDeploy: z.boolean().default(false),
 		appBuildError: z.boolean().default(false),
 		databaseBackup: z.boolean().default(false),
+		volumeBackup: z.boolean().default(false),
 		dokployRestart: z.boolean().default(false),
 		dockerCleanup: z.boolean().default(false),
 		serverThreshold: z.boolean().default(false),
@@ -238,19 +239,19 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 			enabled: !!notificationId,
 		},
 	);
-	const { mutateAsync: testSlackConnection, isLoading: isLoadingSlack } =
+	const { mutateAsync: testSlackConnection, isPending: isPendingSlack } =
 		api.notification.testSlackConnection.useMutation();
-	const { mutateAsync: testTelegramConnection, isLoading: isLoadingTelegram } =
+	const { mutateAsync: testTelegramConnection, isPending: isPendingTelegram } =
 		api.notification.testTelegramConnection.useMutation();
-	const { mutateAsync: testDiscordConnection, isLoading: isLoadingDiscord } =
+	const { mutateAsync: testDiscordConnection, isPending: isPendingDiscord } =
 		api.notification.testDiscordConnection.useMutation();
-	const { mutateAsync: testEmailConnection, isLoading: isLoadingEmail } =
+	const { mutateAsync: testEmailConnection, isPending: isPendingEmail } =
 		api.notification.testEmailConnection.useMutation();
-	const { mutateAsync: testGotifyConnection, isLoading: isLoadingGotify } =
+	const { mutateAsync: testGotifyConnection, isPending: isPendingGotify } =
 		api.notification.testGotifyConnection.useMutation();
-	const { mutateAsync: testNtfyConnection, isLoading: isLoadingNtfy } =
+	const { mutateAsync: testNtfyConnection, isPending: isPendingNtfy } =
 		api.notification.testNtfyConnection.useMutation();
-	const { mutateAsync: testLarkConnection, isLoading: isLoadingLark } =
+	const { mutateAsync: testLarkConnection, isPending: isPendingLark } =
 		api.notification.testLarkConnection.useMutation();
 	const slackMutation = notificationId
 		? api.notification.updateSlack.useMutation()
@@ -283,7 +284,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 			channel: "",
 			name: "",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 	const type = form.watch("type");
 
@@ -306,6 +307,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 					appDeploy: notification.appDeploy,
 					dokployRestart: notification.dokployRestart,
 					databaseBackup: notification.databaseBackup,
+					volumeBackup: notification.volumeBackup,
 					dockerCleanup: notification.dockerCleanup,
 					webhookUrl: notification.slack?.webhookUrl,
 					channel: notification.slack?.channel || "",
@@ -319,6 +321,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 					appDeploy: notification.appDeploy,
 					dokployRestart: notification.dokployRestart,
 					databaseBackup: notification.databaseBackup,
+					volumeBackup: notification.volumeBackup,
 					botToken: notification.telegram?.botToken,
 					messageThreadId: notification.telegram?.messageThreadId || "",
 					chatId: notification.telegram?.chatId,
@@ -333,6 +336,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 					appDeploy: notification.appDeploy,
 					dokployRestart: notification.dokployRestart,
 					databaseBackup: notification.databaseBackup,
+					volumeBackup: notification.volumeBackup,
 					type: notification.notificationType,
 					webhookUrl: notification.discord?.webhookUrl,
 					decoration: notification.discord?.decoration || undefined,
@@ -346,6 +350,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 					appDeploy: notification.appDeploy,
 					dokployRestart: notification.dokployRestart,
 					databaseBackup: notification.databaseBackup,
+					volumeBackup: notification.volumeBackup,
 					type: notification.notificationType,
 					smtpServer: notification.email?.smtpServer,
 					smtpPort: notification.email?.smtpPort,
@@ -363,6 +368,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 					appDeploy: notification.appDeploy,
 					dokployRestart: notification.dokployRestart,
 					databaseBackup: notification.databaseBackup,
+					volumeBackup: notification.volumeBackup,
 					type: notification.notificationType,
 					appToken: notification.gotify?.appToken,
 					decoration: notification.gotify?.decoration || undefined,
@@ -370,6 +376,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 					serverUrl: notification.gotify?.serverUrl,
 					name: notification.name,
 					dockerCleanup: notification.dockerCleanup,
+					serverThreshold: notification.serverThreshold,
 				});
 			} else if (notification.notificationType === "ntfy") {
 				form.reset({
@@ -377,6 +384,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 					appDeploy: notification.appDeploy,
 					dokployRestart: notification.dokployRestart,
 					databaseBackup: notification.databaseBackup,
+					volumeBackup: notification.volumeBackup,
 					type: notification.notificationType,
 					accessToken: notification.ntfy?.accessToken || "",
 					topic: notification.ntfy?.topic,
@@ -392,6 +400,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 					appDeploy: notification.appDeploy,
 					dokployRestart: notification.dokployRestart,
 					databaseBackup: notification.databaseBackup,
+					volumeBackup: notification.volumeBackup,
 					type: notification.notificationType,
 					webhookUrl: notification.lark?.webhookUrl,
 					name: notification.name,
@@ -420,6 +429,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 			appDeploy,
 			dokployRestart,
 			databaseBackup,
+			volumeBackup,
 			dockerCleanup,
 			serverThreshold,
 		} = data;
@@ -430,6 +440,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 				appDeploy: appDeploy,
 				dokployRestart: dokployRestart,
 				databaseBackup: databaseBackup,
+				volumeBackup: volumeBackup,
 				webhookUrl: data.webhookUrl,
 				channel: data.channel,
 				name: data.name,
@@ -444,6 +455,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 				appDeploy: appDeploy,
 				dokployRestart: dokployRestart,
 				databaseBackup: databaseBackup,
+				volumeBackup: volumeBackup,
 				botToken: data.botToken,
 				messageThreadId: data.messageThreadId || "",
 				chatId: data.chatId,
@@ -459,6 +471,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 				appDeploy: appDeploy,
 				dokployRestart: dokployRestart,
 				databaseBackup: databaseBackup,
+				volumeBackup: volumeBackup,
 				webhookUrl: data.webhookUrl,
 				decoration: data.decoration,
 				name: data.name,
@@ -473,6 +486,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 				appDeploy: appDeploy,
 				dokployRestart: dokployRestart,
 				databaseBackup: databaseBackup,
+				volumeBackup: volumeBackup,
 				smtpServer: data.smtpServer,
 				smtpPort: data.smtpPort,
 				username: data.username,
@@ -491,6 +505,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 				appDeploy: appDeploy,
 				dokployRestart: dokployRestart,
 				databaseBackup: databaseBackup,
+				volumeBackup: volumeBackup,
 				serverUrl: data.serverUrl,
 				appToken: data.appToken,
 				priority: data.priority,
@@ -499,6 +514,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 				decoration: data.decoration,
 				notificationId: notificationId || "",
 				gotifyId: notification?.gotifyId || "",
+				serverThreshold: serverThreshold,
 			});
 		} else if (data.type === "ntfy") {
 			promise = ntfyMutation.mutateAsync({
@@ -506,6 +522,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 				appDeploy: appDeploy,
 				dokployRestart: dokployRestart,
 				databaseBackup: databaseBackup,
+				volumeBackup: volumeBackup,
 				serverUrl: data.serverUrl,
 				accessToken: data.accessToken || "",
 				topic: data.topic,
@@ -514,6 +531,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 				dockerCleanup: dockerCleanup,
 				notificationId: notificationId || "",
 				ntfyId: notification?.ntfyId || "",
+				serverThreshold: serverThreshold,
 			});
 		} else if (data.type === "lark") {
 			promise = larkMutation.mutateAsync({
@@ -521,6 +539,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 				appDeploy: appDeploy,
 				dokployRestart: dokployRestart,
 				databaseBackup: databaseBackup,
+				volumeBackup: volumeBackup,
 				webhookUrl: data.webhookUrl,
 				name: data.name,
 				dockerCleanup: dockerCleanup,
@@ -1372,6 +1391,33 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 
 								<FormField
 									control={form.control}
+									name="volumeBackup"
+									render={({ field }) => (
+										<FormItem className="flex flex-row items-center justify-between rounded-lg border p-3 shadow-sm gap-2">
+											<div className="space-y-0.5">
+												<FormLabel>
+													{t(
+														"settings.notifications.actions.volumeBackup.label",
+													)}
+												</FormLabel>
+												<FormDescription>
+													{t(
+														"settings.notifications.actions.volumeBackup.description",
+													)}
+												</FormDescription>
+											</div>
+											<FormControl>
+												<Switch
+													checked={field.value}
+													onCheckedChange={field.onChange}
+												/>
+											</FormControl>
+										</FormItem>
+									)}
+								/>
+
+								<FormField
+									control={form.control}
 									name="dockerCleanup"
 									render={({ field }) => (
 										<FormItem className="flex flex-row items-center justify-between rounded-lg border p-3 shadow-sm gap-2">
@@ -1460,14 +1506,14 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 
 					<DialogFooter className="flex flex-row gap-2 !justify-between w-full">
 						<Button
-							isLoading={
-								isLoadingSlack ||
-								isLoadingTelegram ||
-								isLoadingDiscord ||
-								isLoadingEmail ||
-								isLoadingGotify ||
-								isLoadingNtfy ||
-								isLoadingLark
+							isPending={
+								isPendingSlack ||
+								isPendingTelegram ||
+								isPendingDiscord ||
+								isPendingEmail ||
+								isPendingGotify ||
+								isPendingNtfy ||
+								isPendingLark
 							}
 							variant="secondary"
 							type="button"
@@ -1539,7 +1585,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 							{t("settings.notifications.test.button")}
 						</Button>
 						<Button
-							isLoading={form.formState.isSubmitting}
+							isPending={form.formState.isSubmitting}
 							form="hook-form"
 							type="submit"
 						>
@@ -1553,3 +1599,4 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 		</Dialog>
 	);
 };
+

@@ -1,5 +1,6 @@
 import { docker } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateApplication,
 	applications,
@@ -44,6 +45,7 @@ import {
 	issueCommentExists,
 	updateIssueComment,
 } from "./github";
+import { generateApplyPatchesCommand } from "./patch";
 import {
 	findPreviewDeploymentById,
 	updatePreviewDeployment,
@@ -53,7 +55,7 @@ import { createRollback } from "./rollbacks";
 export type Application = typeof applications.$inferSelect;
 
 export const createApplication = async (
-	input: typeof apiCreateApplication._type,
+	input: z.infer<typeof apiCreateApplication>,
 ) => {
 	const appName = buildAppName("app", input.appName);
 
@@ -95,6 +97,15 @@ export const findApplicationById = async (applicationId: string) => {
 		where: eq(applications.applicationId, applicationId),
 		with: {
 			environment: {
+				columns: {
+					environmentId: true,
+					name: true,
+					description: true,
+					createdAt: true,
+					env: true,
+					projectId: true,
+					isDefault: true,
+				},
 				with: {
 					project: true,
 				},
@@ -200,6 +211,14 @@ export const deployApplication = async ({
 			command += await cloneGitRepository(applicationEntity);
 		} else if (application.sourceType === "docker") {
 			command += await buildRemoteDocker(application);
+		}
+
+		if (application.sourceType !== "docker") {
+			command += await generateApplyPatchesCommand({
+				id: application.applicationId,
+				type: "application",
+				serverId,
+			});
 		}
 
 		command += getBuildCommand(application);

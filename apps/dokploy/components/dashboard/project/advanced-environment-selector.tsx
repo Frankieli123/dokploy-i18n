@@ -1,4 +1,3 @@
-import type { findEnvironmentsByProjectId } from "@dokploy/server";
 import { ChevronDownIcon, PencilIcon, PlusIcon, TrashIcon } from "lucide-react";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
@@ -27,9 +26,19 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/utils/api";
 
-type Environment = Awaited<
-	ReturnType<typeof findEnvironmentsByProjectId>
->[number];
+type Environment = {
+	environmentId: string;
+	name: string;
+	isDefault?: boolean | null;
+	description?: string | null;
+	applications?: Array<{ applicationId: string }>;
+	compose?: Array<{ composeId: string }>;
+	mariadb?: Array<{ mariadbId: string }>;
+	mongo?: Array<{ mongoId: string }>;
+	mysql?: Array<{ mysqlId: string }>;
+	postgres?: Array<{ postgresId: string }>;
+	redis?: Array<{ redisId: string }>;
+};
 interface AdvancedEnvironmentSelectorProps {
 	projectId: string;
 	currentEnvironmentId?: string;
@@ -144,9 +153,9 @@ export const AdvancedEnvironmentSelector = ({
 
 			// Redirect to production if we deleted the current environment
 			if (selectedEnvironment.environmentId === currentEnvironmentId) {
-				const productionEnv = environments?.find(
-					(env) => env.name === "production",
-				);
+				const productionEnv =
+					environments?.find((env) => env.isDefault) ||
+					environments?.find((env) => env.name === "production");
 				if (productionEnv) {
 					router.push(
 						`/dashboard/project/${projectId}/environment/${productionEnv.environmentId}`,
@@ -193,6 +202,8 @@ export const AdvancedEnvironmentSelector = ({
 	const currentEnv = environments?.find(
 		(env) => env.environmentId === currentEnvironmentId,
 	);
+	const isDefaultEnvironment = (environment?: Environment | null) =>
+		Boolean(environment?.isDefault) || environment?.name === "production";
 
 	const formatEnvName = (envName?: string) =>
 		envName === "production" ? t("environment.default.production") : envName;
@@ -250,7 +261,7 @@ export const AdvancedEnvironmentSelector = ({
 									</div>
 								</DropdownMenuItem>
 
-								{/* Action buttons for non-production environments */}
+								{/* Action buttons for non-default environments */}
 								{/* <EnvironmentVariables environmentId={environment.environmentId}>
 									<Button
 										variant="ghost"
@@ -263,7 +274,7 @@ export const AdvancedEnvironmentSelector = ({
 										<Terminal className="h-3 w-3" />
 									</Button>
 								</EnvironmentVariables> */}
-								{environment.name !== "production" && (
+								{!isDefaultEnvironment(environment) && (
 									<div className="flex items-center gap-1 px-2">
 										<Button
 											variant="ghost"
@@ -354,9 +365,9 @@ export const AdvancedEnvironmentSelector = ({
 						</Button>
 						<Button
 							onClick={handleCreateEnvironment}
-							disabled={!name.trim() || createEnvironment.isLoading}
+							disabled={!name.trim() || createEnvironment.isPending}
 						>
-							{createEnvironment.isLoading
+							{createEnvironment.isPending
 								? t("environment.create.loading")
 								: t("button.create")}
 						</Button>
@@ -411,9 +422,9 @@ export const AdvancedEnvironmentSelector = ({
 						</Button>
 						<Button
 							onClick={handleUpdateEnvironment}
-							disabled={!name.trim() || updateEnvironment.isLoading}
+							disabled={!name.trim() || updateEnvironment.isPending}
 						>
-							{updateEnvironment.isLoading
+							{updateEnvironment.isPending
 								? t("environment.update.loading")
 								: t("button.update")}
 						</Button>
@@ -452,12 +463,12 @@ export const AdvancedEnvironmentSelector = ({
 							variant="destructive"
 							onClick={handleDeleteEnvironment}
 							disabled={
-								deleteEnvironment.isLoading ||
+								deleteEnvironment.isPending ||
 								haveServices ||
 								!selectedEnvironment
 							}
 						>
-							{deleteEnvironment.isLoading
+							{deleteEnvironment.isPending
 								? t("common.deleting")
 								: t("common.delete")}
 						</Button>

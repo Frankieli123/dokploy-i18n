@@ -1,4 +1,4 @@
-import { LockKeyhole, Trash2 } from "lucide-react";
+﻿import { LockKeyhole, Trash2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
 import { DialogAction } from "@/components/shared/dialog-action";
@@ -29,7 +29,7 @@ export const ShowSecurity = ({ applicationId }: Props) => {
 		{ enabled: !!applicationId },
 	);
 
-	const { mutateAsync: deleteSecurity, isLoading: isRemoving } =
+	const { mutateAsync: deleteSecurity, isPending: isRemoving } =
 		api.security.delete.useMutation();
 
 	const utils = api.useUtils();
@@ -106,7 +106,7 @@ export const ShowSecurity = ({ applicationId }: Props) => {
 													variant="ghost"
 													size="icon"
 													className="group hover:bg-red-500/10"
-													isLoading={isRemoving}
+													isPending={isRemoving}
 												>
 													<Trash2 className="size-4 text-primary group-hover:text-red-500" />
 												</Button>
@@ -122,3 +122,4 @@ export const ShowSecurity = ({ applicationId }: Props) => {
 		</Card>
 	);
 };
+

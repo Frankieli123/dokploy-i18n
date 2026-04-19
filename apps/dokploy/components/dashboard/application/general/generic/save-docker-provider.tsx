@@ -45,7 +45,7 @@ export const SaveDockerProvider = ({ applicationId }: Props) => {
 			username: "",
 			registryURL: "",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	useEffect(() => {

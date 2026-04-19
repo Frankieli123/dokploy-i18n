@@ -1,4 +1,4 @@
-import * as TooltipPrimitive from "@radix-ui/react-tooltip";
+﻿import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import { Ban, CheckCircle2, RefreshCcw, Rocket, Terminal } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useState } from "react";
@@ -30,13 +30,13 @@ export const ShowGeneralMariadb = ({ mariadbId }: Props) => {
 		{ enabled: !!mariadbId },
 	);
 
-	const { mutateAsync: reload, isLoading: isReloading } =
+	const { mutateAsync: reload, isPending: isReloading } =
 		api.mariadb.reload.useMutation();
 
-	const { mutateAsync: start, isLoading: isStarting } =
+	const { mutateAsync: start, isPending: isStarting } =
 		api.mariadb.start.useMutation();
 
-	const { mutateAsync: stop, isLoading: isStopping } =
+	const { mutateAsync: stop, isPending: isStopping } =
 		api.mariadb.stop.useMutation();
 
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -87,7 +87,7 @@ export const ShowGeneralMariadb = ({ mariadbId }: Props) => {
 							>
 								<Button
 									variant="default"
-									isLoading={data?.applicationStatus === "running"}
+									isPending={data?.applicationStatus === "running"}
 									className="flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-offset-2"
 								>
 									<Tooltip>
@@ -127,7 +127,7 @@ export const ShowGeneralMariadb = ({ mariadbId }: Props) => {
 							>
 								<Button
 									variant="secondary"
-									isLoading={isReloading}
+									isPending={isReloading}
 									className="flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-offset-2"
 								>
 									<Tooltip>
@@ -167,7 +167,7 @@ export const ShowGeneralMariadb = ({ mariadbId }: Props) => {
 								>
 									<Button
 										variant="secondary"
-										isLoading={isStarting}
+										isPending={isStarting}
 										className="flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-offset-2"
 									>
 										<Tooltip>
@@ -208,7 +208,7 @@ export const ShowGeneralMariadb = ({ mariadbId }: Props) => {
 								>
 									<Button
 										variant="destructive"
-										isLoading={isStopping}
+										isPending={isStopping}
 										className="flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-offset-2"
 									>
 										<Tooltip>
@@ -267,3 +267,4 @@ export const ShowGeneralMariadb = ({ mariadbId }: Props) => {
 		</>
 	);
 };
+

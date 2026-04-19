@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBoxIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -98,7 +98,7 @@ export const UpdateVolume = ({
 		},
 	);
 
-	const { mutateAsync, isLoading, error, isError } =
+	const { mutateAsync, isPending, error, isError } =
 		api.mounts.update.useMutation();
 
 	const form = useForm<UpdateMount>({
@@ -107,7 +107,7 @@ export const UpdateVolume = ({
 			hostPath: "",
 			mountPath: "",
 		},
-		resolver: zodResolver(mySchema),
+		resolver: zodResolver(mySchema as any) as any,
 	});
 
 	const typeForm = form.watch("type");
@@ -192,7 +192,7 @@ export const UpdateVolume = ({
 					variant="ghost"
 					size="icon"
 					className="group hover:bg-blue-500/10 "
-					isLoading={isLoading}
+					isPending={isPending}
 				>
 					<PenBoxIcon className="size-3.5  text-primary group-hover:text-blue-500" />
 				</Button>
@@ -323,7 +323,7 @@ export const UpdateVolume = ({
 							)}
 						</div>
 						<DialogFooter>
-							<Button isLoading={isLoading} type="submit">
+							<Button isPending={isPending} type="submit">
 								{t("volumes.form.submit.update")}
 							</Button>
 						</DialogFooter>
@@ -333,3 +333,4 @@ export const UpdateVolume = ({
 		</Dialog>
 	);
 };
+

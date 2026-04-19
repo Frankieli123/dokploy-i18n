@@ -13,10 +13,10 @@ import {
 import { selectAIProvider } from "@dokploy/server/utils/ai/select-ai-provider";
 import { TRPCError } from "@trpc/server";
 import {
-	type CoreMessage,
 	embed,
 	generateObject,
 	generateText,
+	type ModelMessage,
 	stepCountIs,
 	streamText,
 	tool,
@@ -25,6 +25,17 @@ import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "driz
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { IS_CLOUD } from "../constants";
+import {
+	getZodEnumValues,
+	getZodIntersectionSides,
+	getZodLiteralValue,
+	getZodObjectShape,
+	getZodTypeLabel,
+	getZodUnionOptions,
+	isZodKind,
+	isZodObject,
+	unwrapZodSchema,
+} from "../utils/zod-compat";
 import { findOrganizationById } from "./admin";
 import {
 	callAiMcpTool,
@@ -58,6 +69,8 @@ import {
 	type ParsedAgentEventMessage,
 	buildAgentDisplayMessageFromEvents,
 } from "./ai/agent-display-replay";
+
+type CoreMessage = ModelMessage;
 import { findServerById } from "./server";
 
 type AiMessageRow = typeof aiMessages.$inferSelect;
@@ -246,65 +259,13 @@ function getRiskRank(value: unknown): number {
 	}
 }
 
-function getZodTypeLabel(schema: z.ZodTypeAny): string {
-	const typeName = (schema as unknown as { _def?: { typeName?: string } })._def
-		?.typeName;
-	if (typeof typeName !== "string") return "unknown";
-	return typeName
-		.replace(/^Zod/, "")
-		.replace(/([a-z])([A-Z])/g, "$1 $2")
-		.toLowerCase();
-}
-
-function unwrapZodSchema(schema: z.ZodTypeAny): {
-	schema: z.ZodTypeAny;
-	flags: { optional: boolean; nullable: boolean; hasDefault: boolean };
-} {
-	let current: z.ZodTypeAny = schema;
-	const flags = { optional: false, nullable: false, hasDefault: false };
-
-	while (true) {
-		if (current instanceof z.ZodOptional) {
-			flags.optional = true;
-			current = current._def.innerType;
-			continue;
-		}
-		if (current instanceof z.ZodNullable) {
-			flags.nullable = true;
-			current = current._def.innerType;
-			continue;
-		}
-		if (current instanceof z.ZodDefault) {
-			flags.hasDefault = true;
-			current = current._def.innerType;
-			continue;
-		}
-		if (current instanceof z.ZodEffects) {
-			current = current._def.schema;
-			continue;
-		}
-		break;
-	}
-
-	return { schema: current, flags };
-}
-
 function describeZodParameters(schema: z.ZodTypeAny): string {
 	const unwrapped = unwrapZodSchema(schema).schema;
-	if (!(unwrapped instanceof z.ZodObject)) {
+	if (!isZodObject(unwrapped)) {
 		return `Schema: ${getZodTypeLabel(unwrapped)}`;
 	}
 
-	const rawShape =
-		typeof (unwrapped._def as unknown as { shape?: unknown }).shape ===
-		"function"
-			? (
-					unwrapped._def as unknown as {
-						shape: () => Record<string, z.ZodTypeAny>;
-					}
-				).shape()
-			: (unwrapped as unknown as { shape: Record<string, z.ZodTypeAny> }).shape;
-
+	const rawShape = getZodObjectShape(unwrapped);
 	const keys = Object.keys(rawShape || {});
 	if (keys.length === 0) return "(no parameters)";
 
@@ -766,37 +727,28 @@ function getToolDescribeData(t: Tool): ToolDescribeData {
 function extractLiteralStringOptions(schema: z.ZodTypeAny): string[] {
 	const unwrapped = unwrapZodSchema(schema).schema;
 
-	if (unwrapped instanceof z.ZodLiteral) {
-		const v = unwrapped._def.value;
+	if (isZodKind(unwrapped, "literal")) {
+		const v = getZodLiteralValue(unwrapped);
 		return typeof v === "string" ? [v] : [];
 	}
-	if (unwrapped instanceof z.ZodEnum) {
-		return Array.isArray(unwrapped._def.values)
-			? (unwrapped._def.values as unknown[]).filter(
-					(v): v is string => typeof v === "string",
-				)
-			: [];
+	if (isZodKind(unwrapped, "enum")) {
+		return getZodEnumValues(unwrapped);
 	}
-	if (unwrapped instanceof z.ZodNativeEnum) {
-		const values = Object.values(
-			(unwrapped._def.values ?? {}) as Record<string, unknown>,
-		);
-		return values.filter((v): v is string => typeof v === "string");
-	}
-	if (unwrapped instanceof z.ZodUnion) {
+	if (isZodKind(unwrapped, "union")) {
 		return Array.from(
 			new Set(
-				(unwrapped._def.options as z.ZodTypeAny[]).flatMap((opt) =>
+				getZodUnionOptions(unwrapped).flatMap((opt) =>
 					extractLiteralStringOptions(opt),
 				),
 			),
 		);
 	}
-	if (unwrapped instanceof z.ZodIntersection) {
+	if (isZodKind(unwrapped, "intersection")) {
+		const { left, right } = getZodIntersectionSides(unwrapped);
 		return Array.from(
 			new Set([
-				...extractLiteralStringOptions(unwrapped._def.left),
-				...extractLiteralStringOptions(unwrapped._def.right),
+				...(left ? extractLiteralStringOptions(left) : []),
+				...(right ? extractLiteralStringOptions(right) : []),
 			]),
 		);
 	}
@@ -806,17 +758,9 @@ function extractLiteralStringOptions(schema: z.ZodTypeAny): string[] {
 
 function extractConfirmLiterals(schema: z.ZodTypeAny): string[] {
 	const unwrapped = unwrapZodSchema(schema).schema;
-	if (!(unwrapped instanceof z.ZodObject)) return [];
+	if (!isZodObject(unwrapped)) return [];
 
-	const rawShape =
-		typeof (unwrapped._def as unknown as { shape?: unknown }).shape ===
-		"function"
-			? (
-					unwrapped._def as unknown as {
-						shape: () => Record<string, z.ZodTypeAny>;
-					}
-				).shape()
-			: (unwrapped as unknown as { shape: Record<string, z.ZodTypeAny> }).shape;
+	const rawShape = getZodObjectShape(unwrapped);
 
 	const keys = Object.keys(rawShape || {});
 	const confirmKeys = keys
@@ -831,17 +775,9 @@ function extractConfirmLiterals(schema: z.ZodTypeAny): string[] {
 
 function buildExampleParams(schema: z.ZodTypeAny): Record<string, unknown> {
 	const unwrapped = unwrapZodSchema(schema).schema;
-	if (!(unwrapped instanceof z.ZodObject)) return {};
+	if (!isZodObject(unwrapped)) return {};
 
-	const rawShape =
-		typeof (unwrapped._def as unknown as { shape?: unknown }).shape ===
-		"function"
-			? (
-					unwrapped._def as unknown as {
-						shape: () => Record<string, z.ZodTypeAny>;
-					}
-				).shape()
-			: (unwrapped as unknown as { shape: Record<string, z.ZodTypeAny> }).shape;
+	const rawShape = getZodObjectShape(unwrapped);
 
 	const out: Record<string, unknown> = {};
 	for (const [key, field] of Object.entries(rawShape ?? {})) {

@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { Terminal } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -43,7 +43,7 @@ export const EnvironmentVariables = ({ environmentId, children }: Props) => {
 	const { t } = useTranslation("common");
 	const [isOpen, setIsOpen] = useState(false);
 	const utils = api.useUtils();
-	const { mutateAsync, error, isError, isLoading } =
+	const { mutateAsync, error, isError, isPending } =
 		api.environment.update.useMutation();
 	const { data } = api.environment.one.useQuery(
 		{
@@ -58,7 +58,7 @@ export const EnvironmentVariables = ({ environmentId, children }: Props) => {
 		defaultValues: {
 			env: data?.env ?? "",
 		},
-		resolver: zodResolver(updateEnvironmentSchema),
+		resolver: zodResolver(updateEnvironmentSchema as any) as any,
 	});
 
 	useEffect(() => {
@@ -87,7 +87,7 @@ export const EnvironmentVariables = ({ environmentId, children }: Props) => {
 	// Add keyboard shortcut for Ctrl+S/Cmd+S
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
-			if ((e.ctrlKey || e.metaKey) && e.key === "s" && !isLoading && isOpen) {
+			if ((e.ctrlKey || e.metaKey) && e.key === "s" && !isPending && isOpen) {
 				e.preventDefault();
 				form.handleSubmit(onSubmit)();
 			}
@@ -97,7 +97,7 @@ export const EnvironmentVariables = ({ environmentId, children }: Props) => {
 		return () => {
 			document.removeEventListener("keydown", handleKeyDown);
 		};
-	}, [form, onSubmit, isLoading, isOpen]);
+	}, [form, onSubmit, isPending, isOpen]);
 
 	return (
 		<Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -154,7 +154,7 @@ export const EnvironmentVariables = ({ environmentId, children }: Props) => {
 									)}
 								/>
 								<DialogFooter>
-									<Button isLoading={isLoading} type="submit">
+									<Button isPending={isPending} type="submit">
 										{t("button.update")}
 									</Button>
 								</DialogFooter>
@@ -166,3 +166,4 @@ export const EnvironmentVariables = ({ environmentId, children }: Props) => {
 		</Dialog>
 	);
 };
+

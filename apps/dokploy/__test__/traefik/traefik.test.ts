@@ -164,6 +164,16 @@ test("Web entrypoint on http domain", async () => {
 	expect(router.rule).not.toContain("PathPrefix");
 });
 
+test("converts IDN hosts to punycode", async () => {
+	const router = await createRouterConfig(
+		baseApp,
+		{ ...baseDomain, host: "тест.рф", https: false },
+		"web",
+	);
+
+	expect(router.rule).toContain("xn--e1aybc.xn--p1ai");
+});
+
 test("Web entrypoint on http domain with custom path", async () => {
 	const router = await createRouterConfig(
 		baseApp,

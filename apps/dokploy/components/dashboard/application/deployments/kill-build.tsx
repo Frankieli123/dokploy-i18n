@@ -1,4 +1,4 @@
-import { Scissors } from "lucide-react";
+﻿import { Scissors } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
 import {
@@ -22,7 +22,7 @@ interface Props {
 
 export const KillBuild = ({ id, type }: Props) => {
 	const { t } = useTranslation("common");
-	const { mutateAsync, isLoading } =
+	const { mutateAsync, isPending } =
 		type === "application"
 			? api.application.killBuild.useMutation()
 			: api.compose.killBuild.useMutation();
@@ -30,7 +30,7 @@ export const KillBuild = ({ id, type }: Props) => {
 	return (
 		<AlertDialog>
 			<AlertDialogTrigger asChild>
-				<Button variant="outline" className="w-fit" isLoading={isLoading}>
+				<Button variant="outline" className="w-fit" isPending={isPending}>
 					{t("deployments.killBuild.button.open")}
 					<Scissors className="size-4" />
 				</Button>
@@ -67,3 +67,4 @@ export const KillBuild = ({ id, type }: Props) => {
 		</AlertDialog>
 	);
 };
+

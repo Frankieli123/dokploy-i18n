@@ -27,6 +27,7 @@ import { ShowDomains } from "@/components/dashboard/application/domains/show-dom
 import { ShowEnvironment } from "@/components/dashboard/application/environment/show";
 import { ShowGeneralApplication } from "@/components/dashboard/application/general/show";
 import { ShowDockerLogs } from "@/components/dashboard/application/logs/show";
+import { ShowPatches } from "@/components/dashboard/application/patches/show-patches";
 import { ShowPreviewDeployments } from "@/components/dashboard/application/preview-deployments/show-preview-deployments";
 import { ShowSchedules } from "@/components/dashboard/application/schedules/show-schedules";
 import { UpdateApplication } from "@/components/dashboard/application/update-application";
@@ -65,6 +66,7 @@ type TabState =
 	| "deployments"
 	| "domains"
 	| "monitoring"
+	| "patches"
 	| "preview-deployments"
 	| "volume-backups";
 
@@ -93,6 +95,7 @@ const Service = (
 
 	const { data: isCloud } = api.settings.isCloud.useQuery();
 	const { data: auth } = api.user.get.useQuery();
+	const supportsPatches = data?.sourceType !== "docker";
 
 	return (
 		<div className="pb-10">
@@ -247,6 +250,11 @@ const Service = (
 												{t("tabs.volumeBackups")}
 											</TabsTrigger>
 											<TabsTrigger value="logs">{t("tabs.logs")}</TabsTrigger>
+											{supportsPatches && (
+												<TabsTrigger value="patches">
+													{t("tabs.patches")}
+												</TabsTrigger>
+											)}
 											{((data?.serverId && isCloud) || !data?.server) && (
 												<TabsTrigger value="monitoring">
 													{t("tabs.monitoring")}
@@ -325,6 +333,13 @@ const Service = (
 											/>
 										</div>
 									</TabsContent>
+									{supportsPatches && (
+										<TabsContent value="patches" className="w-full">
+											<div className="flex flex-col gap-4 pt-2.5">
+												<ShowPatches id={applicationId} type="application" />
+											</div>
+										</TabsContent>
+									)}
 									<TabsContent value="schedules">
 										<div className="flex flex-col gap-4 pt-2.5">
 											<ShowSchedules

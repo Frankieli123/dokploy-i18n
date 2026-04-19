@@ -1,4 +1,4 @@
-import { Copy, Loader2 } from "lucide-react";
+﻿import { Copy, Loader2 } from "lucide-react";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
 import { useState } from "react";
@@ -67,7 +67,7 @@ export const DuplicateProject = ({
 	const router = useRouter();
 
 	// Queries for project and environment selection
-	const { data: allProjects } = api.project.all.useQuery();
+	const { data: allProjects } = api.project.allForPermissions.useQuery();
 	const { data: selectedProjectEnvironments } =
 		api.environment.byProjectId.useQuery(
 			{ projectId: selectedTargetProject },
@@ -78,7 +78,7 @@ export const DuplicateProject = ({
 		selectedServiceIds.includes(service.id),
 	);
 
-	const { mutateAsync: duplicateProject, isLoading } =
+	const { mutateAsync: duplicateProject, isPending } =
 		api.project.duplicate.useMutation({
 			onSuccess: async (newProject) => {
 				await utils.project.all.invalidate();
@@ -333,20 +333,20 @@ export const DuplicateProject = ({
 					<Button
 						variant="outline"
 						onClick={() => setOpen(false)}
-						disabled={isLoading}
+						disabled={isPending}
 					>
 						{t("button.cancel")}
 					</Button>
 					<Button
 						onClick={handleDuplicate}
 						disabled={
-							isLoading ||
+							isPending ||
 							(duplicateType === "new-project" && !name) ||
 							(duplicateType === "existing-environment" &&
 								(!selectedTargetProject || !selectedTargetEnvironment))
 						}
 					>
-						{isLoading ? (
+						{isPending ? (
 							<>
 								<Loader2 className="mr-2 h-4 w-4 animate-spin" />
 								{duplicateType === "new-project"
@@ -364,3 +364,4 @@ export const DuplicateProject = ({
 		</Dialog>
 	);
 };
+

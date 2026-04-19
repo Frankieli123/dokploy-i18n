@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { BotIcon, Loader2, Trash2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
@@ -18,8 +18,8 @@ import { HandleAi } from "./handle-ai";
 
 export const AiForm = () => {
 	const { t } = useTranslation("settings");
-	const { data: aiConfigs, refetch, isLoading } = api.ai.getAll.useQuery();
-	const { mutateAsync, isLoading: isRemoving } = api.ai.delete.useMutation();
+	const { data: aiConfigs, refetch, isPending } = api.ai.getAll.useQuery();
+	const { mutateAsync, isPending: isRemoving } = api.ai.delete.useMutation();
 
 	return (
 		<div className="w-full">
@@ -39,7 +39,7 @@ export const AiForm = () => {
 					</CardHeader>
 					<CardContent className="space-y-6 py-8 border-t">
 						<AiEmbeddingProviderForm />
-						{isLoading ? (
+						{isPending ? (
 							<div className="flex flex-row gap-2 items-center justify-center text-sm text-muted-foreground min-h-[25vh]">
 								<span>{t("settings.common.loading")}</span>
 								<Loader2 className="animate-spin size-4" />
@@ -93,7 +93,7 @@ export const AiForm = () => {
 																variant="ghost"
 																size="icon"
 																className="group hover:bg-red-500/10 "
-																isLoading={isRemoving}
+																isPending={isRemoving}
 															>
 																<Trash2 className="size-4 text-primary group-hover:text-red-500" />
 															</Button>
@@ -112,3 +112,4 @@ export const AiForm = () => {
 		</div>
 	);
 };
+

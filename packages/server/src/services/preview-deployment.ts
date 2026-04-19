@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreatePreviewDeployment,
 	deployments,
@@ -32,6 +33,15 @@ export const findPreviewDeploymentById = async (
 				with: {
 					server: true,
 					environment: {
+						columns: {
+							environmentId: true,
+							name: true,
+							description: true,
+							createdAt: true,
+							env: true,
+							projectId: true,
+							isDefault: true,
+						},
 						with: {
 							project: true,
 						},
@@ -130,7 +140,7 @@ export const findPreviewDeploymentsByApplicationId = async (
 };
 
 export const createPreviewDeployment = async (
-	schema: typeof apiCreatePreviewDeployment._type,
+	schema: z.infer<typeof apiCreatePreviewDeployment>,
 ) => {
 	const application = await findApplicationById(schema.applicationId);
 	const appName = `preview-${application.appName}-${generatePassword(6)}`;

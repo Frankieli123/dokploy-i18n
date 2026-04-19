@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { Server } from "lucide-react";
 import Link from "next/link";
 import { useTranslation } from "next-i18next";
@@ -60,14 +60,14 @@ export const ShowBuildServer = ({ applicationId }: Props) => {
 	const { data: buildServers } = api.server.buildServers.useQuery();
 	const { data: registries } = api.registry.all.useQuery();
 
-	const { mutateAsync, isLoading } = api.application.update.useMutation();
+	const { mutateAsync, isPending } = api.application.update.useMutation();
 
 	const form = useForm<Schema>({
 		defaultValues: {
 			buildServerId: data?.buildServerId || "",
 			buildRegistryId: data?.buildRegistryId || "",
 		},
-		resolver: zodResolver(createBuildServerSchema(t)),
+		resolver: zodResolver(createBuildServerSchema(t) as any) as any,
 	});
 
 	useEffect(() => {
@@ -246,7 +246,7 @@ export const ShowBuildServer = ({ applicationId }: Props) => {
 						/>
 
 						<div className="flex w-full justify-end">
-							<Button isLoading={isLoading} type="submit">
+							<Button isPending={isPending} type="submit">
 								{t("button.save")}
 							</Button>
 						</div>
@@ -256,3 +256,4 @@ export const ShowBuildServer = ({ applicationId }: Props) => {
 		</Card>
 	);
 };
+

@@ -1,12 +1,10 @@
-import { db } from "@dokploy/server/db";
-import { notifications } from "@dokploy/server/db/schema";
 import BuildSuccessEmail from "@dokploy/server/emails/emails/build-success";
 import type { Domain } from "@dokploy/server/services/domain";
 import { renderAsync } from "@react-email/components";
 import { format } from "date-fns";
-import { and, eq } from "drizzle-orm";
 import { getBuildSuccessEmailContent } from "../i18n/backend";
 import {
+	dispatchNotifications,
 	sendDiscordNotification,
 	sendEmailNotification,
 	sendGotifyNotification,
@@ -37,26 +35,12 @@ export const sendBuildSuccessNotifications = async ({
 }: Props) => {
 	const date = new Date();
 	const unixDate = ~~(Number(date) / 1000);
-	const notificationList = await db.query.notifications.findMany({
-		where: and(
-			eq(notifications.appDeploy, true),
-			eq(notifications.organizationId, organizationId),
-		),
-		with: {
-			email: true,
-			discord: true,
-			telegram: true,
-			slack: true,
-			gotify: true,
-			ntfy: true,
-			lark: true,
-		},
-	});
-
-	for (const notification of notificationList) {
-		const { email, discord, telegram, slack, gotify, ntfy, lark } =
-			notification;
-		try {
+	await dispatchNotifications({
+		eventFlag: "appDeploy",
+		organizationId,
+		send: async (notification) => {
+			const { email, discord, telegram, slack, gotify, ntfy, lark } =
+				notification;
 			if (email) {
 				const emailContent = getBuildSuccessEmailContent({
 					projectName,
@@ -349,8 +333,6 @@ export const sendBuildSuccessNotifications = async ({
 					},
 				});
 			}
-		} catch (error) {
-			console.log(error);
-		}
-	}
+		},
+	});
 };

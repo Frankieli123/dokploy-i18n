@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { RefreshCw } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -51,14 +51,14 @@ export const UpdateServerIp = ({ children }: Props) => {
 	const { data } = api.user.get.useQuery();
 	const { data: ip } = api.server.publicIp.useQuery();
 
-	const { mutateAsync, isLoading, error, isError } =
+	const { mutateAsync, isPending, error, isError } =
 		api.user.update.useMutation();
 
 	const form = useForm<Schema>({
 		defaultValues: {
 			serverIp: data?.user.serverIp || "",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	useEffect(() => {
@@ -157,8 +157,8 @@ export const UpdateServerIp = ({ children }: Props) => {
 
 					<DialogFooter>
 						<Button
-							isLoading={isLoading}
-							disabled={isLoading}
+							isPending={isPending}
+							disabled={isPending}
 							form="hook-form-update-server-ip"
 							type="submit"
 						>
@@ -170,3 +170,4 @@ export const UpdateServerIp = ({ children }: Props) => {
 		</Dialog>
 	);
 };
+

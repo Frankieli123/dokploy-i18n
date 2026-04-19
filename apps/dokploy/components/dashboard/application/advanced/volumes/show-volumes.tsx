@@ -1,4 +1,4 @@
-import { Package, Trash2 } from "lucide-react";
+﻿import { Package, Trash2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
 import { AlertBlock } from "@/components/shared/alert-block";
@@ -33,7 +33,7 @@ export const ShowVolumes = ({ id, type }: Props) => {
 	const { data, refetch } = queryMap[type]
 		? queryMap[type]()
 		: api.mongo.one.useQuery({ mongoId: id }, { enabled: !!id });
-	const { mutateAsync: deleteVolume, isLoading: isRemoving } =
+	const { mutateAsync: deleteVolume, isPending: isRemoving } =
 		api.mounts.remove.useMutation();
 	return (
 		<Card className="bg-background">
@@ -160,7 +160,7 @@ export const ShowVolumes = ({ id, type }: Props) => {
 													variant="ghost"
 													size="icon"
 													className="group hover:bg-red-500/10"
-													isLoading={isRemoving}
+													isPending={isRemoving}
 												>
 													<Trash2 className="size-4 text-primary group-hover:text-red-500" />
 												</Button>
@@ -176,3 +176,4 @@ export const ShowVolumes = ({ id, type }: Props) => {
 		</Card>
 	);
 };
+

@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateGithub,
 	github,
@@ -11,7 +12,7 @@ import { updatePreviewDeployment } from "./preview-deployment";
 
 export type Github = typeof github.$inferSelect;
 export const createGithub = async (
-	input: typeof apiCreateGithub._type,
+	input: z.infer<typeof apiCreateGithub>,
 	organizationId: string,
 	userId: string,
 ) => {

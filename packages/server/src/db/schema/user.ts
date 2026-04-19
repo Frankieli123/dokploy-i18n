@@ -17,6 +17,7 @@ import { backups } from "./backups";
 import { projects } from "./project";
 import { schedules } from "./schedule";
 import { certificateType } from "./shared";
+import { ssoProvider } from "./sso";
 /**
  * This is an example of how to use the multi-project schema feature of Drizzle ORM. Use the same
  * database instance for multiple projects.
@@ -56,6 +57,7 @@ export const user = pgTable("user", {
 	https: boolean("https").notNull().default(false),
 	host: text("host"),
 	additionalHosts: jsonb("additionalHosts").$type<string[]>().notNull().default([]),
+	trustedOrigins: text("trustedOrigins").array(),
 	letsEncryptEmail: text("letsEncryptEmail"),
 	sshPrivateKey: text("sshPrivateKey"),
 	updateTagsUrl: text("updateTagsUrl"),
@@ -138,6 +140,7 @@ export const usersRelations = relations(user, ({ one, many }) => ({
 	apiKeys: many(apikey),
 	backups: many(backups),
 	schedules: many(schedules),
+	ssoProviders: many(ssoProvider),
 }));
 
 const createSchema = createInsertSchema(user, {
@@ -180,6 +183,7 @@ export const apiAssignPermissions = createSchema
 		// canAccessToGitProviders: true,
 	})
 	.extend({
+		role: z.string().optional(),
 		accessedProjects: z.array(z.string()).optional(),
 		accessedEnvironments: z.array(z.string()).optional(),
 		accessedServices: z.array(z.string()).optional(),
@@ -375,6 +379,8 @@ export const apiUpdateWebServerMonitoring = z.object({
 });
 
 export const apiUpdateUser = createSchema.partial().extend({
+	additionalHosts: z.array(z.string()).optional(),
+	trustedOrigins: z.array(z.string()).optional().nullable(),
 	email: z
 		.string()
 		.email("Please enter a valid email address")

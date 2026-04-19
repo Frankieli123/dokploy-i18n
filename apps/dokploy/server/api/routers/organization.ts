@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, exists } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
+import { audit } from "@/server/api/utils/audit";
 import { db } from "@/server/db";
 import { invitation, member, organization } from "@/server/db/schema";
 import { adminProcedure, createTRPCRouter, protectedProcedure } from "../trpc";
@@ -51,6 +52,12 @@ export const organizationRouter = createTRPCRouter({
 				role: "owner",
 				createdAt: new Date(),
 				userId: ctx.user.id,
+			});
+			await audit(ctx, {
+				action: "create",
+				resourceType: "organization",
+				resourceId: result.id,
+				resourceName: result.name,
 			});
 			return result;
 		}),
@@ -110,6 +117,14 @@ export const organizationRouter = createTRPCRouter({
 				})
 				.where(eq(organization.id, input.organizationId))
 				.returning();
+			if (result[0]) {
+				await audit(ctx, {
+					action: "update",
+					resourceType: "organization",
+					resourceId: input.organizationId,
+					resourceName: result[0].name,
+				});
+			}
 			return result[0];
 		}),
 	delete: protectedProcedure
@@ -158,6 +173,12 @@ export const organizationRouter = createTRPCRouter({
 			const result = await db
 				.delete(organization)
 				.where(eq(organization.id, input.organizationId));
+			await audit(ctx, {
+				action: "delete",
+				resourceType: "organization",
+				resourceId: input.organizationId,
+				resourceName: org.name,
+			});
 
 			return result;
 		}),
@@ -190,9 +211,17 @@ export const organizationRouter = createTRPCRouter({
 				});
 			}
 
-			return await db
+			const result = await db
 				.delete(invitation)
 				.where(eq(invitation.id, input.invitationId));
+			await audit(ctx, {
+				action: "delete",
+				resourceType: "organization",
+				resourceId: invitationResult.organizationId,
+				resourceName: invitationResult.email,
+				metadata: { invitationId: input.invitationId },
+			});
+			return result;
 		}),
 	setDefault: protectedProcedure
 		.input(
@@ -233,6 +262,25 @@ export const organizationRouter = createTRPCRouter({
 					),
 				);
 
+			const org = await db.query.organization.findFirst({
+				where: eq(organization.id, input.organizationId),
+			});
+			await audit(ctx, {
+				action: "update",
+				resourceType: "organization",
+				resourceId: input.organizationId,
+				resourceName: org?.name,
+				metadata: { isDefault: true },
+			});
 			return { success: true };
 		}),
+	active: protectedProcedure.query(async ({ ctx }) => {
+		if (!ctx.session.activeOrganizationId) {
+			return null;
+		}
+
+		return await db.query.organization.findFirst({
+			where: eq(organization.id, ctx.session.activeOrganizationId),
+		});
+	}),
 });

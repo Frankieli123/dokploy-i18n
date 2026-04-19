@@ -10,8 +10,28 @@
 		"baseUrl": ".",
 		"paths": {
 			"@/*": ["./*"],
-			"@dokploy/server/*": ["../../packages/server/src/*"]
+			"@dokploy/server": ["../../packages/server/dist/index.d.ts"],
+			"@dokploy/server/db": ["../../packages/server/src/db/index.ts"],
+			"@dokploy/server/db/schema": ["../../packages/server/src/db/schema/index.ts"],
+			"@dokploy/server/db/schema/*": ["../../packages/server/src/db/schema/*"],
+			"@dokploy/server/utils/zod-compat": ["../../packages/server/src/utils/zod-compat.ts"],
+			"@dokploy/server/lib/auth": ["../../packages/server/src/lib/auth.ts"],
+			"@dokploy/server/services/deployment": ["../../packages/server/src/services/deployment.ts"],
+			"@dokploy/server/services/proprietary/sso": ["../../packages/server/src/services/proprietary/sso.ts"],
+			"@dokploy/server/*": ["../../packages/server/dist/*"]
 		}
 	},
-	"include": ["next-env.d.ts", "./server/**/*"]
+	"include": [
+		"next-env.d.ts",
+		"./server/**/*",
+		"./pages/api/**/*"
+	],
+	"exclude": [
+		".tmp",
+		"node_modules",
+		"dist",
+		"**/__test__/**",
+		"**/*.test.ts",
+		"**/*.test.tsx"
+	]
 }

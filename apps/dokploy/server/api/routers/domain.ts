@@ -167,7 +167,10 @@ export const domainRouter = createTRPCRouter({
 			const domain = await findDomainById(input.domainId);
 			if (domain.applicationId) {
 				const application = await findApplicationById(domain.applicationId);
-				await manageDomain(application, domain);
+				await manageDomain(
+					application as unknown as Parameters<typeof manageDomain>[0],
+					domain,
+				);
 			} else if (domain.previewDeploymentId) {
 				const previewDeployment = await findPreviewDeploymentById(
 					domain.previewDeploymentId,
@@ -176,7 +179,10 @@ export const domainRouter = createTRPCRouter({
 					previewDeployment.applicationId,
 				);
 				application.appName = previewDeployment.appName;
-				await manageDomain(application, domain);
+				await manageDomain(
+					application as unknown as Parameters<typeof manageDomain>[0],
+					domain,
+				);
 			}
 			return result;
 		}),
@@ -258,13 +264,19 @@ export const domainRouter = createTRPCRouter({
 
 			if (domain.applicationId) {
 				const application = await findApplicationById(domain.applicationId);
-				await removeDomain(application, domain.uniqueConfigKey);
+				await removeDomain(
+					application as unknown as Parameters<typeof removeDomain>[0],
+					domain.uniqueConfigKey,
+				);
 			} else if (domain.previewDeploymentId && previewDeploymentForReload) {
 				const application = await findApplicationById(
 					previewDeploymentForReload.applicationId,
 				);
 				application.appName = previewDeploymentForReload.appName;
-				await removeDomain(application, domain.uniqueConfigKey);
+				await removeDomain(
+					application as unknown as Parameters<typeof removeDomain>[0],
+					domain.uniqueConfigKey,
+				);
 			} else if (domain.composeId && composeForReload) {
 				const jobData: DeploymentJob = {
 					composeId: composeForReload.composeId,

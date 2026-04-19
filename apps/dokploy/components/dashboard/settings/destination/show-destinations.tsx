@@ -1,4 +1,4 @@
-import { Database, FolderUp, Loader2, Trash2 } from "lucide-react";
+﻿import { Database, FolderUp, Loader2, Trash2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
 import { DialogAction } from "@/components/shared/dialog-action";
@@ -15,8 +15,8 @@ import { HandleDestinations } from "./handle-destinations";
 
 export const ShowDestinations = () => {
 	const { t } = useTranslation("settings");
-	const { data, isLoading, refetch } = api.destination.all.useQuery();
-	const { mutateAsync, isLoading: isRemoving } =
+	const { data, isPending, refetch } = api.destination.all.useQuery();
+	const { mutateAsync, isPending: isRemoving } =
 		api.destination.remove.useMutation();
 	return (
 		<div className="w-full">
@@ -32,7 +32,7 @@ export const ShowDestinations = () => {
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-2 py-8 border-t">
-						{isLoading ? (
+						{isPending ? (
 							<div className="flex flex-row gap-2 items-center justify-center text-sm text-muted-foreground min-h-[25vh]">
 								<span>{t("settings.common.loading")}</span>
 								<Loader2 className="animate-spin size-4" />
@@ -100,7 +100,7 @@ export const ShowDestinations = () => {
 																	variant="ghost"
 																	size="icon"
 																	className="group hover:bg-red-500/10 "
-																	isLoading={isRemoving}
+																	isPending={isRemoving}
 																>
 																	<Trash2 className="size-4 text-primary group-hover:text-red-500" />
 																</Button>
@@ -124,3 +124,4 @@ export const ShowDestinations = () => {
 		</div>
 	);
 };
+

@@ -1,4 +1,4 @@
-import { useTranslation } from "next-i18next";
+﻿import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,10 +21,10 @@ interface Props {
 }
 export const ShowTraefikActions = ({ serverId }: Props) => {
 	const { t } = useTranslation("settings");
-	const { mutateAsync: reloadTraefik, isLoading: reloadTraefikIsLoading } =
+	const { mutateAsync: reloadTraefik, isPending: reloadTraefikIsLoading } =
 		api.settings.reloadTraefik.useMutation();
 
-	const { mutateAsync: toggleDashboard, isLoading: toggleDashboardIsLoading } =
+	const { mutateAsync: toggleDashboard, isPending: toggleDashboardIsLoading } =
 		api.settings.toggleDashboard.useMutation();
 
 	const { data: haveTraefikDashboardPortEnabled, refetch: refetchDashboard } =
@@ -54,7 +54,7 @@ export const ShowTraefikActions = ({ serverId }: Props) => {
 				}
 			>
 				<Button
-					isLoading={
+					isPending={
 						reloadTraefikIsLoading ||
 						toggleDashboardIsLoading ||
 						isHealthCheckExecuting
@@ -142,3 +142,4 @@ export const ShowTraefikActions = ({ serverId }: Props) => {
 		</DropdownMenu>
 	);
 };
+

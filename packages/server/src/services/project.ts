@@ -1,5 +1,6 @@
 import path from "node:path";
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateProject,
 	backups,
@@ -37,7 +38,7 @@ import { findBackupsByDbId } from "./backup";
 export type Project = typeof projects.$inferSelect;
 
 export const createProject = async (
-	input: typeof apiCreateProject._type,
+	input: z.infer<typeof apiCreateProject>,
 	organizationId: string,
 ) => {
 	const newProject = await db

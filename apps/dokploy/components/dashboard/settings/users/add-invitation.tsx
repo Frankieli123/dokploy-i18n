@@ -64,7 +64,7 @@ export const AddInvitation = () => {
 		api.notification.getEmailProviders.useQuery();
 	const { mutateAsync: sendInvitation } = api.user.sendInvitation.useMutation();
 	const [error, setError] = useState<string | null>(null);
-	const { data: activeOrganization } = authClient.useActiveOrganization();
+	const { data: activeOrganization } = api.organization.active.useQuery();
 
 	const form = useForm<AddInvitation>({
 		defaultValues: {
@@ -72,7 +72,7 @@ export const AddInvitation = () => {
 			role: "member",
 			notificationId: "",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 	useEffect(() => {
 		form.reset();

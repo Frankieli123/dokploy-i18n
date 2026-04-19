@@ -6,6 +6,7 @@ import {
 	getDokployUrl,
 	getInvitationEmailContent,
 	getUserByToken,
+	getWebServerSettings,
 	IS_CLOUD,
 	removeUserById,
 	sendEmailNotification,
@@ -17,20 +18,28 @@ import {
 	apiAssignPermissions,
 	apiFindOneToken,
 	apikey,
+	organizationRole,
 	apiUpdateUser,
 	invitation,
 	member,
 } from "@dokploy/server/db/schema";
+import {
+	hasPermission,
+	resolvePermissions,
+} from "@dokploy/server/services/permission";
 import { TRPCError } from "@trpc/server";
 import * as bcrypt from "bcrypt";
 import { and, asc, eq, gt } from "drizzle-orm";
 import { z } from "zod";
+import { audit } from "@/server/api/utils/audit";
 import {
 	adminProcedure,
 	createTRPCRouter,
 	protectedProcedure,
 	publicProcedure,
+	withPermission,
 } from "../trpc";
+import { statements } from "@dokploy/server/lib/access-control";
 
 const apiCreateApiKey = z.object({
 	name: z.string().min(1),
@@ -49,6 +58,71 @@ const apiCreateApiKey = z.object({
 	refillInterval: z.number().optional(),
 });
 
+const staticRoles = new Set(["owner", "admin", "member"]);
+
+const customRoleSchema = z.object({
+	role: z
+		.string()
+		.min(1)
+		.regex(/^[a-zA-Z0-9:_-]+$/),
+	permissions: z.record(z.array(z.string())),
+});
+
+type Resource = keyof typeof statements;
+
+const normalizeRolePermissions = (permissions: Record<string, string[]>) => {
+	const normalized: Partial<Record<Resource, string[]>> = {};
+
+	for (const [resource, actions] of Object.entries(permissions)) {
+		if (!(resource in statements)) continue;
+		const allowedActions = statements[resource as Resource] as readonly string[];
+		const validActions = Array.from(
+			new Set(actions.filter((action) => allowedActions.includes(action))),
+		);
+		if (validActions.length > 0) {
+			normalized[resource as Resource] = validActions;
+		}
+	}
+
+	return normalized;
+};
+
+const mergeRolePermissions = (
+	rows: Array<{ role: string; permission: string; createdAt: Date }>,
+) => {
+	const grouped = new Map<
+		string,
+		{ role: string; permissions: Record<string, string[]>; createdAt: Date }
+	>();
+
+	for (const row of rows) {
+		let parsed: Record<string, string[]>;
+		try {
+			parsed = JSON.parse(row.permission) as Record<string, string[]>;
+		} catch {
+			continue;
+		}
+
+		const current = grouped.get(row.role) ?? {
+			role: row.role,
+			permissions: {},
+			createdAt: row.createdAt,
+		};
+
+		for (const [resource, actions] of Object.entries(parsed)) {
+			current.permissions[resource] = Array.from(
+				new Set([...(current.permissions[resource] ?? []), ...actions]),
+			);
+		}
+
+		grouped.set(row.role, current);
+	}
+
+	return Array.from(grouped.values()).sort((left, right) =>
+		left.role.localeCompare(right.role),
+	);
+};
+
 export const userRouter = createTRPCRouter({
 	all: adminProcedure.query(async ({ ctx }) => {
 		return await db.query.member.findMany({
@@ -58,6 +132,19 @@ export const userRouter = createTRPCRouter({
 			},
 			orderBy: [asc(member.createdAt)],
 		});
+	}),
+	session: publicProcedure.query(async ({ ctx }) => {
+		if (!ctx.user || !ctx.session || !ctx.session.activeOrganizationId) {
+			return null;
+		}
+		return {
+			user: {
+				id: ctx.user.id,
+			},
+			session: {
+				activeOrganizationId: ctx.session.activeOrganizationId,
+			},
+		};
 	}),
 	one: protectedProcedure
 		.input(
@@ -113,6 +200,158 @@ export const userRouter = createTRPCRouter({
 
 		return memberResult;
 	}),
+	getPermissions: protectedProcedure.query(async ({ ctx }) => {
+		return resolvePermissions(ctx);
+	}),
+	listCustomRoles: adminProcedure.query(async ({ ctx }) => {
+		const roles = await db.query.organizationRole.findMany({
+			where: eq(organizationRole.organizationId, ctx.session.activeOrganizationId),
+			columns: {
+				role: true,
+				permission: true,
+				createdAt: true,
+			},
+			orderBy: [asc(organizationRole.createdAt)],
+		});
+
+		return mergeRolePermissions(
+			roles as Array<{ role: string; permission: string; createdAt: Date }>,
+		);
+	}),
+	listAssignableRoles: adminProcedure.query(async ({ ctx }) => {
+		const customRoles = await db.query.organizationRole.findMany({
+			where: eq(organizationRole.organizationId, ctx.session.activeOrganizationId),
+			columns: {
+				role: true,
+			},
+			orderBy: [asc(organizationRole.role)],
+		});
+
+		return Array.from(
+			new Set(["admin", "member", ...customRoles.map((role) => role.role)]),
+		);
+	}),
+	membersByRole: adminProcedure
+		.input(z.object({ role: z.string().min(1) }))
+		.query(async ({ ctx, input }) => {
+			return db.query.member.findMany({
+				where: and(
+					eq(member.organizationId, ctx.session.activeOrganizationId),
+					eq(member.role, input.role),
+				),
+				with: {
+					user: true,
+				},
+			});
+		}),
+	permissionCatalog: adminProcedure.query(() => statements),
+	upsertCustomRole: adminProcedure
+		.input(customRoleSchema)
+		.mutation(async ({ input, ctx }) => {
+			if (staticRoles.has(input.role)) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Built-in roles cannot be modified",
+				});
+			}
+
+			const organizationResult = await findOrganizationById(
+				ctx.session.activeOrganizationId,
+			);
+			if (organizationResult?.ownerId !== ctx.user.ownerId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not allowed to manage custom roles",
+				});
+			}
+
+			const normalized = normalizeRolePermissions(input.permissions);
+			if (Object.keys(normalized).length === 0) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "At least one valid permission is required",
+				});
+			}
+
+			await db
+				.delete(organizationRole)
+				.where(
+					and(
+						eq(organizationRole.organizationId, ctx.session.activeOrganizationId),
+						eq(organizationRole.role, input.role),
+					),
+				);
+
+			await db.insert(organizationRole).values({
+				organizationId: ctx.session.activeOrganizationId,
+				role: input.role,
+				permission: JSON.stringify(normalized),
+			});
+
+			await audit(ctx, {
+				action: "update",
+				resourceType: "organization",
+				resourceId: ctx.session.activeOrganizationId,
+				resourceName: input.role,
+				metadata: { type: "organization-role", permissions: normalized },
+			});
+
+			return { success: true };
+		}),
+	deleteCustomRole: adminProcedure
+		.input(z.object({ role: z.string().min(1) }))
+		.mutation(async ({ input, ctx }) => {
+			if (staticRoles.has(input.role)) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Built-in roles cannot be deleted",
+				});
+			}
+
+			const organizationResult = await findOrganizationById(
+				ctx.session.activeOrganizationId,
+			);
+			if (organizationResult?.ownerId !== ctx.user.ownerId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not allowed to delete custom roles",
+				});
+			}
+
+			const assignedMembers = await db.query.member.findMany({
+				where: and(
+					eq(member.organizationId, ctx.session.activeOrganizationId),
+					eq(member.role, input.role),
+				),
+				columns: { id: true },
+			});
+
+			if (assignedMembers.length > 0) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "This role is still assigned to users",
+				});
+			}
+
+			await db
+				.delete(organizationRole)
+				.where(
+					and(
+						eq(organizationRole.organizationId, ctx.session.activeOrganizationId),
+						eq(organizationRole.role, input.role),
+					),
+				);
+
+			await audit(ctx, {
+				action: "delete",
+				resourceType: "organization",
+				resourceId: ctx.session.activeOrganizationId,
+				resourceName: input.role,
+				metadata: { type: "organization-role" },
+			});
+
+			return { success: true };
+		}),
 	haveRootAccess: protectedProcedure.query(async ({ ctx }) => {
 		if (!IS_CLOUD) {
 			return false;
@@ -195,7 +434,14 @@ export const userRouter = createTRPCRouter({
 			}
 
 			try {
-				return await updateUser(ctx.user.id, input);
+				const result = await updateUser(ctx.user.id, input);
+				await audit(ctx, {
+					action: "update",
+					resourceType: "user",
+					resourceId: ctx.user.id,
+					resourceName: ctx.user.email,
+				});
+				return result;
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -211,10 +457,11 @@ export const userRouter = createTRPCRouter({
 		}),
 	getMetricsToken: protectedProcedure.query(async ({ ctx }) => {
 		const user = await findUserById(ctx.user.ownerId);
+		const webServerSettings = await getWebServerSettings().catch(() => null);
 		return {
-			serverIp: user.serverIp,
+			serverIp: webServerSettings?.serverIp ?? user.serverIp,
 			enabledFeatures: user.enablePaidFeatures,
-			metricsConfig: user?.metricsConfig,
+			metricsConfig: webServerSettings?.metricsConfig ?? user?.metricsConfig,
 		};
 	}),
 	remove: protectedProcedure
@@ -223,11 +470,17 @@ export const userRouter = createTRPCRouter({
 				userId: z.string(),
 			}),
 		)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ input, ctx }) => {
 			if (IS_CLOUD) {
 				return true;
 			}
-			return await removeUserById(input.userId);
+			const result = await removeUserById(input.userId);
+			await audit(ctx, {
+				action: "delete",
+				resourceType: "user",
+				resourceId: input.userId,
+			});
+			return result;
 		}),
 	assignPermissions: adminProcedure
 		.input(apiAssignPermissions)
@@ -244,11 +497,29 @@ export const userRouter = createTRPCRouter({
 					});
 				}
 
-				const { id, ...rest } = input;
+				const { id, role, ...rest } = input;
+				const nextRole = role ?? "member";
+
+				if (
+					!staticRoles.has(nextRole) &&
+					!(await db.query.organizationRole.findFirst({
+						where: and(
+							eq(organizationRole.organizationId, ctx.session.activeOrganizationId),
+							eq(organizationRole.role, nextRole),
+						),
+						columns: { id: true },
+					}))
+				) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "Selected custom role does not exist",
+					});
+				}
 
 				await db
 					.update(member)
 					.set({
+						role: nextRole,
 						...rest,
 					})
 					.where(
@@ -260,6 +531,12 @@ export const userRouter = createTRPCRouter({
 							),
 						),
 					);
+				await audit(ctx, {
+					action: "update",
+					resourceType: "user",
+					resourceId: input.id,
+					metadata: { role: nextRole, permissions: rest },
+				});
 			} catch (error) {
 				throw error;
 			}
@@ -359,7 +636,7 @@ export const userRouter = createTRPCRouter({
 					});
 				}
 
-				if (apiKeyToDelete.userId !== ctx.user.id) {
+				if (apiKeyToDelete.referenceId !== ctx.user.id) {
 					throw new TRPCError({
 						code: "UNAUTHORIZED",
 						message: "You are not authorized to delete this API key",
@@ -367,6 +644,12 @@ export const userRouter = createTRPCRouter({
 				}
 
 				await db.delete(apikey).where(eq(apikey.id, input.apiKeyId));
+				await audit(ctx, {
+					action: "delete",
+					resourceType: "user",
+					resourceId: input.apiKeyId,
+					resourceName: apiKeyToDelete.name || undefined,
+				});
 				return true;
 			} catch (error) {
 				throw error;
@@ -376,7 +659,28 @@ export const userRouter = createTRPCRouter({
 	createApiKey: protectedProcedure
 		.input(apiCreateApiKey)
 		.mutation(async ({ input, ctx }) => {
+			if (input.metadata?.organizationId) {
+				const userMember = await db.query.member.findFirst({
+					where: and(
+						eq(member.organizationId, input.metadata.organizationId),
+						eq(member.userId, ctx.user.id),
+					),
+				});
+
+				if (!userMember) {
+					throw new TRPCError({
+						code: "FORBIDDEN",
+						message: "You are not a member of this organization",
+					});
+				}
+			}
 			const apiKey = await createApiKey(ctx.user.id, input);
+			await audit(ctx, {
+				action: "create",
+				resourceType: "user",
+				resourceId: apiKey.id,
+				resourceName: input.name,
+			});
 			return apiKey;
 		}),
 

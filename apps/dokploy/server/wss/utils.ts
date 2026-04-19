@@ -2,6 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execAsync, IS_CLOUD, paths } from "@dokploy/server";
+import {
+	isValidSearch,
+	isValidSince,
+	isValidTail,
+	readValidDirectory,
+} from "@dokploy/server/wss/utils";
 
 /**
  * Validates that the container ID matches Docker's expected format.
@@ -13,6 +19,8 @@ export const isValidContainerId = (id: string): boolean => {
 	const namePattern = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
 	return hexPattern.test(id) || (namePattern.test(id) && id.length <= 128);
 };
+
+export { isValidSearch, isValidSince, isValidTail, readValidDirectory };
 
 export const isValidShell = (shell: string): boolean => {
 	const allowedShells = [
@@ -58,19 +66,4 @@ export const setupLocalServerSSHKey = async () => {
 	const privateKey = fs.readFileSync(sshKeyPath, "utf8");
 
 	return privateKey;
-};
-
-export const readValidDirectory = (
-	directory: string,
-	serverId?: string | null,
-) => {
-	const { BASE_PATH } = paths(!!serverId);
-
-	const resolvedBase = path.resolve(BASE_PATH);
-	const resolvedDir = path.resolve(directory);
-
-	return (
-		resolvedDir === resolvedBase ||
-		resolvedDir.startsWith(resolvedBase + path.sep)
-	);
 };

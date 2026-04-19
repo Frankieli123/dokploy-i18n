@@ -13,11 +13,13 @@ type MockCreateServiceOptions = {
 
 const { inspectMock, getServiceMock, createServiceMock, getRemoteDockerMock } =
 	vi.hoisted(() => {
-		const inspect = vi.fn<[], Promise<never>>();
+		const inspect = vi.fn(async () => {
+			throw new Error("service not found");
+		});
 		const getService = vi.fn(() => ({ inspect }));
-		const createService = vi.fn<[MockCreateServiceOptions], Promise<void>>(
-			async () => undefined,
-		);
+		const createService = vi.fn(async (_settings: MockCreateServiceOptions) => {
+			return undefined;
+		});
 		const getRemoteDocker = vi.fn(async () => ({
 			getService,
 			createService,
@@ -80,11 +82,10 @@ describe("mechanizeDockerContainer", () => {
 		await mechanizeDockerContainer(application);
 
 		expect(createServiceMock).toHaveBeenCalledTimes(1);
-		const call = createServiceMock.mock.calls[0];
-		if (!call) {
+		const settings = createServiceMock.mock.calls[0]?.[0];
+		if (!settings) {
 			throw new Error("createServiceMock should have been called once");
 		}
-		const [settings] = call;
 		expect(settings.TaskTemplate?.ContainerSpec?.StopGracePeriod).toBe(0);
 		expect(typeof settings.TaskTemplate?.ContainerSpec?.StopGracePeriod).toBe(
 			"number",
@@ -97,11 +98,10 @@ describe("mechanizeDockerContainer", () => {
 		await mechanizeDockerContainer(application);
 
 		expect(createServiceMock).toHaveBeenCalledTimes(1);
-		const call = createServiceMock.mock.calls[0];
-		if (!call) {
+		const settings = createServiceMock.mock.calls[0]?.[0];
+		if (!settings) {
 			throw new Error("createServiceMock should have been called once");
 		}
-		const [settings] = call;
 		expect(settings.TaskTemplate?.ContainerSpec).not.toHaveProperty(
 			"StopGracePeriod",
 		);

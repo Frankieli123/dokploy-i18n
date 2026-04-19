@@ -1,4 +1,4 @@
-import * as TooltipPrimitive from "@radix-ui/react-tooltip";
+﻿import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import {
 	Ban,
 	CheckCircle2,
@@ -39,18 +39,18 @@ export const ShowGeneralApplication = ({ applicationId }: Props) => {
 		{ enabled: !!applicationId },
 	);
 	const { mutateAsync: update } = api.application.update.useMutation();
-	const { mutateAsync: start, isLoading: isStarting } =
+	const { mutateAsync: start, isPending: isStarting } =
 		api.application.start.useMutation();
-	const { mutateAsync: stop, isLoading: isStopping } =
+	const { mutateAsync: stop, isPending: isStopping } =
 		api.application.stop.useMutation();
 
-	const { mutateAsync: deploy, isLoading: isDeploying } =
+	const { mutateAsync: deploy, isPending: isDeploying } =
 		api.application.deploy.useMutation();
 
-	const { mutateAsync: reload, isLoading: isReloading } =
+	const { mutateAsync: reload, isPending: isReloading } =
 		api.application.reload.useMutation();
 
-	const { mutateAsync: redeploy, isLoading: isRedeploying } =
+	const { mutateAsync: redeploy, isPending: isRedeploying } =
 		api.application.redeploy.useMutation();
 
 	return (
@@ -85,7 +85,7 @@ export const ShowGeneralApplication = ({ applicationId }: Props) => {
 						>
 							<Button
 								variant="default"
-								isLoading={isDeploying}
+								isPending={isDeploying}
 								className="flex items-center gap-1.5 group focus-visible:ring-2 focus-visible:ring-offset-2"
 							>
 								<Tooltip>
@@ -123,7 +123,7 @@ export const ShowGeneralApplication = ({ applicationId }: Props) => {
 						>
 							<Button
 								variant="secondary"
-								isLoading={isReloading}
+								isPending={isReloading}
 								className="flex items-center gap-1.5 group focus-visible:ring-2 focus-visible:ring-offset-2"
 							>
 								<Tooltip>
@@ -160,7 +160,7 @@ export const ShowGeneralApplication = ({ applicationId }: Props) => {
 						>
 							<Button
 								variant="secondary"
-								isLoading={isRedeploying}
+								isPending={isRedeploying}
 								className="flex items-center gap-1.5 group focus-visible:ring-2 focus-visible:ring-offset-2"
 							>
 								<Tooltip>
@@ -199,7 +199,7 @@ export const ShowGeneralApplication = ({ applicationId }: Props) => {
 							>
 								<Button
 									variant="secondary"
-									isLoading={isStarting}
+									isPending={isStarting}
 									className="flex items-center gap-1.5 group focus-visible:ring-2 focus-visible:ring-offset-2"
 								>
 									<Tooltip>
@@ -236,7 +236,7 @@ export const ShowGeneralApplication = ({ applicationId }: Props) => {
 							>
 								<Button
 									variant="destructive"
-									isLoading={isStopping}
+									isPending={isStopping}
 									className="flex items-center gap-1.5 group focus-visible:ring-2 focus-visible:ring-offset-2"
 								>
 									<Tooltip>
@@ -322,3 +322,4 @@ export const ShowGeneralApplication = ({ applicationId }: Props) => {
 		</>
 	);
 };
+

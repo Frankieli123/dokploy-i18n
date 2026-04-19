@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { Plus, Trash2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect } from "react";
@@ -55,14 +55,14 @@ export const AddCommand = ({ applicationId }: Props) => {
 
 	const utils = api.useUtils();
 
-	const { mutateAsync, isLoading } = api.application.update.useMutation();
+	const { mutateAsync, isPending } = api.application.update.useMutation();
 
 	const form = useForm<AddCommand>({
 		defaultValues: {
 			command: "",
 			args: [],
 		},
-		resolver: zodResolver(AddRedirectSchema(t)),
+		resolver: zodResolver(AddRedirectSchema(t) as any) as any,
 	});
 
 	const { fields, append, remove } = useFieldArray({
@@ -192,7 +192,7 @@ export const AddCommand = ({ applicationId }: Props) => {
 							</div>
 						</div>
 						<div className="flex justify-end">
-							<Button isLoading={isLoading} type="submit" className="w-fit">
+							<Button isPending={isPending} type="submit" className="w-fit">
 								{t("button.save")}
 							</Button>
 						</div>
@@ -202,3 +202,4 @@ export const AddCommand = ({ applicationId }: Props) => {
 		</Card>
 	);
 };
+

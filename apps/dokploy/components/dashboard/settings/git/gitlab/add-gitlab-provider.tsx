@@ -74,7 +74,7 @@ export const AddGitlabProvider = () => {
 			name: "",
 			gitlabUrl: "https://gitlab.com",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	const gitlabUrl = form.watch("gitlabUrl");

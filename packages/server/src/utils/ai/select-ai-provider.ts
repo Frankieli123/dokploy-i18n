@@ -767,6 +767,20 @@ export function selectAIProvider(config: {
 				}),
 			});
 		case "azure":
+			if (normalizedApiUrl.includes("/v1")) {
+				return createOpenAICompatible({
+					name: "azure",
+					baseURL: normalizedApiUrl,
+					headers: {
+						"api-key": config.apiKey,
+						Authorization: `Bearer ${config.apiKey}`,
+					},
+					fetch: createValidatedJsonFetch(globalThis.fetch, {
+						debugEnabled: config.requestDebugLogs === true,
+						providerName: "azure",
+					}),
+				});
+			}
 			return createAzure({
 				apiKey: config.apiKey,
 				baseURL: normalizedApiUrl,

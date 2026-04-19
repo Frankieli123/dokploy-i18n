@@ -1,4 +1,4 @@
-import {
+﻿import {
 	CheckCircle2,
 	ExternalLink,
 	GlobeIcon,
@@ -35,7 +35,7 @@ import { DnsHelperModal } from "./dns-helper-modal";
 import { AddDomain } from "./handle-domain";
 
 export type ValidationState = {
-	isLoading: boolean;
+	isPending: boolean;
 	isValid?: boolean;
 	error?: string;
 	resolvedIp?: string;
@@ -78,7 +78,7 @@ export const ShowDomains = ({ id, type }: Props) => {
 	const {
 		data,
 		refetch,
-		isLoading: isLoadingDomains,
+		isPending: isPendingDomains,
 	} = type === "application"
 		? api.domain.byApplicationId.useQuery(
 				{
@@ -99,13 +99,13 @@ export const ShowDomains = ({ id, type }: Props) => {
 
 	const { mutateAsync: validateDomain } =
 		api.domain.validateDomain.useMutation();
-	const { mutateAsync: deleteDomain, isLoading: isRemoving } =
+	const { mutateAsync: deleteDomain, isPending: isRemoving } =
 		api.domain.delete.useMutation();
 
 	const handleValidateDomain = async (host: string) => {
 		setValidationStates((prev) => ({
 			...prev,
-			[host]: { isLoading: true },
+			[host]: { isPending: true },
 		}));
 
 		try {
@@ -128,7 +128,7 @@ export const ShowDomains = ({ id, type }: Props) => {
 			setValidationStates((prev) => ({
 				...prev,
 				[host]: {
-					isLoading: false,
+					isPending: false,
 					isValid: result.isValid,
 					error: errorMessage,
 					resolvedIp: result.resolvedIp,
@@ -141,7 +141,7 @@ export const ShowDomains = ({ id, type }: Props) => {
 			setValidationStates((prev) => ({
 				...prev,
 				[host]: {
-					isLoading: false,
+					isPending: false,
 					isValid: false,
 					error: error.message || "Failed to validate domain",
 				},
@@ -174,7 +174,7 @@ export const ShowDomains = ({ id, type }: Props) => {
 					</div>
 				</CardHeader>
 				<CardContent className="flex w-full flex-row gap-4">
-					{isLoadingDomains ? (
+					{isPendingDomains ? (
 						<div className="flex w-full flex-row gap-4 min-h-[40vh] justify-center items-center">
 							<Loader2 className="size-5 animate-spin text-muted-foreground" />
 							<span className="text-base text-muted-foreground">
@@ -269,7 +269,7 @@ export const ShowDomains = ({ id, type }: Props) => {
 																variant="ghost"
 																size="icon"
 																className="group hover:bg-red-500/10"
-																isLoading={isRemoving}
+																isPending={isRemoving}
 															>
 																<Trash2 className="size-4 text-primary group-hover:text-red-500" />
 															</Button>
@@ -387,7 +387,7 @@ export const ShowDomains = ({ id, type }: Props) => {
 																		handleValidateDomain(item.host)
 																	}
 																>
-																	{validationState?.isLoading ? (
+																	{validationState?.isPending ? (
 																		<>
 																			<Loader2 className="size-3 mr-1 animate-spin" />
 																			{t(
@@ -458,3 +458,4 @@ export const ShowDomains = ({ id, type }: Props) => {
 		</div>
 	);
 };
+

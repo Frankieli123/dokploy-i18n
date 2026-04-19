@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button";
 import type { LogEntry } from "./show-requests";
 
 export const getStatusColor = (status: number) => {
+	if (status === 0) {
+		return "secondary";
+	}
 	if (status >= 100 && status < 200) {
 		return "outline";
 	}
@@ -19,6 +22,24 @@ export const getStatusColor = (status: number) => {
 		return "destructive";
 	}
 	return "destructive";
+};
+
+const formatStatusLabel = (status: number) => {
+	if (status === 0) {
+		return "N/A";
+	}
+	return status;
+};
+
+const formatDuration = (nanos: number) => {
+	const ms = nanos / 1000000;
+	if (ms < 1) {
+		return `${(nanos / 1000).toFixed(2)} µs`;
+	}
+	if (ms < 1000) {
+		return `${ms.toFixed(2)} ms`;
+	}
+	return `${(ms / 1000).toFixed(2)} s`;
 };
 
 export const createColumns = (
@@ -61,11 +82,12 @@ export const createColumns = (
 					</div>
 					<div className="flex flex-row gap-3 w-full">
 						<Badge variant={getStatusColor(log.OriginStatus)}>
-							{t("requests.columns.statusLabel")}: {log.OriginStatus}
+							{t("requests.columns.statusLabel")}:{" "}
+							{formatStatusLabel(log.OriginStatus)}
 						</Badge>
 						<Badge variant={"secondary"}>
 							{t("requests.columns.execTimeLabel")}:{" "}
-							{`${log.Duration / 1000000000}s`}
+							{formatDuration(log.Duration)}
 						</Badge>
 						<Badge variant={"secondary"}>
 							{t("requests.columns.ipLabel")}: {log.ClientAddr}

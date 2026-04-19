@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, User } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useMemo, useState } from "react";
@@ -66,12 +66,12 @@ const randomImages = [
 ];
 
 export const ProfileForm = () => {
-	const { data, refetch, isLoading } = api.user.get.useQuery();
+	const { data, refetch, isPending } = api.user.get.useQuery();
 	const { data: isCloud } = api.settings.isCloud.useQuery();
 
 	const {
 		mutateAsync,
-		isLoading: isUpdating,
+		isPending: isUpdating,
 		isError,
 		error,
 	} = api.user.update.useMutation();
@@ -96,7 +96,7 @@ export const ProfileForm = () => {
 			allowImpersonation: data?.user?.allowImpersonation || false,
 			name: data?.user?.name || "",
 		},
-		resolver: zodResolver(profileSchema),
+		resolver: zodResolver(profileSchema as any) as any,
 	});
 
 	useEffect(() => {
@@ -168,7 +168,7 @@ export const ProfileForm = () => {
 
 					<CardContent className="space-y-2 py-8 border-t">
 						{isError && <AlertBlock type="error">{error?.message}</AlertBlock>}
-						{isLoading ? (
+						{isPending ? (
 							<div className="flex flex-row gap-2 items-center justify-center text-sm text-muted-foreground min-h-[35vh]">
 								<span>{t("settings.common.loading")}</span>
 								<Loader2 className="animate-spin size-4" />
@@ -420,7 +420,7 @@ export const ProfileForm = () => {
 										</div>
 
 										<div className="flex items-center justify-end gap-2">
-											<Button type="submit" isLoading={isUpdating}>
+											<Button type="submit" isPending={isUpdating}>
 												{t("settings.common.save")}
 											</Button>
 										</div>
@@ -434,3 +434,4 @@ export const ProfileForm = () => {
 		</div>
 	);
 };
+

@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { CheckIcon, ChevronsUpDown, HelpCircle, X } from "lucide-react";
 import Link from "next/link";
 import { useTranslation } from "next-i18next";
@@ -86,7 +86,7 @@ export const SaveGithubProviderCompose = ({ composeId }: Props) => {
 	const { data: githubProviders } = api.github.githubProviders.useQuery();
 	const { data, refetch } = api.compose.one.useQuery({ composeId });
 
-	const { mutateAsync, isLoading: isSavingGithubProvider } =
+	const { mutateAsync, isPending: isSavingGithubProvider } =
 		api.compose.update.useMutation();
 
 	const schema = createGithubProviderSchema(t);
@@ -103,13 +103,13 @@ export const SaveGithubProviderCompose = ({ composeId }: Props) => {
 			triggerType: "push",
 			enableSubmodules: false,
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	const repository = form.watch("repository");
 	const githubId = form.watch("githubId");
 	const triggerType = form.watch("triggerType");
-	const { data: repositories, isLoading: isLoadingRepositories } =
+	const { data: repositories, isPending: isPendingRepositories } =
 		api.github.getGithubRepositories.useQuery(
 			{
 				githubId,
@@ -259,7 +259,7 @@ export const SaveGithubProviderCompose = ({ composeId }: Props) => {
 														!field.value && "text-muted-foreground",
 													)}
 												>
-													{isLoadingRepositories
+													{isPendingRepositories
 														? t("compose.git.github.state.loadingRepositories")
 														: field.value.owner
 															? repositories?.find(
@@ -281,7 +281,7 @@ export const SaveGithubProviderCompose = ({ composeId }: Props) => {
 													)}
 													className="h-9"
 												/>
-												{isLoadingRepositories && (
+												{isPendingRepositories && (
 													<span className="py-6 text-center text-sm text-muted-foreground">
 														{t("compose.git.github.state.loadingRepositories")}
 													</span>
@@ -350,7 +350,7 @@ export const SaveGithubProviderCompose = ({ composeId }: Props) => {
 														!field.value && "text-muted-foreground",
 													)}
 												>
-													{status === "loading" && fetchStatus === "fetching"
+													{status === "pending" && fetchStatus === "fetching"
 														? t("compose.git.github.state.loadingBranches")
 														: field.value
 															? branches?.find(
@@ -371,7 +371,7 @@ export const SaveGithubProviderCompose = ({ composeId }: Props) => {
 													)}
 													className="h-9"
 												/>
-												{status === "loading" && fetchStatus === "fetching" && (
+												{status === "pending" && fetchStatus === "fetching" && (
 													<span className="py-6 text-center text-sm text-muted-foreground">
 														{t("compose.git.github.state.loadingBranches")}
 													</span>
@@ -586,7 +586,7 @@ export const SaveGithubProviderCompose = ({ composeId }: Props) => {
 					</div>
 					<div className="flex w-full justify-end">
 						<Button
-							isLoading={isSavingGithubProvider}
+							isPending={isSavingGithubProvider}
 							type="submit"
 							className="w-fit"
 						>
@@ -598,3 +598,4 @@ export const SaveGithubProviderCompose = ({ composeId }: Props) => {
 		</div>
 	);
 };
+

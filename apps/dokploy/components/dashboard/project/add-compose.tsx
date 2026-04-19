@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { CircuitBoard, HelpCircle } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -77,7 +77,7 @@ export const AddCompose = ({ environmentId, projectName }: Props) => {
 	const slug = slugify(projectName);
 	const { data: isCloud } = api.settings.isCloud.useQuery();
 	const { data: servers } = api.server.withSSHKey.useQuery();
-	const { mutateAsync, isLoading, error, isError } =
+	const { mutateAsync, isPending, error, isError } =
 		api.compose.create.useMutation();
 
 	// Get environment data to extract projectId
@@ -96,7 +96,7 @@ export const AddCompose = ({ environmentId, projectName }: Props) => {
 			composeType: "docker-compose",
 			appName: `${slug}-`,
 		},
-		resolver: zodResolver(createAddComposeSchema(t)),
+		resolver: zodResolver(createAddComposeSchema(t) as any) as any,
 	});
 
 	useEffect(() => {
@@ -324,7 +324,7 @@ export const AddCompose = ({ environmentId, projectName }: Props) => {
 					</form>
 
 					<DialogFooter>
-						<Button isLoading={isLoading} form="hook-form" type="submit">
+						<Button isPending={isPending} form="hook-form" type="submit">
 							{t("button.create")}
 						</Button>
 					</DialogFooter>
@@ -333,3 +333,4 @@ export const AddCompose = ({ environmentId, projectName }: Props) => {
 		</Dialog>
 	);
 };
+

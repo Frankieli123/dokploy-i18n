@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "next-i18next";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
@@ -24,7 +24,7 @@ interface Props {
 
 export const ShowEnvironment = ({ applicationId }: Props) => {
 	const { t } = useTranslation("common");
-	const { mutateAsync, isLoading } =
+	const { mutateAsync, isPending } =
 		api.application.saveEnvironment.useMutation();
 
 	const { data, refetch } = api.application.one.useQuery(
@@ -42,7 +42,7 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 			buildArgs: "",
 			buildSecrets: "",
 		},
-		resolver: zodResolver(addEnvironmentSchema),
+		resolver: zodResolver(addEnvironmentSchema as any) as any,
 	});
 
 	// Watch form values
@@ -91,7 +91,7 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 	// Add keyboard shortcut for Ctrl+S/Cmd+S
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
-			if ((e.ctrlKey || e.metaKey) && e.key === "s" && !isLoading) {
+			if ((e.ctrlKey || e.metaKey) && e.key === "s" && !isPending) {
 				e.preventDefault();
 				form.handleSubmit(onSubmit)();
 			}
@@ -101,7 +101,7 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 		return () => {
 			document.removeEventListener("keydown", handleKeyDown);
 		};
-	}, [form, onSubmit, isLoading]);
+	}, [form, onSubmit, isPending]);
 
 	return (
 		<Card className="bg-background px-6 pb-6">
@@ -176,7 +176,7 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 							</Button>
 						)}
 						<Button
-							isLoading={isLoading}
+							isPending={isPending}
 							className="w-fit"
 							type="submit"
 							disabled={!hasChanges}
@@ -189,3 +189,4 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 		</Card>
 	);
 };
+

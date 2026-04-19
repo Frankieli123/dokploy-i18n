@@ -10,6 +10,7 @@ import {
 	findApplicationById,
 	findComposeById,
 	findDeploymentById,
+	findMemberById,
 	findServerById,
 	IS_CLOUD,
 	updateDeploymentStatus,
@@ -24,8 +25,14 @@ import {
 	apiFindAllByServer,
 	apiFindAllByType,
 	deployments,
+	server,
 } from "@/server/db/schema";
 import { myQueue } from "@/server/queues/queueSetup";
+import { fetchDeployApiJobs, type QueueJobRow } from "@/server/utils/deploy";
+import {
+	findAllDeploymentsCentralized,
+	resolveServicePath,
+} from "../../../../../packages/server/src/services/deployment";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 
 const MAX_BYTES_HARD_LIMIT = 2 * 1024 * 1024;
@@ -112,6 +119,81 @@ export const deploymentRouter = createTRPCRouter({
 			}
 			return await findAllDeploymentsByServerId(input.serverId);
 		}),
+	allCentralized: protectedProcedure.query(async ({ ctx }) => {
+		const orgId = ctx.session.activeOrganizationId;
+		const accessedServices =
+			ctx.user.role === "owner" || ctx.user.role === "admin"
+				? null
+				: (await findMemberById(ctx.user.id, orgId)).accessedServices;
+
+		if (accessedServices !== null && accessedServices.length === 0) {
+			return [];
+		}
+
+		return await findAllDeploymentsCentralized(orgId, accessedServices);
+	}),
+
+	queueList: protectedProcedure.query(async ({ ctx }) => {
+		const orgId = ctx.session.activeOrganizationId;
+		const accessedServices =
+			ctx.user.role === "owner" || ctx.user.role === "admin"
+				? null
+				: (await findMemberById(ctx.user.id, orgId)).accessedServices;
+		let rows: QueueJobRow[];
+
+		if (IS_CLOUD) {
+			const servers = await db.query.server.findMany({
+				where: eq(server.organizationId, orgId),
+				columns: { serverId: true },
+			});
+			const serverRowsArrays = await Promise.all(
+				servers.map(({ serverId }) => fetchDeployApiJobs(serverId)),
+			);
+			rows = serverRowsArrays.flat();
+			rows.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+		} else {
+			const jobs = await myQueue.getJobs();
+			const jobRows = await Promise.all(
+				jobs.map(async (job) => ({
+					id: String(job.id),
+					name: job.name ?? undefined,
+					data: job.data as Record<string, unknown>,
+					timestamp: job.timestamp,
+					processedOn: job.processedOn,
+					finishedOn: job.finishedOn,
+					failedReason: job.failedReason ?? undefined,
+					state: await job.getState(),
+				})),
+			);
+			jobRows.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+			rows = jobRows;
+		}
+
+		const visibleRows =
+			accessedServices === null
+				? rows
+				: rows.filter((row) => {
+						const data = row.data ?? {};
+						const applicationId =
+							typeof data.applicationId === "string" ? data.applicationId : null;
+						const composeId =
+							typeof data.composeId === "string" ? data.composeId : null;
+						return (
+							(applicationId && accessedServices.includes(applicationId)) ||
+							(composeId && accessedServices.includes(composeId))
+						);
+					});
+
+		return await Promise.all(
+			visibleRows.map(async (row) => ({
+				...row,
+				servicePath: await resolveServicePath(
+					orgId,
+					(row.data ?? {}) as Record<string, unknown>,
+				),
+			})),
+		);
+	}),
 
 	allByType: protectedProcedure
 		.input(apiFindAllByType)

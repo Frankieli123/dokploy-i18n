@@ -27,22 +27,36 @@
 		"baseUrl": ".",
 		"paths": {
 			"@/*": ["./*"],
+			"@dokploy/server": ["../../packages/server/src/index-app.ts"],
 			"@dokploy/server/*": ["../../packages/server/src/*"]
 		}
 	},
 
 	"include": [
 		"next-env.d.ts",
-		"**/*.ts",
-		"**/*.tsx",
-		"**/*.cjs",
-		"**/*.js",
+		"pages/**/*.ts",
+		"pages/**/*.tsx",
+		"components/**/*.ts",
+		"components/**/*.tsx",
+		"hooks/**/*.ts",
+		"hooks/**/*.tsx",
+		"lib/**/*.ts",
+		"lib/**/*.tsx",
+		"server/**/*.ts",
+		"server/**/*.tsx",
+		"utils/**/*.ts",
+		"utils/**/*.tsx",
+		"types/**/*.ts",
 		".next/types/**/*.ts",
 		"env.js",
 		"next.config.mjs",
 		"next-i18next.config.mjs"
 	],
 	"exclude": [
+		"**/__test__/**",
+		"**/*.test.ts",
+		"**/*.test.tsx",
+		".tmp",
 		"node_modules",
 		"dokploy",
 		"config",

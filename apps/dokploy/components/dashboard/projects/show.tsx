@@ -2,7 +2,6 @@ import {
 	AlertTriangle,
 	ArrowUpDown,
 	BookIcon,
-	ExternalLinkIcon,
 	FolderInput,
 	Loader2,
 	MoreHorizontalIcon,
@@ -10,13 +9,13 @@ import {
 	TrashIcon,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { BreadcrumbSidebar } from "@/components/shared/breadcrumb-sidebar";
 import { DateTooltip } from "@/components/shared/date-tooltip";
 import { FocusShortcutInput } from "@/components/shared/focus-shortcut-input";
-import { StatusTooltip } from "@/components/shared/status-tooltip";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -40,10 +39,8 @@ import {
 import {
 	DropdownMenu,
 	DropdownMenuContent,
-	DropdownMenuGroup,
 	DropdownMenuItem,
 	DropdownMenuLabel,
-	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -53,19 +50,23 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { TimeBadge } from "@/components/ui/time-badge";
 import { api } from "@/utils/api";
+import { useDebounce } from "@/utils/hooks/use-debounce";
 import { HandleProject } from "./handle-project";
 import { ProjectEnvironment } from "./project-environment";
+import { ProjectQuickLinks } from "./project-quick-links";
 
 export const ShowProjects = () => {
 	const utils = api.useUtils();
+	const router = useRouter();
 	const { t } = useTranslation("common");
-	const { data: isCloud } = api.settings.isCloud.useQuery();
 	const { data, isLoading } = api.project.all.useQuery();
-	const { data: auth } = api.user.get.useQuery();
+	const { data: permissions } = api.user.getPermissions.useQuery();
 	const { mutateAsync } = api.project.remove.useMutation();
-	const [searchQuery, setSearchQuery] = useState("");
+	const [searchQuery, setSearchQuery] = useState(
+		router.isReady && typeof router.query.q === "string" ? router.query.q : "",
+	);
+	const debouncedSearchQuery = useDebounce(searchQuery, 500);
 	const [sortBy, setSortBy] = useState<string>(() => {
 		if (typeof window !== "undefined") {
 			return localStorage.getItem("projectsSort") || "createdAt-desc";
@@ -77,14 +78,42 @@ export const ShowProjects = () => {
 		localStorage.setItem("projectsSort", sortBy);
 	}, [sortBy]);
 
+	useEffect(() => {
+		if (!router.isReady) return;
+		const urlQuery = typeof router.query.q === "string" ? router.query.q : "";
+		if (urlQuery !== searchQuery) {
+			setSearchQuery(urlQuery);
+		}
+	}, [router.isReady, router.query.q]);
+
+	useEffect(() => {
+		if (!router.isReady) return;
+		const urlQuery = typeof router.query.q === "string" ? router.query.q : "";
+		if (debouncedSearchQuery === urlQuery) return;
+
+		const newQuery = { ...router.query };
+		if (debouncedSearchQuery) {
+			newQuery.q = debouncedSearchQuery;
+		} else {
+			delete newQuery.q;
+		}
+		router.replace({ pathname: router.pathname, query: newQuery }, undefined, {
+			shallow: true,
+		});
+	}, [debouncedSearchQuery]);
+
 	const filteredProjects = useMemo(() => {
 		if (!data) return [];
 
 		// First filter by search query
 		const filtered = data.filter(
 			(project) =>
-				project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-				project.description?.toLowerCase().includes(searchQuery.toLowerCase()),
+				project.name
+					.toLowerCase()
+					.includes(debouncedSearchQuery.toLowerCase()) ||
+				project.description
+					?.toLowerCase()
+					.includes(debouncedSearchQuery.toLowerCase()),
 		);
 
 		// Then sort the filtered results
@@ -132,18 +161,24 @@ export const ShowProjects = () => {
 			}
 			return direction === "asc" ? comparison : -comparison;
 		});
-	}, [data, searchQuery, sortBy]);
+	}, [data, debouncedSearchQuery, sortBy]);
+
+	const getPreferredEnvironment = (
+		environments?: Array<{
+			environmentId: string;
+			name: string;
+			isDefault?: boolean | null;
+		}>,
+	) =>
+		environments?.find((env) => env.isDefault) ||
+		environments?.find((env) => env.name === "production") ||
+		environments?.[0];
 
 	return (
 		<>
 			<BreadcrumbSidebar
 				list={[{ name: t("dashboard.projects"), href: "/dashboard/projects" }]}
 			/>
-			{!isCloud && (
-				<div className="absolute top-4 right-4">
-					<TimeBadge />
-				</div>
-			)}
 			<div className="w-full">
 				<Card className="h-full bg-sidebar p-2.5 rounded-xl  ">
 					<div className="rounded-xl bg-background shadow-md ">
@@ -157,7 +192,7 @@ export const ShowProjects = () => {
 									{t("project.list.description")}
 								</CardDescription>
 							</CardHeader>
-							{(auth?.role === "owner" || auth?.canCreateProjects) && (
+							{permissions?.project.create && (
 								<div className="">
 									<HandleProject />
 								</div>
@@ -250,14 +285,17 @@ export const ShowProjects = () => {
 														env.compose.length,
 												)
 												.reduce((acc, curr) => acc + curr, 0);
-
-											const haveServicesWithDomains = project?.environments
+											const haveDeployableServices = project?.environments
 												.map(
 													(env) =>
 														env.applications.length > 0 ||
 														env.compose.length > 0,
 												)
 												.some(Boolean);
+											const accessibleEnvironment = getPreferredEnvironment(
+												project?.environments,
+											);
+											const hasNoEnvironments = !accessibleEnvironment;
 
 											return (
 												<div
@@ -265,128 +303,25 @@ export const ShowProjects = () => {
 													className="w-full lg:max-w-md"
 												>
 													<Link
-														href={`/dashboard/project/${project.projectId}/environment/${project?.environments?.[0]?.environmentId}`}
+														href={
+															hasNoEnvironments
+																? "#"
+																: `/dashboard/project/${project.projectId}/environment/${accessibleEnvironment?.environmentId}`
+														}
+														onClick={(e) => {
+															if (hasNoEnvironments) {
+																e.preventDefault();
+															}
+														}}
 													>
 														<Card className="group relative w-full h-full bg-transparent transition-colors hover:bg-border">
-															{haveServicesWithDomains ? (
-																<DropdownMenu>
-																	<DropdownMenuTrigger asChild>
-																		<Button
-																			className="absolute -right-3 -top-3 size-9 translate-y-1 rounded-full p-0 opacity-0 transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100"
-																			size="sm"
-																			variant="default"
-																		>
-																			<ExternalLinkIcon className="size-3.5" />
-																		</Button>
-																	</DropdownMenuTrigger>
-																	<DropdownMenuContent
-																		className="w-[200px] space-y-2 overflow-y-auto max-h-[400px]"
-																		onClick={(e) => e.stopPropagation()}
-																	>
-																		{project.environments.some(
-																			(env) => env.applications.length > 0,
-																		) && (
-																			<DropdownMenuGroup>
-																				<DropdownMenuLabel>
-																					{t("project.applications")}
-																				</DropdownMenuLabel>
-																				{project.environments.map((env) =>
-																					env.applications.map((app) => (
-																						<div key={app.applicationId}>
-																							<DropdownMenuSeparator />
-																							<DropdownMenuGroup>
-																								<DropdownMenuLabel className="font-normal capitalize text-xs flex items-center justify-between">
-																									{app.name}
-																									<StatusTooltip
-																										status={
-																											app.applicationStatus
-																										}
-																									/>
-																								</DropdownMenuLabel>
-																								<DropdownMenuSeparator />
-																								{app.domains.map((domain) => (
-																									<DropdownMenuItem
-																										key={domain.domainId}
-																										asChild
-																									>
-																										<Link
-																											className="space-x-4 text-xs cursor-pointer justify-between"
-																											target="_blank"
-																											href={`${
-																												domain.https
-																													? "https"
-																													: "http"
-																											}://${domain.host}${
-																												domain.path
-																											}`}
-																										>
-																											<span className="truncate">
-																												{domain.host}
-																											</span>
-																											<ExternalLinkIcon className="size-4 shrink-0" />
-																										</Link>
-																									</DropdownMenuItem>
-																								))}
-																							</DropdownMenuGroup>
-																						</div>
-																					)),
-																				)}
-																			</DropdownMenuGroup>
-																		)}
-																		{project.environments.some(
-																			(env) => env.compose.length > 0,
-																		) && (
-																			<DropdownMenuGroup>
-																				<DropdownMenuLabel>
-																					{t("project.compose")}
-																				</DropdownMenuLabel>
-																				{project.environments.map((env) =>
-																					env.compose.map((comp) => (
-																						<div key={comp.composeId}>
-																							<DropdownMenuSeparator />
-																							<DropdownMenuGroup>
-																								<DropdownMenuLabel className="font-normal capitalize text-xs flex items-center justify-between">
-																									{comp.name}
-																									<StatusTooltip
-																										status={comp.composeStatus}
-																									/>
-																								</DropdownMenuLabel>
-																								<DropdownMenuSeparator />
-																								{comp.domains.map((domain) => (
-																									<DropdownMenuItem
-																										key={domain.domainId}
-																										asChild
-																									>
-																										<Link
-																											className="space-x-4 text-xs cursor-pointer justify-between"
-																											target="_blank"
-																											href={`${
-																												domain.https
-																													? "https"
-																													: "http"
-																											}://${domain.host}${
-																												domain.path
-																											}`}
-																										>
-																											<span className="truncate">
-																												{domain.host}
-																											</span>
-																											<ExternalLinkIcon className="size-4 shrink-0" />
-																										</Link>
-																									</DropdownMenuItem>
-																								))}
-																							</DropdownMenuGroup>
-																						</div>
-																					)),
-																				)}
-																			</DropdownMenuGroup>
-																		)}
-																	</DropdownMenuContent>
-																</DropdownMenu>
-															) : null}
+															<ProjectQuickLinks
+																projectId={project.projectId}
+																hasDeployableServices={haveDeployableServices}
+															/>
 															<CardHeader>
-																<CardTitle className="flex items-center justify-between gap-2">
-																	<span className="flex flex-col gap-1.5">
+																<CardTitle className="flex items-center justify-between gap-2 overflow-clip">
+																	<span className="flex flex-col gap-1.5 ">
 																		<div className="flex items-center gap-2">
 																			<BookIcon className="size-4 text-muted-foreground" />
 																			<span className="text-base font-medium leading-none">
@@ -394,9 +329,20 @@ export const ShowProjects = () => {
 																			</span>
 																		</div>
 
-																		<span className="text-sm font-medium text-muted-foreground">
+																		<span className="text-sm font-medium text-muted-foreground break-normal">
 																			{project.description}
 																		</span>
+
+																		{hasNoEnvironments && (
+																			<div className="flex flex-row gap-2 items-center rounded-lg bg-yellow-50 p-2 mt-2 dark:bg-yellow-950">
+																				<AlertTriangle className="size-4 text-yellow-600 dark:text-yellow-400 shrink-0" />
+																				<span className="text-xs text-yellow-600 dark:text-yellow-400">
+																					{t(
+																						"project.noAvailableEnvironments",
+																					)}
+																				</span>
+																			</div>
+																		)}
 																	</span>
 																	<div className="flex self-start space-x-1">
 																		<DropdownMenu>
@@ -434,8 +380,7 @@ export const ShowProjects = () => {
 																				<div
 																					onClick={(e) => e.stopPropagation()}
 																				>
-																					{(auth?.role === "owner" ||
-																						auth?.canDeleteProjects) && (
+																					{permissions?.project.delete && (
 																						<AlertDialog>
 																							<AlertDialogTrigger className="w-full">
 																								<DropdownMenuItem

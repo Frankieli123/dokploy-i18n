@@ -1,14 +1,23 @@
 import type { IncomingMessage } from "node:http";
+import { apiKey } from "@better-auth/api-key";
+import { sso } from "@better-auth/sso";
 import * as bcrypt from "bcrypt";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
-import { admin, apiKey, organization, twoFactor } from "better-auth/plugins";
+import { admin, organization, twoFactor } from "better-auth/plugins";
 import { and, desc, eq } from "drizzle-orm";
-import { IS_CLOUD } from "../constants";
+import { BETTER_AUTH_SECRET, IS_CLOUD } from "../constants";
 import { db } from "../db";
 import * as schema from "../db/schema";
-import { getUserByToken } from "../services/admin";
+import {
+	findAdmin,
+	getTrustedOrigins,
+	getTrustedProviders,
+	getUserByToken,
+} from "../services/admin";
+import { createAuditLog } from "../services/proprietary/audit-log";
+import { getWebServerSettings, updateWebServerSettings } from "../services/web-server-settings";
 import { updateUser } from "../services/user";
 import { buildPanelTrustedOrigins } from "../utils/panel-domains";
 import {
@@ -19,6 +28,7 @@ import {
 import { getHubSpotUTK, submitToHubSpot } from "../utils/tracking/hubspot";
 import { sendEmail } from "../verification/send-verification-email";
 import { getPublicIpWithFallback } from "../wss/utils";
+import { ac, adminRole, memberRole, ownerRole } from "./access-control";
 
 export {
 	getInvitationEmailContent,
@@ -31,6 +41,23 @@ const { handler, api } = betterAuth({
 		provider: "pg",
 		schema: schema,
 	}),
+	secret: BETTER_AUTH_SECRET,
+	disabledPaths: [
+		"/sso/register",
+		"/organization/create",
+		"/organization/update",
+		"/organization/delete",
+	],
+	account: {
+		accountLinking: {
+			enabled: true,
+			async trustedProviders() {
+				const fromDb = await getTrustedProviders();
+				return ["github", "google", ...fromDb];
+			},
+			allowDifferentEmails: true,
+		},
+	},
 	appName: "Dokploy",
 	socialProviders: {
 		github: {
@@ -47,22 +74,36 @@ const { handler, api } = betterAuth({
 	},
 	...(!IS_CLOUD && {
 		async trustedOrigins() {
-			const admin = await db.query.member.findFirst({
-				where: eq(schema.member.role, "owner"),
-				with: {
-					user: true,
-				},
-			});
+			const [trustedOrigins, settings] = await Promise.all([
+				getTrustedOrigins(),
+				getWebServerSettings().catch(() => null),
+			]);
 
+			if (settings && (settings.serverIp || settings.host || settings.additionalHosts?.length)) {
+				return Array.from(new Set([
+					...buildPanelTrustedOrigins({
+					serverIp: settings.serverIp,
+					host: settings.host,
+					additionalHosts: settings.additionalHosts,
+					https: settings.https,
+					}),
+					...trustedOrigins,
+				]));
+			}
+
+			const admin = await findAdmin().catch(() => null);
 			if (admin) {
-				return buildPanelTrustedOrigins({
+				return Array.from(new Set([
+					...buildPanelTrustedOrigins({
 					serverIp: admin.user.serverIp,
 					host: admin.user.host,
 					additionalHosts: admin.user.additionalHosts,
 					https: admin.user.https,
-				});
+					}),
+					...trustedOrigins,
+				]));
 			}
-			return [];
+			return trustedOrigins;
 		},
 	}),
 	emailVerification: {
@@ -121,6 +162,10 @@ const { handler, api } = betterAuth({
 								});
 							}
 						} else {
+							const isSSORequest = (context as { path?: string } | undefined)?.path?.includes("/sso");
+							if (isSSORequest) {
+								return;
+							}
 							const isAdminPresent = await db.query.member.findFirst({
 								where: eq(schema.member.role, "owner"),
 							});
@@ -133,13 +178,18 @@ const { handler, api } = betterAuth({
 					}
 				},
 				after: async (user, context) => {
+					const isSSORequest = (context as { path?: string; params?: { providerId?: string } } | undefined)?.path?.includes("/sso");
 					const isAdminPresent = await db.query.member.findFirst({
 						where: eq(schema.member.role, "owner"),
 					});
 
 					if (!IS_CLOUD) {
+						const publicIp = await getPublicIpWithFallback();
 						await updateUser(user.id, {
-							serverIp: await getPublicIpWithFallback(),
+							serverIp: publicIp,
+						});
+						await updateWebServerSettings({
+							serverIp: publicIp,
 						});
 					}
 
@@ -184,6 +234,31 @@ const { handler, api } = betterAuth({
 								isDefault: true, // Mark first organization as default
 							});
 						});
+					} else if (isSSORequest) {
+						const providerId = (context as { params?: { providerId?: string } } | undefined)?.params?.providerId;
+						if (!providerId) {
+							throw new APIError("BAD_REQUEST", {
+								message: "Provider ID is required",
+							});
+						}
+
+						const provider = await db.query.ssoProvider.findFirst({
+							where: eq(schema.ssoProvider.providerId, providerId),
+						});
+
+						if (!provider?.organizationId) {
+							throw new APIError("BAD_REQUEST", {
+								message: "Provider not found",
+							});
+						}
+
+						await db.insert(schema.member).values({
+							userId: user.id,
+							organizationId: provider.organizationId,
+							role: "member",
+							createdAt: new Date(),
+							isDefault: true,
+						});
 					}
 				},
 			},
@@ -210,6 +285,60 @@ const { handler, api } = betterAuth({
 							activeOrganizationId: member?.organization.id,
 						},
 					};
+				},
+				after: async (
+					session: { userId: string; activeOrganizationId?: string },
+				) => {
+					const orgId = session.activeOrganizationId;
+					if (!orgId) return;
+
+					const memberRecord = await db.query.member.findFirst({
+						where: and(
+							eq(schema.member.userId, session.userId),
+							eq(schema.member.organizationId, orgId),
+						),
+						with: {
+							user: true,
+						},
+					});
+
+					if (!memberRecord) return;
+
+					await createAuditLog({
+						organizationId: orgId,
+						userId: session.userId,
+						userEmail: memberRecord.user.email,
+						userRole: memberRecord.role,
+						action: "login",
+						resourceType: "session",
+					});
+				},
+			},
+			delete: {
+				after: async (session: { userId: string; activeOrganizationId?: string }) => {
+					const orgId = session.activeOrganizationId;
+					if (!orgId) return;
+
+					const memberRecord = await db.query.member.findFirst({
+						where: and(
+							eq(schema.member.userId, session.userId),
+							eq(schema.member.organizationId, orgId),
+						),
+						with: {
+							user: true,
+						},
+					});
+
+					if (!memberRecord) return;
+
+					await createAuditLog({
+						organizationId: orgId,
+						userId: session.userId,
+						userEmail: memberRecord.user.email,
+						userRole: memberRecord.role,
+						action: "logout",
+						resourceType: "session",
+					});
 				},
 			},
 		},
@@ -241,9 +370,21 @@ const { handler, api } = betterAuth({
 	plugins: [
 		apiKey({
 			enableMetadata: true,
+			references: "user",
 		}),
+		sso(),
 		twoFactor(),
 		organization({
+			ac,
+			roles: {
+				owner: ownerRole,
+				admin: adminRole,
+				member: memberRole,
+			},
+			dynamicAccessControl: {
+				enabled: true,
+				maximumRolesPerOrganization: 10,
+			},
 			async sendInvitationEmail(data, _request) {
 				if (IS_CLOUD) {
 					const host =
@@ -277,6 +418,8 @@ const { handler, api } = betterAuth({
 export const auth = {
 	handler,
 	createApiKey: api.createApiKey,
+	registerSSOProvider: api.registerSSOProvider,
+	updateSSOProvider: api.updateSSOProvider,
 };
 
 export const validateRequest = async (request: IncomingMessage) => {

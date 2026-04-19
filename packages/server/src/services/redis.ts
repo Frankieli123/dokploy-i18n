@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateRedis,
 	buildAppName,
@@ -15,7 +16,7 @@ import { validUniqueServerAppName } from "./project";
 export type Redis = typeof redis.$inferSelect;
 
 // https://github.com/drizzle-team/drizzle-orm/discussions/1483#discussioncomment-7523881
-export const createRedis = async (input: typeof apiCreateRedis._type) => {
+export const createRedis = async (input: z.infer<typeof apiCreateRedis>) => {
 	const appName = buildAppName("redis", input.appName);
 
 	const valid = await validUniqueServerAppName(appName);

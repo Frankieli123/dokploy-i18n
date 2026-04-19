@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { FileTerminal } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useMemo, useState } from "react";
@@ -53,7 +53,7 @@ export const EditScript = ({ serverId }: Props) => {
 		},
 	);
 
-	const { mutateAsync, isLoading } = api.server.update.useMutation();
+	const { mutateAsync, isPending } = api.server.update.useMutation();
 
 	const { data: defaultCommand } = api.server.getDefaultCommand.useQuery(
 		{
@@ -68,7 +68,7 @@ export const EditScript = ({ serverId }: Props) => {
 		defaultValues: {
 			command: "",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	useEffect(() => {
@@ -159,7 +159,7 @@ echo "Hello world"
 						{t("settings.servers.script.button.reset")}
 					</Button>
 					<Button
-						isLoading={isLoading}
+						isPending={isPending}
 						form="hook-form-delete-application"
 						type="submit"
 					>
@@ -170,3 +170,4 @@ echo "Hello world"
 		</Dialog>
 	);
 };
+

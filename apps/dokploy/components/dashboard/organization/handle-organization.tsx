@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBoxIcon, Plus } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -25,7 +25,6 @@ import {
 	FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { authClient } from "@/lib/auth-client";
 import { api } from "@/utils/api";
 
 const organizationSchema = (t: (key: string) => string) =>
@@ -36,7 +35,10 @@ const organizationSchema = (t: (key: string) => string) =>
 		logo: z.string().optional(),
 	});
 
-type OrganizationFormValues = z.infer<ReturnType<typeof organizationSchema>>;
+type OrganizationFormValues = {
+	name: string;
+	logo?: string;
+};
 
 interface Props {
 	organizationId?: string;
@@ -55,14 +57,18 @@ export function AddOrganization({ organizationId }: Props) {
 			enabled: !!organizationId,
 		},
 	);
-	const { mutateAsync, isLoading } = organizationId
-		? api.organization.update.useMutation()
-		: api.organization.create.useMutation();
-	const { refetch: refetchActiveOrganization } =
-		authClient.useActiveOrganization();
+	const updateOrganization = api.organization.update.useMutation();
+	const createOrganization = api.organization.create.useMutation();
+	const mutateAsync = organizationId
+		? updateOrganization.mutateAsync
+		: createOrganization.mutateAsync;
+	const isPending = organizationId
+		? updateOrganization.isPending
+		: createOrganization.isPending;
+	const schema = organizationSchema(t);
 
 	const form = useForm<OrganizationFormValues>({
-		resolver: zodResolver(organizationSchema(t)),
+		resolver: zodResolver(schema as any) as any,
 		defaultValues: {
 			name: "",
 			logo: "",
@@ -94,7 +100,7 @@ export function AddOrganization({ organizationId }: Props) {
 				utils.organization.all.invalidate();
 				if (organizationId) {
 					utils.organization.one.invalidate({ organizationId });
-					refetchActiveOrganization();
+					utils.organization.active.invalidate();
 				}
 				setOpen(false);
 			})
@@ -190,7 +196,7 @@ export function AddOrganization({ organizationId }: Props) {
 							)}
 						/>
 						<DialogFooter>
-							<Button type="submit" isLoading={isLoading}>
+							<Button type="submit" isPending={isPending}>
 								{organizationId ? t("button.update") : t("button.create")}
 							</Button>
 						</DialogFooter>
@@ -200,3 +206,4 @@ export function AddOrganization({ organizationId }: Props) {
 		</Dialog>
 	);
 }
+

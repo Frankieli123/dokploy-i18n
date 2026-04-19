@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { FileIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -43,7 +43,7 @@ export const ProjectEnvironment = ({ projectId, children }: Props) => {
 	const [isOpen, setIsOpen] = useState(false);
 	const utils = api.useUtils();
 	const { t } = useTranslation("common");
-	const { mutateAsync, error, isError, isLoading } =
+	const { mutateAsync, error, isError, isPending } =
 		api.project.update.useMutation();
 	const { data } = api.project.one.useQuery(
 		{
@@ -58,7 +58,7 @@ export const ProjectEnvironment = ({ projectId, children }: Props) => {
 		defaultValues: {
 			env: data?.env ?? "",
 		},
-		resolver: zodResolver(updateProjectSchema),
+		resolver: zodResolver(updateProjectSchema as any) as any,
 	});
 	useEffect(() => {
 		if (data) {
@@ -86,7 +86,7 @@ export const ProjectEnvironment = ({ projectId, children }: Props) => {
 	// Add keyboard shortcut for Ctrl+S/Cmd+S
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
-			if ((e.ctrlKey || e.metaKey) && e.key === "s" && !isLoading && isOpen) {
+			if ((e.ctrlKey || e.metaKey) && e.key === "s" && !isPending && isOpen) {
 				e.preventDefault();
 				form.handleSubmit(onSubmit)();
 			}
@@ -96,7 +96,7 @@ export const ProjectEnvironment = ({ projectId, children }: Props) => {
 		return () => {
 			document.removeEventListener("keydown", handleKeyDown);
 		};
-	}, [form, onSubmit, isLoading, isOpen]);
+	}, [form, onSubmit, isPending, isOpen]);
 
 	return (
 		<Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -151,7 +151,7 @@ export const ProjectEnvironment = ({ projectId, children }: Props) => {
 									)}
 								/>
 								<DialogFooter>
-									<Button isLoading={isLoading} type="submit">
+									<Button isPending={isPending} type="submit">
 										{t("button.update")}
 									</Button>
 								</DialogFooter>
@@ -163,3 +163,4 @@ export const ProjectEnvironment = ({ projectId, children }: Props) => {
 		</Dialog>
 	);
 };
+

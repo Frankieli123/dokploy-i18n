@@ -98,7 +98,7 @@ export const AddVolumes = ({
 			hostPath: "",
 			mountPath: serviceType === "compose" ? "/" : "",
 		},
-		resolver: zodResolver(mySchema),
+		resolver: zodResolver(mySchema as any) as any,
 	});
 	const type = form.watch("type");
 

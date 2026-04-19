@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { HelpCircle, Settings } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect } from "react";
@@ -240,7 +240,7 @@ export const AddSwarmSettings = ({ id, type }: Props) => {
 		mongo: () => api.mongo.update.useMutation(),
 	};
 
-	const { mutateAsync, isError, error, isLoading } = mutationMap[type]
+	const { mutateAsync, isError, error, isPending } = mutationMap[type]
 		? mutationMap[type]()
 		: api.mongo.update.useMutation();
 
@@ -257,7 +257,7 @@ export const AddSwarmSettings = ({ id, type }: Props) => {
 			stopGracePeriodSwarm: null,
 			endpointSpecSwarm: null,
 		},
-		resolver: zodResolver(addSwarmSettings),
+		resolver: zodResolver(addSwarmSettings as any) as any,
 	});
 
 	useEffect(() => {
@@ -864,10 +864,10 @@ export const AddSwarmSettings = ({ id, type }: Props) => {
 												<code>
 													<pre>
 														{`Enter duration in nanoseconds:
-														• 30000000000 - 30 seconds
-														• 120000000000 - 2 minutes  
-														• 3600000000000 - 1 hour
-														• 0 - no grace period`}
+														鈥?30000000000 - 30 seconds
+														鈥?120000000000 - 2 minutes  
+														鈥?3600000000000 - 1 hour
+														鈥?0 - no grace period`}
 													</pre>
 												</code>
 											</TooltipContent>
@@ -959,7 +959,7 @@ export const AddSwarmSettings = ({ id, type }: Props) => {
 						/>
 						<DialogFooter className="flex w-full flex-row justify-end md:col-span-2 m-0 sticky bottom-0 right-0 bg-muted border">
 							<Button
-								isLoading={isLoading}
+								isPending={isPending}
 								form="hook-form-add-permissions"
 								type="submit"
 							>
@@ -972,3 +972,4 @@ export const AddSwarmSettings = ({ id, type }: Props) => {
 		</Dialog>
 	);
 };
+

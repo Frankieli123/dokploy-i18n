@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateMariaDB,
 	backups,
@@ -15,7 +16,7 @@ import { validUniqueServerAppName } from "./project";
 
 export type Mariadb = typeof mariadb.$inferSelect;
 
-export const createMariadb = async (input: typeof apiCreateMariaDB._type) => {
+export const createMariadb = async (input: z.infer<typeof apiCreateMariaDB>) => {
 	const appName = buildAppName("mariadb", input.appName);
 
 	const valid = await validUniqueServerAppName(input.appName);

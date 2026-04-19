@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { DatabaseZap, Dices, RefreshCw } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -172,11 +172,11 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 					},
 				);
 
-	const { mutateAsync, isError, error, isLoading } = domainId
+	const { mutateAsync, isError, error, isPending } = domainId
 		? api.domain.update.useMutation()
 		: api.domain.create.useMutation();
 
-	const { mutateAsync: generateDomain, isLoading: isLoadingGenerate } =
+	const { mutateAsync: generateDomain, isPending: isPendingGenerate } =
 		api.domain.generateDomain.useMutation();
 
 	const { data: traefikMeServerIp } =
@@ -186,7 +186,7 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 
 	const {
 		data: services,
-		isFetching: isLoadingServices,
+		isFetching: isPendingServices,
 		error: errorServices,
 		refetch: refetchServices,
 	} = api.compose.loadServices.useQuery(
@@ -202,7 +202,7 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 	);
 
 	const form = useForm<Domain>({
-		resolver: zodResolver(domainSchema),
+		resolver: zodResolver(domainSchema as any) as any,
 		defaultValues: {
 			host: "",
 			path: undefined,
@@ -251,7 +251,7 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 				domainType: type,
 			});
 		}
-	}, [form, data, isLoading, domainId]);
+	}, [form, data, isPending, domainId]);
 
 	// Separate effect for handling custom cert resolver validation
 	useEffect(() => {
@@ -366,7 +366,7 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 																	<Button
 																		type="button"
 																		variant="secondary"
-																		isLoading={isLoadingGenerate}
+																		isPending={isPendingGenerate}
 																		onClick={() => {
 																			generateDomain({
 																				appName:
@@ -653,7 +653,7 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 												variant="outline"
 												size="icon"
 												onClick={() => refetchServices()}
-												isLoading={isLoadingServices}
+												isPending={isPendingServices}
 											>
 												<RefreshCw className="size-4" />
 											</Button>
@@ -722,7 +722,7 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 															</SelectTrigger>
 														</FormControl>
 														<SelectContent>
-															{isLoadingServices ? (
+															{isPendingServices ? (
 																<SelectItem value="__loading__" disabled>
 																	{t("application.domains.loading")}
 																</SelectItem>
@@ -752,7 +752,7 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 					</form>
 
 					<DialogFooter>
-						<Button isLoading={isLoading} form="hook-form" type="submit">
+						<Button isPending={isPending} form="hook-form" type="submit">
 							{dictionary.submit}
 						</Button>
 					</DialogFooter>
@@ -761,3 +761,4 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 		</Dialog>
 	);
 };
+

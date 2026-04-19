@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { CheckIcon, ChevronsUpDown, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { useTranslation } from "next-i18next";
@@ -85,7 +85,7 @@ export const SaveGiteaProviderCompose = ({ composeId }: Props) => {
 	const { t } = useTranslation("common");
 	const { data: giteaProviders } = api.gitea.giteaProviders.useQuery();
 	const { data, refetch } = api.compose.one.useQuery({ composeId });
-	const { mutateAsync, isLoading: isSavingGiteaProvider } =
+	const { mutateAsync, isPending: isSavingGiteaProvider } =
 		api.compose.update.useMutation();
 	const watchPathInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -102,7 +102,7 @@ export const SaveGiteaProviderCompose = ({ composeId }: Props) => {
 			watchPaths: [],
 			enableSubmodules: false,
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	const repository = form.watch("repository");
@@ -117,9 +117,9 @@ export const SaveGiteaProviderCompose = ({ composeId }: Props) => {
 
 	const {
 		data: repositories,
-		isLoading: isLoadingRepositories,
+		isPending: isPendingRepositories,
 		error,
-	} = api.gitea.getGiteaRepositories.useQuery<Repository[]>(
+	} = api.gitea.getGiteaRepositories.useQuery(
 		{
 			giteaId,
 		},
@@ -127,6 +127,7 @@ export const SaveGiteaProviderCompose = ({ composeId }: Props) => {
 			enabled: !!giteaId,
 		},
 	);
+	const typedRepositories = repositories as Repository[] | undefined;
 
 	const {
 		data: branches,
@@ -269,7 +270,7 @@ export const SaveGiteaProviderCompose = ({ composeId }: Props) => {
 														!field.value && "text-muted-foreground",
 													)}
 												>
-													{isLoadingRepositories
+													{isPendingRepositories
 														? t(
 																"application.git.gitea.state.loadingRepositories",
 															)
@@ -292,7 +293,7 @@ export const SaveGiteaProviderCompose = ({ composeId }: Props) => {
 													)}
 													className="h-9"
 												/>
-												{isLoadingRepositories && (
+												{isPendingRepositories && (
 													<span className="py-6 text-center text-sm">
 														{t(
 															"application.git.gitea.state.loadingRepositories",
@@ -304,7 +305,7 @@ export const SaveGiteaProviderCompose = ({ composeId }: Props) => {
 												</CommandEmpty>
 												<ScrollArea className="h-96">
 													<CommandGroup>
-														{repositories?.map((repo) => (
+							{typedRepositories?.map((repo) => (
 															<CommandItem
 																key={repo.url}
 																value={repo.name}
@@ -364,7 +365,7 @@ export const SaveGiteaProviderCompose = ({ composeId }: Props) => {
 														!field.value && "text-muted-foreground",
 													)}
 												>
-													{status === "loading" && fetchStatus === "fetching"
+													{status === "pending" && fetchStatus === "fetching"
 														? t("application.git.gitea.state.loadingBranches")
 														: field.value
 															? branches?.find(
@@ -555,7 +556,7 @@ export const SaveGiteaProviderCompose = ({ composeId }: Props) => {
 					</div>
 
 					<div className="flex justify-end">
-						<Button type="submit" isLoading={isSavingGiteaProvider}>
+						<Button type="submit" isPending={isSavingGiteaProvider}>
 							{t("button.save")}
 						</Button>
 					</div>
@@ -564,3 +565,4 @@ export const SaveGiteaProviderCompose = ({ composeId }: Props) => {
 		</div>
 	);
 };
+

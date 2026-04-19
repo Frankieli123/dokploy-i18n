@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { paths } from "@dokploy/server/constants";
+import type { z } from "zod";
 import type {
 	apiBitbucketTestConnection,
 	apiFindBitbucketBranches,
@@ -85,6 +86,7 @@ interface CloneBitbucketRepository {
 	enableSubmodules: boolean;
 	serverId: string | null;
 	type?: "application" | "compose";
+	outputPathOverride?: string | null;
 }
 
 export const cloneBitbucketRepository = async ({
@@ -100,6 +102,7 @@ export const cloneBitbucketRepository = async ({
 		bitbucketId,
 		enableSubmodules,
 		serverId,
+		outputPathOverride,
 	} = entity;
 	const { COMPOSE_PATH, APPLICATIONS_PATH } = paths(!!serverId);
 
@@ -114,7 +117,7 @@ export const cloneBitbucketRepository = async ({
 		return command;
 	}
 	const basePath = type === "compose" ? COMPOSE_PATH : APPLICATIONS_PATH;
-	const outputPath = join(basePath, appName, "code");
+	const outputPath = outputPathOverride || join(basePath, appName, "code");
 	command += `rm -rf ${outputPath};`;
 	command += `mkdir -p ${outputPath};`;
 	const repoclone = `bitbucket.org/${bitbucketOwner}/${bitbucketRepository}.git`;
@@ -173,7 +176,7 @@ export const getBitbucketRepositories = async (bitbucketId?: string) => {
 };
 
 export const getBitbucketBranches = async (
-	input: typeof apiFindBitbucketBranches._type,
+	input: z.infer<typeof apiFindBitbucketBranches>,
 ) => {
 	if (!input.bitbucketId) {
 		return [];
@@ -228,7 +231,7 @@ export const getBitbucketBranches = async (
 };
 
 export const testBitbucketConnection = async (
-	input: typeof apiBitbucketTestConnection._type,
+	input: z.infer<typeof apiBitbucketTestConnection>,
 ) => {
 	const bitbucketProvider = await findBitbucketById(input.bitbucketId);
 

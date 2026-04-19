@@ -1,4 +1,4 @@
-import { Split, Trash2 } from "lucide-react";
+﻿import { Split, Trash2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
 import { DialogAction } from "@/components/shared/dialog-action";
@@ -26,7 +26,7 @@ export const ShowRedirects = ({ applicationId }: Props) => {
 		{ enabled: !!applicationId },
 	);
 
-	const { mutateAsync: deleteRedirect, isLoading: isRemoving } =
+	const { mutateAsync: deleteRedirect, isPending: isRemoving } =
 		api.redirects.delete.useMutation();
 
 	const utils = api.useUtils();
@@ -120,7 +120,7 @@ export const ShowRedirects = ({ applicationId }: Props) => {
 													variant="ghost"
 													size="icon"
 													className="group hover:bg-red-500/10"
-													isLoading={isRemoving}
+													isPending={isRemoving}
 												>
 													<Trash2 className="size-4 text-primary group-hover:text-red-500" />
 												</Button>
@@ -136,3 +136,4 @@ export const ShowRedirects = ({ applicationId }: Props) => {
 		</Card>
 	);
 };
+

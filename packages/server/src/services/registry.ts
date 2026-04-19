@@ -1,5 +1,6 @@
 import { db } from "@dokploy/server/db";
 import { type apiCreateRegistry, registry } from "@dokploy/server/db/schema";
+import type { z } from "zod";
 import {
 	execAsync,
 	execAsyncRemote,
@@ -15,7 +16,7 @@ function shEscape(s: string | undefined): string {
 	return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-function safeDockerLoginCommand(
+export function safeDockerLoginCommand(
 	registry: string | undefined,
 	user: string | undefined,
 	pass: string | undefined,
@@ -27,7 +28,7 @@ function safeDockerLoginCommand(
 }
 
 export const createRegistry = async (
-	input: typeof apiCreateRegistry._type,
+	input: z.infer<typeof apiCreateRegistry>,
 	organizationId: string,
 ) => {
 	return await db.transaction(async (tx) => {

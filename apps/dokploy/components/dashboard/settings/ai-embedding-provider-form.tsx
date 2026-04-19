@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -140,17 +140,17 @@ export const AiEmbeddingProviderForm = () => {
 	const {
 		data: embeddingProvider,
 		refetch: refetchEmbeddingProvider,
-		isLoading: isLoadingEmbeddingProvider,
+		isPending: isPendingEmbeddingProvider,
 	} = api.ai.embeddingProvider.get.useQuery();
-	const { mutateAsync: upsertEmbeddingProvider, isLoading: isSaving } =
+	const { mutateAsync: upsertEmbeddingProvider, isPending: isSaving } =
 		api.ai.embeddingProvider.upsert.useMutation();
-	const { mutateAsync: deleteEmbeddingProvider, isLoading: isDeleting } =
+	const { mutateAsync: deleteEmbeddingProvider, isPending: isDeleting } =
 		api.ai.embeddingProvider.delete.useMutation();
 
 	const {
 		data: testResult,
 		refetch: refetchTest,
-		isLoading: isTesting,
+		isPending: isTesting,
 		isRefetching: isRetesting,
 	} = api.ai.embeddingProvider.test.useQuery(undefined, {
 		enabled: !!embeddingProvider,
@@ -168,7 +168,7 @@ export const AiEmbeddingProviderForm = () => {
 	const schema = createEmbeddingSchema(t);
 
 	const form = useForm<Schema>({
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 		defaultValues: {
 			providerType: "openai_compatible",
 			apiUrl: "https://api.openai.com/v1",
@@ -217,7 +217,11 @@ export const AiEmbeddingProviderForm = () => {
 	const providerType = form.watch("providerType");
 	const isOllama = providerType === "ollama";
 
-	const { data: models, isLoading: isLoadingServerModels } =
+	const {
+		data: models,
+		isLoading: isPendingServerModels,
+		error: fetchModelsError,
+	} =
 		api.ai.getModels.useQuery(
 			{
 				apiUrl: apiUrl ?? "",
@@ -226,13 +230,16 @@ export const AiEmbeddingProviderForm = () => {
 			},
 			{
 				enabled: !!apiUrl && (isOllama || !!apiKey),
-				onError: (error) => {
-					setError(
-						t("settings.ai.models.fetchError", { error: error.message }),
-					);
-				},
 			},
 		);
+
+	useEffect(() => {
+		if (fetchModelsError) {
+			setError(
+				t("settings.ai.models.fetchError", { error: fetchModelsError.message }),
+			);
+		}
+	}, [fetchModelsError, t]);
 
 	const currentVectorCount = diagnostics?.embeddedPlaybooks ?? 0;
 	const totalPlaybookCount = diagnostics?.totalPlaybooks ?? 0;
@@ -263,7 +270,7 @@ export const AiEmbeddingProviderForm = () => {
 		}
 	};
 
-	if (isLoadingEmbeddingProvider) {
+	if (isPendingEmbeddingProvider) {
 		return (
 			<div className="flex items-center justify-between bg-sidebar p-1 w-full rounded-lg">
 				<div className="flex items-center justify-between p-3.5 rounded-lg bg-background border w-full">
@@ -419,7 +426,7 @@ export const AiEmbeddingProviderForm = () => {
 								variant="ghost"
 								size="icon"
 								className="group hover:bg-red-500/10 "
-								isLoading={isDeleting}
+								isPending={isDeleting}
 							>
 								<Trash2 className="size-4 text-primary group-hover:text-red-500" />
 							</Button>
@@ -625,13 +632,13 @@ export const AiEmbeddingProviderForm = () => {
 										/>
 									)}
 
-									{isLoadingServerModels && (
+									{isPendingServerModels && (
 										<span className="text-sm text-muted-foreground">
 											{t("settings.ai.models.loading")}
 										</span>
 									)}
 
-									{!isLoadingServerModels && !models?.length && (
+									{!isPendingServerModels && !models?.length && (
 										<FormField
 											control={form.control}
 											name="model"
@@ -655,7 +662,7 @@ export const AiEmbeddingProviderForm = () => {
 										/>
 									)}
 
-									{!isLoadingServerModels && models && models.length > 0 && (
+									{!isPendingServerModels && models && models.length > 0 && (
 										<FormField
 											control={form.control}
 											name="model"
@@ -759,7 +766,7 @@ export const AiEmbeddingProviderForm = () => {
 									)}
 
 									<div className="flex justify-end gap-2 pt-4">
-										<Button type="submit" isLoading={isSaving}>
+										<Button type="submit" isPending={isSaving}>
 											{embeddingProvider
 												? t("settings.common.update")
 												: t("settings.common.create")}
@@ -775,3 +782,4 @@ export const AiEmbeddingProviderForm = () => {
 		</div>
 	);
 };
+

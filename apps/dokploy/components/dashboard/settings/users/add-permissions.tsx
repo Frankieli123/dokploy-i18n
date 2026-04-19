@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -29,7 +29,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { api, type RouterOutputs } from "@/utils/api";
 
-type Project = RouterOutputs["project"]["all"][number];
+type Project = RouterOutputs["project"]["allForPermissions"][number];
 type Environment = Project["environments"][number];
 
 export type Services = {
@@ -150,6 +150,7 @@ export const extractServices = (data: Environment | undefined) => {
 };
 
 const addPermissions = z.object({
+	role: z.string().optional(),
 	accessedProjects: z.array(z.string()).optional(),
 	accessedEnvironments: z.array(z.string()).optional(),
 	accessedServices: z.array(z.string()).optional(),
@@ -175,7 +176,8 @@ interface Props {
 export const AddUserPermissions = ({ userId }: Props) => {
 	const { t } = useTranslation("settings");
 	const [isOpen, setIsOpen] = useState(false);
-	const { data: projects } = api.project.all.useQuery();
+	const { data: projects } = api.project.allForPermissions.useQuery();
+	const { data: assignableRoles } = api.user.listAssignableRoles.useQuery();
 
 	const { data, refetch } = api.user.one.useQuery(
 		{
@@ -186,11 +188,12 @@ export const AddUserPermissions = ({ userId }: Props) => {
 		},
 	);
 
-	const { mutateAsync, isError, error, isLoading } =
+	const { mutateAsync, isError, error, isPending } =
 		api.user.assignPermissions.useMutation();
 
 	const form = useForm<AddPermissions>({
 		defaultValues: {
+			role: "member",
 			accessedProjects: [],
 			accessedEnvironments: [],
 			accessedServices: [],
@@ -206,12 +209,13 @@ export const AddUserPermissions = ({ userId }: Props) => {
 			canAccessToGitProviders: false,
 			canCreateEnvironments: false,
 		},
-		resolver: zodResolver(addPermissions),
+		resolver: zodResolver(addPermissions as any) as any,
 	});
 
 	useEffect(() => {
 		if (data && isOpen) {
 			form.reset({
+				role: data.role || "member",
 				accessedProjects: data.accessedProjects || [],
 				accessedEnvironments: data.accessedEnvironments || [],
 				accessedServices: data.accessedServices || [],
@@ -233,6 +237,7 @@ export const AddUserPermissions = ({ userId }: Props) => {
 	const onSubmit = async (data: AddPermissions) => {
 		await mutateAsync({
 			id: userId,
+			role: data.role,
 			canCreateServices: data.canCreateServices,
 			canCreateProjects: data.canCreateProjects,
 			canDeleteServices: data.canDeleteServices,
@@ -285,6 +290,34 @@ export const AddUserPermissions = ({ userId }: Props) => {
 						className="grid  grid-cols-1 md:grid-cols-2  w-full gap-4"
 					>
 						<FormField
+							control={form.control}
+							name="role"
+							render={({ field }) => (
+								<FormItem className="md:col-span-2 rounded-lg border p-3 shadow-sm">
+									<FormLabel>
+										{t("settings.users.permissions.role.label")}
+									</FormLabel>
+									<FormDescription>
+										{t("settings.users.permissions.role.description")}
+									</FormDescription>
+									<select
+										className="mt-2 w-full rounded-md border bg-background px-3 py-2 text-sm"
+										value={field.value ?? "member"}
+										onChange={(event) => field.onChange(event.target.value)}
+									>
+										{(assignableRoles ?? ["admin", "member"]).map((role) => (
+											<option key={role} value={role}>
+												{role}
+											</option>
+										))}
+									</select>
+									<FormMessage />
+								</FormItem>
+							)}
+						/>
+						{form.watch("role") === "member" ? (
+							<>
+								<FormField
 							control={form.control}
 							name="canCreateProjects"
 							render={({ field }) => (
@@ -893,9 +926,17 @@ export const AddUserPermissions = ({ userId }: Props) => {
 								</FormItem>
 							)}
 						/>
+							</>
+						) : (
+							<div className="md:col-span-2">
+								<AlertBlock type="info">
+									{t("settings.users.permissions.role.customNote")}
+								</AlertBlock>
+							</div>
+						)}
 						<DialogFooter className="flex w-full flex-row justify-end md:col-span-2">
 							<Button
-								isLoading={isLoading}
+								isPending={isPending}
 								form="hook-form-add-permissions"
 								type="submit"
 							>
@@ -908,3 +949,4 @@ export const AddUserPermissions = ({ userId }: Props) => {
 		</Dialog>
 	);
 };
+

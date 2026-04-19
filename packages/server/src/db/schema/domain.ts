@@ -11,7 +11,7 @@ import {
 import { createInsertSchema } from "drizzle-zod";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { domain } from "../validations/domain";
+import { domainShape } from "../validations/domain";
 import { applications } from "./application";
 import { compose } from "./compose";
 import { previewDeployments } from "./preview-deployments";
@@ -70,7 +70,7 @@ export const domainsRelations = relations(domains, ({ one }) => ({
 	}),
 }));
 
-const createSchema = createInsertSchema(domains, domain._def.schema.shape);
+const createSchema = createInsertSchema(domains, domainShape);
 
 export const apiCreateDomain = createSchema.pick({
 	host: true,

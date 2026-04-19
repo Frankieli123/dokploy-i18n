@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { HelpCircle, PlusIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useMemo, useState } from "react";
@@ -72,7 +72,7 @@ export const AddCertificate = () => {
 	const utils = api.useUtils();
 
 	const { data: isCloud } = api.settings.isCloud.useQuery();
-	const { mutateAsync, isError, error, isLoading } =
+	const { mutateAsync, isError, error, isPending } =
 		api.certificates.create.useMutation();
 	const { data: servers } = api.server.withSSHKey.useQuery();
 	const hasServers = servers && servers.length > 0;
@@ -88,7 +88,7 @@ export const AddCertificate = () => {
 			privateKey: "",
 			autoRenew: false,
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 	useEffect(() => {
 		form.reset();
@@ -290,7 +290,7 @@ export const AddCertificate = () => {
 
 					<DialogFooter className="flex w-full flex-row !justify-end">
 						<Button
-							isLoading={isLoading}
+							isPending={isPending}
 							form="hook-form-add-certificate"
 							type="submit"
 						>
@@ -302,3 +302,4 @@ export const AddCertificate = () => {
 		</Dialog>
 	);
 };
+

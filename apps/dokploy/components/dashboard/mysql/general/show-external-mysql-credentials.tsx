@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -51,12 +51,12 @@ export const ShowExternalMysqlCredentials = ({ mysqlId }: Props) => {
 	const { t } = useTranslation("common");
 	const { data: ip } = api.settings.getIp.useQuery();
 	const { data, refetch } = api.mysql.one.useQuery({ mysqlId });
-	const { mutateAsync, isLoading } = api.mysql.saveExternalPort.useMutation();
+	const { mutateAsync, isPending } = api.mysql.saveExternalPort.useMutation();
 	const [connectionUrl, setConnectionUrl] = useState("");
 	const getIp = data?.server?.ipAddress || ip;
 	const form = useForm<DockerProvider>({
 		defaultValues: {},
-		resolver: zodResolver(createDockerProviderSchema(t)),
+		resolver: zodResolver(createDockerProviderSchema(t) as any) as any,
 	});
 
 	useEffect(() => {
@@ -171,7 +171,7 @@ export const ShowExternalMysqlCredentials = ({ mysqlId }: Props) => {
 								)}
 
 								<div className="flex justify-end">
-									<Button type="submit" isLoading={isLoading}>
+									<Button type="submit" isPending={isPending}>
 										{t("button.save")}
 									</Button>
 								</div>
@@ -183,3 +183,4 @@ export const ShowExternalMysqlCredentials = ({ mysqlId }: Props) => {
 		</>
 	);
 };
+

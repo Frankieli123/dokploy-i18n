@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBoxIcon, PlusIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -58,7 +58,7 @@ export const HandleSecurity = ({
 		},
 	);
 
-	const { mutateAsync, isLoading, error, isError } = securityId
+	const { mutateAsync, isPending, error, isError } = securityId
 		? api.security.update.useMutation()
 		: api.security.create.useMutation();
 
@@ -68,7 +68,7 @@ export const HandleSecurity = ({
 			username: "",
 			password: "",
 		},
-		resolver: zodResolver(AddSecuritychema),
+		resolver: zodResolver(AddSecuritychema as any) as any,
 	});
 
 	useEffect(() => {
@@ -180,7 +180,7 @@ export const HandleSecurity = ({
 
 					<DialogFooter>
 						<Button
-							isLoading={isLoading}
+							isPending={isPending}
 							form="hook-form-add-security"
 							type="submit"
 						>
@@ -194,3 +194,4 @@ export const HandleSecurity = ({
 		</Dialog>
 	);
 };
+

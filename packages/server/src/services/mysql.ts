@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateMySql,
 	backups,
@@ -15,7 +16,7 @@ import { validUniqueServerAppName } from "./project";
 
 export type MySql = typeof mysql.$inferSelect;
 
-export const createMysql = async (input: typeof apiCreateMySql._type) => {
+export const createMysql = async (input: z.infer<typeof apiCreateMySql>) => {
 	const appName = buildAppName("mysql", input.appName);
 
 	const valid = await validUniqueServerAppName(appName);

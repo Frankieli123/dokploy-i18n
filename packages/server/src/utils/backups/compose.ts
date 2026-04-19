@@ -8,19 +8,30 @@ import { findEnvironmentById } from "@dokploy/server/services/environment";
 import { findProjectById } from "@dokploy/server/services/project";
 import { sendDatabaseBackupNotifications } from "../notifications/database-backup";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
-import { getBackupCommand, getS3Credentials, normalizeS3Path } from "./utils";
+import {
+	buildS3ObjectPath,
+	getBackupCommand,
+	getS3Credentials,
+} from "./utils";
 
 export const runComposeBackup = async (
 	compose: Compose,
 	backup: BackupSchedule,
 ) => {
-	const { environmentId, name } = compose;
+	const { environmentId, name, appName } = compose;
 	const environment = await findEnvironmentById(environmentId);
 	const project = await findProjectById(environment.projectId);
-	const { prefix, databaseType } = backup;
+	const { prefix, databaseType, serviceName } = backup;
 	const destination = backup.destination;
 	const backupFileName = `${new Date().toISOString()}.sql.gz`;
-	const bucketDestination = `${normalizeS3Path(prefix)}${backupFileName}`;
+	const composeServiceAppName = serviceName
+		? `${appName}_${serviceName}`
+		: appName;
+	const bucketDestination = buildS3ObjectPath(
+		backupFileName,
+		composeServiceAppName,
+		prefix,
+	);
 	const deployment = await createDeploymentBackup({
 		backupId: backup.backupId,
 		title: "Compose Backup",

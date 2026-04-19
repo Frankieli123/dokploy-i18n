@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { TrashIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect } from "react";
@@ -26,12 +26,12 @@ export const SaveDragNDrop = ({ applicationId }: Props) => {
 	const { t } = useTranslation("common");
 	const { data, refetch } = api.application.one.useQuery({ applicationId });
 
-	const { mutateAsync, isLoading } =
+	const { mutateAsync, isPending } =
 		api.application.dropDeployment.useMutation();
 
 	const form = useForm<UploadFile>({
 		defaultValues: {},
-		resolver: zodResolver(uploadFileSchema),
+		resolver: zodResolver(uploadFileSchema as any) as any,
 	});
 
 	useEffect(() => {
@@ -140,8 +140,8 @@ export const SaveDragNDrop = ({ applicationId }: Props) => {
 					<Button
 						type="submit"
 						className="w-fit"
-						isLoading={isLoading}
-						disabled={!zip || isLoading}
+						isPending={isPending}
+						disabled={!zip || isPending}
 					>
 						{t("application.git.drop.form.deployButton")}
 					</Button>
@@ -150,3 +150,4 @@ export const SaveDragNDrop = ({ applicationId }: Props) => {
 		</Form>
 	);
 };
+

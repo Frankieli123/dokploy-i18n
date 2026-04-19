@@ -1,11 +1,9 @@
-import { db } from "@dokploy/server/db";
-import { notifications } from "@dokploy/server/db/schema";
 import DatabaseBackupEmail from "@dokploy/server/emails/emails/database-backup";
 import { renderAsync } from "@react-email/components";
 import { format } from "date-fns";
-import { and, eq } from "drizzle-orm";
 import { getDatabaseBackupEmailContent } from "../i18n/backend";
 import {
+	dispatchNotifications,
 	sendDiscordNotification,
 	sendEmailNotification,
 	sendGotifyNotification,
@@ -34,23 +32,10 @@ export const sendDatabaseBackupNotifications = async ({
 }) => {
 	const date = new Date();
 	const unixDate = ~~(Number(date) / 1000);
-	const notificationList = await db.query.notifications.findMany({
-		where: and(
-			eq(notifications.databaseBackup, true),
-			eq(notifications.organizationId, organizationId),
-		),
-		with: {
-			email: true,
-			discord: true,
-			telegram: true,
-			slack: true,
-			gotify: true,
-			ntfy: true,
-			lark: true,
-		},
-	});
-
-	for (const notification of notificationList) {
+	await dispatchNotifications({
+		eventFlag: "databaseBackup",
+		organizationId,
+		send: async (notification) => {
 		const { email, discord, telegram, slack, gotify, ntfy, lark } =
 			notification;
 		try {
@@ -130,7 +115,7 @@ export const sendDatabaseBackupNotifications = async ({
 							? [
 									{
 										name: decorate("`⚠️`", "Error Message"),
-										value: `\`\`\`${errorMessage}\`\`\``,
+										value: `\`\`\`${errorMessage.length > 1010 ? `${errorMessage.substring(0, 1010)}...` : errorMessage}\`\`\``,
 									},
 								]
 							: []),
@@ -366,5 +351,6 @@ export const sendDatabaseBackupNotifications = async ({
 		} catch (error) {
 			console.log(error);
 		}
-	}
+		},
+	});
 };

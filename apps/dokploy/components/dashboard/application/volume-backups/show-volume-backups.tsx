@@ -1,4 +1,4 @@
-import {
+﻿import {
 	ClipboardList,
 	DatabaseBackup,
 	Loader2,
@@ -44,7 +44,7 @@ export const ShowVolumeBackups = ({
 	const { t } = useTranslation("common");
 	const {
 		data: volumeBackups,
-		isLoading: isLoadingVolumeBackups,
+		isPending: isPendingVolumeBackups,
 		refetch: refetchVolumeBackups,
 	} = api.volumeBackups.list.useQuery(
 		{
@@ -56,7 +56,7 @@ export const ShowVolumeBackups = ({
 		},
 	);
 	const utils = api.useUtils();
-	const { mutateAsync: deleteVolumeBackup, isLoading: isDeleting } =
+	const { mutateAsync: deleteVolumeBackup, isPending: isDeleting } =
 		api.volumeBackups.delete.useMutation();
 	const { mutateAsync: runManually } =
 		api.volumeBackups.runManually.useMutation();
@@ -107,7 +107,7 @@ export const ShowVolumeBackups = ({
 				</div>
 			</CardHeader>
 			<CardContent className="px-0">
-				{isLoadingVolumeBackups ? (
+				{isPendingVolumeBackups ? (
 					<div className="flex gap-4 w-full items-center justify-center text-center mx-auto min-h-[45vh]">
 						<Loader2 className="size-4 text-muted-foreground/70 transition-colors animate-spin self-center" />
 						<span className="text-sm text-muted-foreground/70">
@@ -225,7 +225,7 @@ export const ShowVolumeBackups = ({
 												variant="ghost"
 												size="icon"
 												className="group hover:bg-red-500/10"
-												isLoading={isDeleting}
+												isPending={isDeleting}
 											>
 												<Trash2 className="size-4 text-primary group-hover:text-red-500" />
 											</Button>
@@ -254,3 +254,4 @@ export const ShowVolumeBackups = ({
 		</Card>
 	);
 };
+

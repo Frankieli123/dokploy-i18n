@@ -1,6 +1,4 @@
-import { and, eq } from "drizzle-orm";
-import { db } from "../../db";
-import { notifications } from "../../db/schema";
+import { dispatchNotifications } from "./utils";
 import {
 	sendDiscordNotification,
 	sendLarkNotification,
@@ -24,82 +22,70 @@ export const sendServerThresholdNotifications = async (
 ) => {
 	const date = new Date(payload.Timestamp);
 	const unixDate = ~~(Number(date) / 1000);
+	const typeEmoji = payload.Type === "CPU" ? "馃敳" : "馃捑";
+	const typeColor = 0xff0000;
 
-	const notificationList = await db.query.notifications.findMany({
-		where: and(
-			eq(notifications.serverThreshold, true),
-			eq(notifications.organizationId, organizationId),
-		),
-		with: {
-			email: true,
-			discord: true,
-			telegram: true,
-			slack: true,
-			lark: true,
-		},
-	});
+	await dispatchNotifications({
+		eventFlag: "serverThreshold",
+		organizationId,
+		send: async (notification) => {
+			const { discord, telegram, slack, lark } = notification;
 
-	const typeEmoji = payload.Type === "CPU" ? "🔲" : "💾";
-	const typeColor = 0xff0000; // Rojo para indicar alerta
+			if (discord) {
+				const decorate = (decoration: string, text: string) =>
+					`${discord.decoration ? decoration : ""} ${text}`.trim();
 
-	for (const notification of notificationList) {
-		const { discord, telegram, slack, lark } = notification;
+				await sendDiscordNotification(discord, {
+					title: decorate(">", `\`鈿狅笍\` Server ${payload.Type} Alert`),
+					color: typeColor,
+					fields: [
+						{
+							name: decorate("`馃彿锔廯", "Server Name"),
+							value: payload.ServerName,
+							inline: true,
+						},
+						{
+							name: decorate("`馃搮`", "Date"),
+							value: `<t:${unixDate}:D>`,
+							inline: true,
+						},
+						{
+							name: decorate("`鈱歚", "Time"),
+							value: `<t:${unixDate}:t>`,
+							inline: true,
+						},
+						{
+							name: decorate(typeEmoji, "Type"),
+							value: payload.Type,
+							inline: true,
+						},
+						{
+							name: decorate("馃搳", "Current Value"),
+							value: `${payload.Value.toFixed(2)}%`,
+							inline: true,
+						},
+						{
+							name: decorate("鈿狅笍", "Threshold"),
+							value: `${payload.Threshold.toFixed(2)}%`,
+							inline: true,
+						},
+						{
+							name: decorate("`馃摐`", "Message"),
+							value: `\`\`\`${payload.Message}\`\`\``,
+						},
+					],
+					timestamp: date.toISOString(),
+					footer: {
+						text: "Dokploy Server Monitoring Alert",
+					},
+				});
+			}
 
-		if (discord) {
-			const decorate = (decoration: string, text: string) =>
-				`${discord.decoration ? decoration : ""} ${text}`.trim();
-
-			await sendDiscordNotification(discord, {
-				title: decorate(">", `\`⚠️\` Server ${payload.Type} Alert`),
-				color: typeColor,
-				fields: [
-					{
-						name: decorate("`🏷️`", "Server Name"),
-						value: payload.ServerName,
-						inline: true,
-					},
-					{
-						name: decorate("`📅`", "Date"),
-						value: `<t:${unixDate}:D>`,
-						inline: true,
-					},
-					{
-						name: decorate("`⌚`", "Time"),
-						value: `<t:${unixDate}:t>`,
-						inline: true,
-					},
-					{
-						name: decorate(typeEmoji, "Type"),
-						value: payload.Type,
-						inline: true,
-					},
-					{
-						name: decorate("📊", "Current Value"),
-						value: `${payload.Value.toFixed(2)}%`,
-						inline: true,
-					},
-					{
-						name: decorate("⚠️", "Threshold"),
-						value: `${payload.Threshold.toFixed(2)}%`,
-						inline: true,
-					},
-					{
-						name: decorate("`📜`", "Message"),
-						value: `\`\`\`${payload.Message}\`\`\``,
-					},
-				],
-				timestamp: date.toISOString(),
-				footer: {
-					text: "Dokploy Server Monitoring Alert",
-				},
-			});
-		}
-
-		if (telegram) {
-			await sendTelegramNotification(
-				telegram,
-				`
-				<b>⚠️ Server ${payload.Type} Alert</b>
+			if (telegram) {
+				await sendTelegramNotification(
+					telegram,
+					`
+				<b>鈿狅笍 Server ${payload.Type} Alert</b>
                 <b>Server Name:</b> ${payload.ServerName}
 				<b>Type:</b> ${payload.Type}
 				<b>Current Value:</b> ${payload.Value.toFixed(2)}%
@@ -107,147 +93,148 @@ export const sendServerThresholdNotifications = async (
 				<b>Message:</b> ${payload.Message}
 				<b>Time:</b> ${date.toLocaleString()}
 			`,
-			);
-		}
+				);
+			}
 
-		if (slack) {
-			const { channel } = slack;
-			await sendSlackNotification(slack, {
-				channel: channel,
-				attachments: [
-					{
-						color: "#FF0000",
-						pretext: `:warning: *Server ${payload.Type} Alert*`,
-						fields: [
-							{
-								title: "Server Name",
-								value: payload.ServerName,
-								short: true,
-							},
-							{
-								title: "Type",
-								value: payload.Type,
-								short: true,
-							},
-							{
-								title: "Current Value",
-								value: `${payload.Value.toFixed(2)}%`,
-								short: true,
-							},
-							{
-								title: "Threshold",
-								value: `${payload.Threshold.toFixed(2)}%`,
-								short: true,
-							},
-							{
-								title: "Message",
-								value: payload.Message,
-							},
-							{
-								title: "Time",
-								value: date.toLocaleString(),
-								short: true,
-							},
-						],
-					},
-				],
-			});
-		}
+			if (slack) {
+				const { channel } = slack;
+				await sendSlackNotification(slack, {
+					channel: channel,
+					attachments: [
+						{
+							color: "#FF0000",
+							pretext: `:warning: *Server ${payload.Type} Alert*`,
+							fields: [
+								{
+									title: "Server Name",
+									value: payload.ServerName,
+									short: true,
+								},
+								{
+									title: "Type",
+									value: payload.Type,
+									short: true,
+								},
+								{
+									title: "Current Value",
+									value: `${payload.Value.toFixed(2)}%`,
+									short: true,
+								},
+								{
+									title: "Threshold",
+									value: `${payload.Threshold.toFixed(2)}%`,
+									short: true,
+								},
+								{
+									title: "Message",
+									value: payload.Message,
+								},
+								{
+									title: "Time",
+									value: date.toLocaleString(),
+									short: true,
+								},
+							],
+						},
+					],
+				});
+			}
 
-		if (lark) {
-			await sendLarkNotification(lark, {
-				msg_type: "interactive",
-				card: {
-					schema: "2.0",
-					config: {
-						update_multi: true,
-						style: {
-							text_size: {
-								normal_v2: {
-									default: "normal",
-									pc: "normal",
-									mobile: "heading",
+			if (lark) {
+				await sendLarkNotification(lark, {
+					msg_type: "interactive",
+					card: {
+						schema: "2.0",
+						config: {
+							update_multi: true,
+							style: {
+								text_size: {
+									normal_v2: {
+										default: "normal",
+										pc: "normal",
+										mobile: "heading",
+									},
 								},
 							},
 						},
-					},
-					header: {
-						title: {
-							tag: "plain_text",
-							content: `⚠️ Server ${payload.Type} Alert`,
-						},
-						subtitle: {
-							tag: "plain_text",
-							content: "",
-						},
-						template: "red",
-						padding: "12px 12px 12px 12px",
-					},
-					body: {
-						direction: "vertical",
-						padding: "12px 12px 12px 12px",
-						elements: [
-							{
-								tag: "column_set",
-								columns: [
-									{
-										tag: "column",
-										width: "weighted",
-										elements: [
-											{
-												tag: "markdown",
-												content: `**Server Name:**\n${payload.ServerName}`,
-												text_align: "left",
-												text_size: "normal_v2",
-											},
-											{
-												tag: "markdown",
-												content: `**Current Value:**\n${payload.Value.toFixed(2)}%`,
-												text_align: "left",
-												text_size: "normal_v2",
-											},
-											{
-												tag: "markdown",
-												content: `**Alert Message:**\n${payload.Message}`,
-												text_align: "left",
-												text_size: "normal_v2",
-											},
-										],
-										vertical_align: "top",
-										weight: 1,
-									},
-									{
-										tag: "column",
-										width: "weighted",
-										elements: [
-											{
-												tag: "markdown",
-												content: `**Type:**\n${payload.Type === "CPU" ? "🔲" : "💾"} ${payload.Type}`,
-												text_align: "left",
-												text_size: "normal_v2",
-											},
-											{
-												tag: "markdown",
-												content: `**Threshold:**\n${payload.Threshold.toFixed(2)}%`,
-												text_align: "left",
-												text_size: "normal_v2",
-											},
-											{
-												tag: "markdown",
-												content: `**Alert Time:**\n${date.toLocaleString()}`,
-												text_align: "left",
-												text_size: "normal_v2",
-											},
-										],
-										vertical_align: "top",
-										weight: 1,
-									},
-								],
+						header: {
+							title: {
+								tag: "plain_text",
+								content: `鈿狅笍 Server ${payload.Type} Alert`,
 							},
-						],
+							subtitle: {
+								tag: "plain_text",
+								content: "",
+							},
+							template: "red",
+							padding: "12px 12px 12px 12px",
+						},
+						body: {
+							direction: "vertical",
+							padding: "12px 12px 12px 12px",
+							elements: [
+								{
+									tag: "column_set",
+									columns: [
+										{
+											tag: "column",
+											width: "weighted",
+											elements: [
+												{
+													tag: "markdown",
+													content: `**Server Name:**\n${payload.ServerName}`,
+													text_align: "left",
+													text_size: "normal_v2",
+												},
+												{
+													tag: "markdown",
+													content: `**Current Value:**\n${payload.Value.toFixed(2)}%`,
+													text_align: "left",
+													text_size: "normal_v2",
+												},
+												{
+													tag: "markdown",
+													content: `**Alert Message:**\n${payload.Message}`,
+													text_align: "left",
+													text_size: "normal_v2",
+												},
+											],
+											vertical_align: "top",
+											weight: 1,
+										},
+										{
+											tag: "column",
+											width: "weighted",
+											elements: [
+												{
+													tag: "markdown",
+													content: `**Type:**\n${payload.Type === "CPU" ? "馃敳" : "馃捑"} ${payload.Type}`,
+													text_align: "left",
+													text_size: "normal_v2",
+												},
+												{
+													tag: "markdown",
+													content: `**Threshold:**\n${payload.Threshold.toFixed(2)}%`,
+													text_align: "left",
+													text_size: "normal_v2",
+												},
+												{
+													tag: "markdown",
+													content: `**Alert Time:**\n${date.toLocaleString()}`,
+													text_align: "left",
+													text_size: "normal_v2",
+												},
+											],
+											vertical_align: "top",
+											weight: 1,
+										},
+									],
+								},
+							],
+						},
 					},
-				},
-			});
-		}
-	}
+				});
+			}
+		},
+	});
 };

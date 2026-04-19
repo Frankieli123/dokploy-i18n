@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBoxIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -59,7 +59,7 @@ export const EditGitlabProvider = ({ gitlabId }: Props) => {
 	const utils = api.useUtils();
 	const [isOpen, setIsOpen] = useState(false);
 	const { mutateAsync, error, isError } = api.gitlab.update.useMutation();
-	const { mutateAsync: testConnection, isLoading } =
+	const { mutateAsync: testConnection, isPending } =
 		api.gitlab.testConnection.useMutation();
 	const schema = createSchema(t);
 	const form = useForm<Schema>({
@@ -68,7 +68,7 @@ export const EditGitlabProvider = ({ gitlabId }: Props) => {
 			name: "",
 			gitlabUrl: "https://gitlab.com",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	const groupName = form.watch("groupName");
@@ -226,7 +226,7 @@ export const EditGitlabProvider = ({ gitlabId }: Props) => {
 									<Button
 										type="button"
 										variant={"secondary"}
-										isLoading={isLoading}
+										isPending={isPending}
 										onClick={async () => {
 											await testConnection({
 												gitlabId,
@@ -256,7 +256,7 @@ export const EditGitlabProvider = ({ gitlabId }: Props) => {
 									>
 										{t("settings.gitProviders.gitlab.edit.testButton")}
 									</Button>
-									<Button type="submit" isLoading={form.formState.isSubmitting}>
+									<Button type="submit" isPending={form.formState.isSubmitting}>
 										{t("settings.gitProviders.gitlab.edit.updateButton")}
 									</Button>
 								</div>
@@ -268,3 +268,4 @@ export const EditGitlabProvider = ({ gitlabId }: Props) => {
 		</Dialog>
 	);
 };
+

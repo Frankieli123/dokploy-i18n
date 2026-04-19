@@ -1,4 +1,4 @@
-import {
+﻿import {
 	ClipboardList,
 	Clock,
 	Loader2,
@@ -41,7 +41,7 @@ export const ShowSchedules = ({ id, scheduleType = "application" }: Props) => {
 	);
 	const {
 		data: schedules,
-		isLoading: isLoadingSchedules,
+		isPending: isPendingSchedules,
 		refetch: refetchSchedules,
 	} = api.schedule.list.useQuery(
 		{
@@ -53,7 +53,7 @@ export const ShowSchedules = ({ id, scheduleType = "application" }: Props) => {
 		},
 	);
 	const utils = api.useUtils();
-	const { mutateAsync: deleteSchedule, isLoading: isDeleting } =
+	const { mutateAsync: deleteSchedule, isPending: isDeleting } =
 		api.schedule.delete.useMutation();
 	const { mutateAsync: runManually } = api.schedule.runManually.useMutation();
 
@@ -90,7 +90,7 @@ export const ShowSchedules = ({ id, scheduleType = "application" }: Props) => {
 				</div>
 			</CardHeader>
 			<CardContent className="px-0">
-				{isLoadingSchedules ? (
+				{isPendingSchedules ? (
 					<div className="flex gap-4 w-full items-center justify-center text-center mx-auto min-h-[45vh]">
 						<Loader2 className="size-4 text-muted-foreground/70 transition-colors animate-spin self-center" />
 						<span className="text-sm text-muted-foreground/70">
@@ -136,8 +136,7 @@ export const ShowSchedules = ({ id, scheduleType = "application" }: Props) => {
 													schedule.scheduleType !== "dokploy-server" && (
 														<>
 															<span className="text-xs text-muted-foreground/50">
-																•
-															</span>
+																鈥?															</span>
 															<Badge
 																variant="outline"
 																className="font-mono text-[10px] bg-transparent"
@@ -246,3 +245,4 @@ export const ShowSchedules = ({ id, scheduleType = "application" }: Props) => {
 		</Card>
 	);
 };
+

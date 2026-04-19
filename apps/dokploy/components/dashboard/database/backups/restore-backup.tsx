@@ -240,7 +240,7 @@ export const RestoreBackup = ({
 			backupType: backupType,
 			metadata: {},
 		},
-		resolver: zodResolver(createRestoreBackupSchema(t)),
+		resolver: zodResolver(createRestoreBackupSchema(t) as any) as any,
 	});
 
 	const destionationId = form.watch("destinationId");

@@ -237,7 +237,7 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 			databaseUser: "",
 			serverId: null,
 		},
-		resolver: zodResolver(createMySchema(t)),
+		resolver: zodResolver(createMySchema(t) as any) as any,
 	});
 	const type = form.watch("type");
 	const activeMutation = {

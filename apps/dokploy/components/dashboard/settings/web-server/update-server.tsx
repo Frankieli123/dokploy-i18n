@@ -48,7 +48,7 @@ export const UpdateServer = ({
 	const [isUpdateAvailable, setIsUpdateAvailable] = useState(
 		!!updateData?.updateAvailable,
 	);
-	const { mutateAsync: getUpdateData, isLoading } =
+	const { mutateAsync: getUpdateData, isPending } =
 		api.settings.getUpdateData.useMutation();
 	const { data: dokployVersion } = api.settings.getDokployVersion.useQuery();
 	const { data: releaseTag } = api.settings.getReleaseTag.useQuery();
@@ -59,13 +59,13 @@ export const UpdateServer = ({
 
 	const handleCheckUpdates = async () => {
 		try {
-			const updateData = await getUpdateData(undefined);
-			const versionToUpdate = updateData.latestVersion || "";
+			const nextUpdateData = await getUpdateData(undefined);
+			const versionToUpdate = nextUpdateData.latestVersion || "";
 			setHasCheckedUpdate(true);
-			setIsUpdateAvailable(updateData.updateAvailable);
+			setIsUpdateAvailable(nextUpdateData.updateAvailable);
 			setLatestVersion(versionToUpdate);
 
-			if (updateData.updateAvailable) {
+			if (nextUpdateData.updateAvailable) {
 				toast.success(versionToUpdate, {
 					description: t("settings.server.webServer.update.toast.newVersion"),
 				});
@@ -86,7 +86,6 @@ export const UpdateServer = ({
 		onOpenChangeProp?.(open);
 	};
 
-	// 等待 I18N 资源加载完成，避免显示键值
 	if (!ready) {
 		return (
 			<Dialog open={isOpen} onOpenChange={onOpenChange}>
@@ -127,7 +126,7 @@ export const UpdateServer = ({
 								<Button
 									variant={updateData ? "outline" : "secondary"}
 									size="sm"
-									onClick={() => onOpenChange?.(true)}
+									onClick={() => onOpenChange(true)}
 								>
 									<Download className="h-4 w-4 flex-shrink-0" />
 									{updateData ? (
@@ -157,21 +156,22 @@ export const UpdateServer = ({
 				)}
 			</DialogTrigger>
 			<DialogContent className="max-w-lg">
-				<div className="flex items-center justify-between mb-8">
+				<div className="mb-8 flex items-center justify-between">
 					<DialogTitle className="text-2xl font-semibold">
 						{dialogTitle}
 					</DialogTitle>
 					{dokployVersion && (
-						<div className="flex items-center gap-1.5 rounded-full px-3 py-1 mr-2 bg-muted">
+						<div className="mr-2 flex items-center gap-1.5 rounded-full bg-muted px-3 py-1">
 							<Server className="h-4 w-4 text-muted-foreground" />
 							<span className="text-sm text-muted-foreground">
-								{dokployVersion} | {releaseTag}
+								{dokployVersion}
+								{(releaseTag === "canary" || releaseTag === "feature") &&
+									` (${releaseTag})`}
 							</span>
 						</div>
 					)}
 				</div>
 
-				{/* Initial state */}
 				{!hasCheckedUpdate && (
 					<div className="mb-8">
 						<p className="text text-muted-foreground">
@@ -183,13 +183,12 @@ export const UpdateServer = ({
 					</div>
 				)}
 
-				{/* Update available state */}
 				{isUpdateAvailable && latestVersion && (
 					<div className="mb-8">
-						<div className="inline-flex items-center gap-2 rounded-lg px-3 py-2 border border-emerald-900 bg-emerald-900 dark:bg-emerald-900/40 mb-4 w-full">
+						<div className="mb-4 inline-flex w-full items-center gap-2 rounded-lg border border-emerald-900 bg-emerald-900 px-3 py-2 dark:bg-emerald-900/40">
 							<div className="flex items-center gap-1.5">
 								<Download className="h-4 w-4 text-emerald-400" />
-								<span className="text font-medium text-emerald-400 ">
+								<span className="text font-medium text-emerald-400">
 									{t("settings.server.webServer.update.newVersionLabel")}
 								</span>
 							</div>
@@ -204,13 +203,13 @@ export const UpdateServer = ({
 							</p>
 							<ul className="space-y-3">
 								<li className="flex items-start gap-2">
-									<Stars className="h-5 w-5 mt-0.5 text-[#5B9DFF]" />
+									<Stars className="mt-0.5 h-5 w-5 text-[#5B9DFF]" />
 									<span className="text">
 										{t("settings.server.webServer.update.reason.features")}
 									</span>
 								</li>
 								<li className="flex items-start gap-2">
-									<Bug className="h-5 w-5 mt-0.5 text-[#5B9DFF]" />
+									<Bug className="mt-0.5 h-5 w-5 text-[#5B9DFF]" />
 									<span className="text">
 										{t("settings.server.webServer.update.reason.bugfixes")}
 									</span>
@@ -220,34 +219,31 @@ export const UpdateServer = ({
 					</div>
 				)}
 
-				{/* Up to date state */}
-				{hasCheckedUpdate && !isUpdateAvailable && !isLoading && (
+				{hasCheckedUpdate && !isUpdateAvailable && !isPending && (
 					<div className="mb-8">
-						<div className="flex flex-col items-center gap-6 mb-6">
-							<div className="rounded-full p-4 bg-emerald-400/40">
+						<div className="mb-6 flex flex-col items-center gap-6">
+							<div className="rounded-full bg-emerald-400/40 p-4">
 								<Sparkles className="h-8 w-8 text-emerald-400" />
 							</div>
-							<div className="text-center space-y-2">
+							<div className="space-y-2 text-center">
 								<h3 className="text-lg font-medium">
 									{t("settings.server.webServer.update.latestVersionTitle")}
 								</h3>
 								<p className="text text-muted-foreground">
-									{t(
-										"settings.server.webServer.update.latestVersionDescription",
-									)}
+									{t("settings.server.webServer.update.latestVersionDescription")}
 								</p>
 							</div>
 						</div>
 					</div>
 				)}
 
-				{hasCheckedUpdate && isLoading && (
+				{hasCheckedUpdate && isPending && (
 					<div className="mb-8">
-						<div className="flex flex-col items-center gap-6 mb-6">
-							<div className="rounded-full p-4 bg-[#5B9DFF]/40 text-foreground">
+						<div className="mb-6 flex flex-col items-center gap-6">
+							<div className="rounded-full bg-[#5B9DFF]/40 p-4 text-foreground">
 								<RefreshCcw className="h-8 w-8 animate-spin" />
 							</div>
-							<div className="text-center space-y-2">
+							<div className="space-y-2 text-center">
 								<h3 className="text-lg font-medium">
 									{t("settings.server.webServer.update.checkingTitle")}
 								</h3>
@@ -260,7 +256,7 @@ export const UpdateServer = ({
 				)}
 
 				{isUpdateAvailable && (
-					<div className="rounded-lg bg-[#16254D] p-4 mb-8">
+					<div className="mb-8 rounded-lg bg-[#16254D] p-4">
 						<div className="flex gap-2">
 							<Info className="h-5 w-5 flex-shrink-0 text-[#5B9DFF]" />
 							<div className="text-[#5B9DFF]">
@@ -277,14 +273,14 @@ export const UpdateServer = ({
 					</div>
 				)}
 
-				<div className="flex items-center justify-between pt-2 gap-2">
-					<UpdateSourceConfig disabled={isLoading} />
-					<ToggleAutoCheckUpdates disabled={isLoading} />
+				<div className="flex items-center justify-between gap-2 pt-2">
+					<UpdateSourceConfig disabled={isPending} />
+					<ToggleAutoCheckUpdates disabled={isPending} />
 				</div>
 
-				<div className="space-y-4 flex items-center justify-end mt-4">
+				<div className="mt-4 flex items-center justify-end space-y-4">
 					<div className="flex items-center gap-2">
-						<Button variant="outline" onClick={() => onOpenChange?.(false)}>
+						<Button variant="outline" onClick={() => onOpenChange(false)}>
 							{t("settings.common.cancel")}
 						</Button>
 						{isUpdateAvailable ? (
@@ -293,9 +289,9 @@ export const UpdateServer = ({
 							<Button
 								variant="secondary"
 								onClick={handleCheckUpdates}
-								disabled={isLoading}
+								disabled={isPending}
 							>
-								{isLoading ? (
+								{isPending ? (
 									<>
 										<RefreshCcw className="h-4 w-4 animate-spin" />
 										{t("settings.server.webServer.update.checkingButton")}

@@ -1,5 +1,4 @@
 "use client";
-import type { inferRouterOutputs } from "@trpc/server";
 import {
 	Activity,
 	BarChartHorizontalBigIcon,
@@ -24,6 +23,7 @@ import {
 	type LucideIcon,
 	Package,
 	PieChart,
+	Rocket,
 	Server,
 	ShieldCheck,
 	Star,
@@ -78,7 +78,6 @@ import {
 } from "@/components/ui/sidebar";
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
-import type { AppRouter } from "@/server/api/root";
 import { api } from "@/utils/api";
 import { AddOrganization } from "../dashboard/organization/handle-organization";
 import { DialogAction } from "../shared/dialog-action";
@@ -89,7 +88,7 @@ import { UpdateServerButton } from "./update-server";
 import { UserNav } from "./user-nav";
 
 // The types of the queries we are going to use
-type AuthQueryOutput = inferRouterOutputs<AppRouter>["user"]["get"];
+type AuthQueryOutput = any;
 
 type SingleNavItem = {
 	isSingle?: true;
@@ -144,6 +143,12 @@ const MENU: Menu = {
 			title: "dashboard.projects",
 			url: "/dashboard/projects",
 			icon: Folder,
+		},
+		{
+			isSingle: true,
+			title: "tabs.deployments",
+			url: "/dashboard/deployments",
+			icon: Rocket,
 		},
 		{
 			isSingle: true,
@@ -499,19 +504,18 @@ function SidebarLogo() {
 	const { state } = useSidebar();
 	const { data: isCloud } = api.settings.isCloud.useQuery();
 	const { data: user } = api.user.get.useQuery();
-	const { data: session } = authClient.useSession();
+	const { data: session } = api.user.session.useQuery();
 	const {
 		data: organizations,
 		refetch,
-		isLoading,
+		isPending,
 	} = api.organization.all.useQuery();
-	const { mutateAsync: deleteOrganization, isLoading: isRemoving } =
+	const { mutateAsync: deleteOrganization, isPending: isRemoving } =
 		api.organization.delete.useMutation();
-	const { mutateAsync: setDefaultOrganization, isLoading: isSettingDefault } =
+	const { mutateAsync: setDefaultOrganization, isPending: isSettingDefault } =
 		api.organization.setDefault.useMutation();
 	const { isMobile } = useSidebar();
-	const { data: activeOrganization } = authClient.useActiveOrganization();
-	const _utils = api.useUtils();
+	const { data: activeOrganization } = api.organization.active.useQuery();
 	const { t } = useTranslation("common");
 
 	const { data: invitations, refetch: refetchInvitations } =
@@ -534,7 +538,7 @@ function SidebarLogo() {
 
 	return (
 		<>
-			{isLoading ? (
+			{isPending ? (
 				<div className="flex flex-row gap-2 items-center justify-center text-sm text-muted-foreground min-h-[5vh] pt-4">
 					<Loader2 className="animate-spin size-4" />
 				</div>
@@ -651,7 +655,7 @@ function SidebarLogo() {
 															? "hover:bg-yellow-500/10"
 															: "hover:bg-blue-500/10",
 													)}
-													isLoading={isSettingDefault && !isDefault}
+													isPending={isSettingDefault && !isDefault}
 													disabled={isDefault}
 													onClick={async (e) => {
 														if (isDefault) return;
@@ -721,7 +725,7 @@ function SidebarLogo() {
 																variant="ghost"
 																size="icon"
 																className="group hover:bg-red-500/10"
-																isLoading={isRemoving}
+																isPending={isRemoving}
 															>
 																<Trash2 className="size-4 text-primary group-hover:text-red-500" />
 															</Button>
@@ -1153,3 +1157,4 @@ export default function Page({ children }: Props) {
 		</SidebarProvider>
 	);
 }
+

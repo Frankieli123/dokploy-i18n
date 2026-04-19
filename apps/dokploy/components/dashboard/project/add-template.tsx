@@ -1,4 +1,4 @@
-import {
+﻿import {
 	BookText,
 	CheckIcon,
 	ChevronsUpDown,
@@ -107,7 +107,7 @@ export const AddTemplate = ({ environmentId, baseUrl }: Props) => {
 
 	const {
 		data,
-		isLoading: isLoadingTemplates,
+		isPending: isPendingTemplates,
 		error: errorTemplates,
 		isError: isErrorTemplates,
 	} = api.compose.templates.useQuery(
@@ -118,7 +118,7 @@ export const AddTemplate = ({ environmentId, baseUrl }: Props) => {
 	);
 	const { data: isCloud } = api.settings.isCloud.useQuery();
 	const { data: servers } = api.server.withSSHKey.useQuery();
-	const { data: tags, isLoading: isLoadingTags } = api.compose.getTags.useQuery(
+	const { data: tags, isPending: isPendingTags } = api.compose.getTags.useQuery(
 		{ baseUrl: customBaseUrl },
 		{
 			enabled: open,
@@ -127,7 +127,7 @@ export const AddTemplate = ({ environmentId, baseUrl }: Props) => {
 	const utils = api.useUtils();
 
 	const [serverId, setServerId] = useState<string | undefined>(undefined);
-	const { mutateAsync, isLoading, error, isError } =
+	const { mutateAsync, isPending, error, isError } =
 		api.compose.deployTemplate.useMutation();
 
 	const templates =
@@ -192,7 +192,7 @@ export const AddTemplate = ({ environmentId, baseUrl }: Props) => {
 												"w-full sm:w-[200px] justify-between !bg-input",
 											)}
 										>
-											{isLoadingTags
+											{isPendingTags
 												? t("template.tags.button.loading")
 												: selectedTags.length > 0
 													? t("template.tags.button.selected", {
@@ -209,7 +209,7 @@ export const AddTemplate = ({ environmentId, baseUrl }: Props) => {
 												placeholder={t("template.tags.searchPlaceholder")}
 												className="h-9"
 											/>
-											{isLoadingTags && (
+											{isPendingTags && (
 												<span className="py-6 text-center text-sm">
 													{t("template.tags.loading")}
 												</span>
@@ -273,7 +273,7 @@ export const AddTemplate = ({ environmentId, baseUrl }: Props) => {
 											setSelectedTags(selectedTags.filter((t) => t !== tag))
 										}
 									>
-										{tag} ×
+										{tag} 脳
 									</Badge>
 								))}
 							</div>
@@ -295,7 +295,7 @@ export const AddTemplate = ({ environmentId, baseUrl }: Props) => {
 							</AlertBlock>
 						)}
 
-						{isLoadingTemplates ? (
+						{isPendingTemplates ? (
 							<div className="flex justify-center items-center w-full h-full flex-row gap-4">
 								<Loader2 className="size-8 text-muted-foreground animate-spin min-h-[60vh]" />
 								<div className="text-lg font-medium text-muted-foreground">
@@ -533,7 +533,7 @@ export const AddTemplate = ({ environmentId, baseUrl }: Props) => {
 															{t("button.cancel")}
 														</AlertDialogCancel>
 														<AlertDialogAction
-															disabled={isLoading}
+															disabled={isPending}
 															onClick={async () => {
 																const promise = mutateAsync({
 																	serverId:
@@ -580,3 +580,4 @@ export const AddTemplate = ({ environmentId, baseUrl }: Props) => {
 		</Dialog>
 	);
 };
+

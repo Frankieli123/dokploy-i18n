@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRightLeft, Plus, Trash2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import type React from "react";
@@ -67,7 +67,7 @@ export const ManageTraefikPorts = ({ children, serverId }: Props) => {
 	const schema = useMemo(() => createTraefikPortsSchema(t), [t]);
 
 	const form = useForm<TraefikPortsForm>({
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 		defaultValues: {
 			ports: [],
 		},
@@ -83,7 +83,7 @@ export const ManageTraefikPorts = ({ children, serverId }: Props) => {
 			serverId,
 		});
 
-	const { mutateAsync: updatePorts, isLoading } =
+	const { mutateAsync: updatePorts, isPending } =
 		api.settings.updateTraefikPorts.useMutation();
 
 	const { execute: executeWithHealthCheck, isExecuting: isHealthCheckExecuting } =
@@ -345,7 +345,7 @@ export const ManageTraefikPorts = ({ children, serverId }: Props) => {
 									type="submit"
 									variant="default"
 									className="text-sm"
-									isLoading={isLoading || isHealthCheckExecuting}
+									isPending={isPending || isHealthCheckExecuting}
 								>
 									{t("settings.common.save")}
 								</Button>
@@ -359,3 +359,4 @@ export const ManageTraefikPorts = ({ children, serverId }: Props) => {
 };
 
 export default ManageTraefikPorts;
+

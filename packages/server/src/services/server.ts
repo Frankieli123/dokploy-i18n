@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateServer,
 	organization,
@@ -10,7 +11,7 @@ import { eq } from "drizzle-orm";
 export type Server = typeof server.$inferSelect;
 
 export const createServer = async (
-	input: typeof apiCreateServer._type,
+	input: z.infer<typeof apiCreateServer>,
 	organizationId: string,
 ) => {
 	const newServer = await db

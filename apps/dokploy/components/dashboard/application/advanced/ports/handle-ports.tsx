@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBoxIcon, PlusIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -79,7 +79,7 @@ export const HandlePorts = ({
 			enabled: !!portId,
 		},
 	);
-	const { mutateAsync, isLoading, error, isError } = portId
+	const { mutateAsync, isPending, error, isError } = portId
 		? api.port.update.useMutation()
 		: api.port.create.useMutation();
 
@@ -90,7 +90,7 @@ export const HandlePorts = ({
 			publishedPort: 0,
 			targetPort: 0,
 		},
-		resolver: zodResolver(AddPortSchema),
+		resolver: zodResolver(AddPortSchema as any) as any,
 	});
 
 	const publishMode = useWatch({
@@ -292,7 +292,7 @@ export const HandlePorts = ({
 
 					<DialogFooter>
 						<Button
-							isLoading={isLoading}
+							isPending={isPending}
 							form="hook-form-add-port"
 							type="submit"
 						>
@@ -306,3 +306,4 @@ export const HandlePorts = ({
 		</Dialog>
 	);
 };
+

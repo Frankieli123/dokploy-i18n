@@ -1,4 +1,3 @@
-import path from "node:path";
 import { CLEANUP_CRON_JOB } from "@dokploy/server/constants";
 import { member } from "@dokploy/server/db/schema";
 import type { BackupSchedule } from "@dokploy/server/services/backup";
@@ -14,7 +13,14 @@ import {
 } from "../docker/utils";
 import { sendDockerCleanupNotifications } from "../notifications/docker-cleanup";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
-import { getS3Credentials, scheduleBackup } from "./utils";
+import {
+	buildS3RemotePath,
+	getBackupServiceAppName,
+	getS3Credentials,
+	joinS3Path,
+	normalizeS3Path,
+	scheduleBackup,
+} from "./utils";
 
 export const initCronJobs = async () => {
 	console.log("Setting up cron jobs....");
@@ -103,25 +109,58 @@ export const keepLatestNBackups = async (
 
 	try {
 		const rcloneFlags = getS3Credentials(backup.destination);
-		const backupFilesPath = path.join(
-			`:s3:${backup.destination.bucket}`,
-			backup.prefix,
+		const bucket = backup.destination.bucket;
+		const currentAppName = getBackupServiceAppName(backup);
+		const legacyPrefix = normalizeS3Path(backup.prefix);
+		const currentPrefix = currentAppName
+			? normalizeS3Path(joinS3Path(currentAppName, backup.prefix))
+			: legacyPrefix;
+		const backupExtension =
+			backup.databaseType === "web-server" ? ".zip" : ".sql.gz";
+		const pathCandidates = Array.from(
+			new Set(
+				[currentPrefix, legacyPrefix].map((prefix) =>
+					buildS3RemotePath(bucket, prefix),
+				),
+			),
 		);
 
-		// --include "*.sql.gz" or "*.zip" ensures nothing else other than the dokploy backup files are touched by rclone
-		const rcloneList = `rclone lsf ${rcloneFlags.join(" ")} --include "*${backup.databaseType === "web-server" ? ".zip" : ".sql.gz"}" ${backupFilesPath}`;
-		// when we pipe the above command with this one, we only get the list of files we want to delete
-		const sortAndPickUnwantedBackups = `sort -r | tail -n +$((${backup.keepLatestCount}+1)) | xargs -I{}`;
-		// this command deletes the files
-		// to test the deletion before actually deleting we can add --dry-run before ${backupFilesPath}/{}
-		const rcloneDelete = `rclone delete ${rcloneFlags.join(" ")} ${backupFilesPath}/{}`;
+		const runCommand = async (command: string) => {
+			if (serverId) {
+				return await execAsyncRemote(serverId, command);
+			}
 
-		const rcloneCommand = `${rcloneList} | ${sortAndPickUnwantedBackups} ${rcloneDelete}`;
+			return await execAsync(command);
+		};
 
-		if (serverId) {
-			await execAsyncRemote(serverId, rcloneCommand);
-		} else {
-			await execAsync(rcloneCommand);
+		const backupFiles = (
+			await Promise.all(
+				pathCandidates.map(async (backupFilesPath) => {
+					const rcloneList = `rclone lsf ${rcloneFlags.join(" ")} --files-only --include "*${backupExtension}" "${backupFilesPath}" 2>/dev/null`;
+					const result = await runCommand(rcloneList).catch(() => ({
+						stdout: "",
+						stderr: "",
+					}));
+					const items = result.stdout
+						.split("\n")
+						.map((line) => line.trim())
+						.filter(Boolean);
+
+					return items.map((fileName) => ({
+						fileName,
+						fullPath: `${backupFilesPath}/${fileName}`,
+					}));
+				}),
+			)
+		)
+			.flat()
+			.sort((left, right) => right.fileName.localeCompare(left.fileName));
+
+		const filesToDelete = backupFiles.slice(backup.keepLatestCount);
+
+		for (const file of filesToDelete) {
+			const deleteCommand = `rclone deletefile ${rcloneFlags.join(" ")} "${file.fullPath}"`;
+			await runCommand(deleteCommand);
 		}
 	} catch (error) {
 		console.error(error);

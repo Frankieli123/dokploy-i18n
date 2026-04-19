@@ -1,4 +1,4 @@
-import {
+﻿import {
 	ClipboardList,
 	Database,
 	DatabaseBackup,
@@ -91,11 +91,11 @@ export const ShowBackups = ({
 
 	const mutation = mutationMap[key as keyof typeof mutationMap];
 
-	const { mutateAsync: manualBackup, isLoading: isManualBackup } = mutation
+	const { mutateAsync: manualBackup, isPending: isManualBackup } = mutation
 		? mutation
 		: api.backup.manualBackupMongo.useMutation();
 
-	const { mutateAsync: deleteBackup, isLoading: isRemoving } =
+	const { mutateAsync: deleteBackup, isPending: isRemoving } =
 		api.backup.remove.useMutation();
 
 	return (
@@ -301,7 +301,7 @@ export const ShowBackups = ({
 																		variant="ghost"
 																		size="icon"
 																		className="size-8"
-																		isLoading={
+																		isPending={
 																			isManualBackup &&
 																			activeManualBackup === backup.backupId
 																		}
@@ -359,7 +359,7 @@ export const ShowBackups = ({
 																variant="ghost"
 																size="icon"
 																className="group hover:bg-red-500/10 size-8"
-																isLoading={isRemoving}
+																isPending={isRemoving}
 															>
 																<Trash2 className="size-4 text-primary group-hover:text-red-500" />
 															</Button>
@@ -378,3 +378,4 @@ export const ShowBackups = ({
 		</Card>
 	);
 };
+

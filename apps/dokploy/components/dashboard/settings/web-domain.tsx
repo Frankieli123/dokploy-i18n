@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { GlobeIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useMemo } from "react";
@@ -114,7 +114,7 @@ type AddServerDomain = z.infer<typeof baseServerDomainSchema>;
 export const WebDomain = () => {
 	const { t } = useTranslation("settings");
 	const { data, refetch } = api.user.get.useQuery();
-	const { mutateAsync, isLoading } =
+	const { mutateAsync, isPending } =
 		api.settings.assignDomainServer.useMutation();
 	const schema = useMemo(() => createServerDomainSchema(t), [t]);
 
@@ -124,7 +124,7 @@ export const WebDomain = () => {
 			certificateType: "none",
 			letsEncryptEmail: "",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 	const domainsValue = form.watch("domains") || "";
 	const parsedDomainsResult = parsePanelDomainsInputResult(domainsValue);
@@ -336,7 +336,7 @@ export const WebDomain = () => {
 								)}
 
 								<div className="flex w-full justify-end col-span-2">
-									<Button isLoading={isLoading} type="submit">
+									<Button isPending={isPending} type="submit">
 										{t("settings.common.save")}
 									</Button>
 								</div>
@@ -348,3 +348,4 @@ export const WebDomain = () => {
 		</div>
 	);
 };
+

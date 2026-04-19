@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateMongo,
 	backups,
@@ -16,7 +17,7 @@ import { validUniqueServerAppName } from "./project";
 
 export type Mongo = typeof mongo.$inferSelect;
 
-export const createMongo = async (input: typeof apiCreateMongo._type) => {
+export const createMongo = async (input: z.infer<typeof apiCreateMongo>) => {
 	const appName = buildAppName("mongo", input.appName);
 
 	const valid = await validUniqueServerAppName(appName);

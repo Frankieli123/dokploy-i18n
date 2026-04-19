@@ -117,7 +117,7 @@ export const SetupMonitoring = ({ serverId }: Props) => {
 
 	const url = useUrl();
 
-	const { data: projects } = api.project.all.useQuery();
+	const { data: projects } = api.project.allForPermissions.useQuery();
 
 	const extractServicesFromProjects = () => {
 		if (!projects) return [];
@@ -136,11 +136,11 @@ export const SetupMonitoring = ({ serverId }: Props) => {
 		return [...new Set(allServices)];
 	};
 
-	const services = extractServicesFromProjects();
+	const services = extractServicesFromProjects() as string[];
 	const schema = useMemo(() => createMonitoringSchema(t), [t]);
 
 	const form = useForm<Schema>({
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 		defaultValues: {
 			metricsConfig: {
 				server: {

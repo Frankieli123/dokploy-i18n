@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBoxIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -77,7 +77,7 @@ export const EditGithubProvider = ({ githubId }: Props) => {
 	const utils = api.useUtils();
 	const [isOpen, setIsOpen] = useState(false);
 	const { mutateAsync, error, isError } = api.github.update.useMutation();
-	const { mutateAsync: testConnection, isLoading } =
+	const { mutateAsync: testConnection, isPending } =
 		api.github.testConnection.useMutation();
 	const schema = createSchema(t);
 	const form = useForm<Schema>({
@@ -88,7 +88,7 @@ export const EditGithubProvider = ({ githubId }: Props) => {
 			githubApiProxyUrl: "",
 			githubMirrorForwardAuth: false,
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	useEffect(() => {
@@ -280,7 +280,7 @@ export const EditGithubProvider = ({ githubId }: Props) => {
 									<Button
 										type="button"
 										variant={"secondary"}
-										isLoading={isLoading}
+										isPending={isPending}
 										onClick={async () => {
 											await testConnection({
 												githubId,
@@ -305,7 +305,7 @@ export const EditGithubProvider = ({ githubId }: Props) => {
 									>
 										{t("settings.gitProviders.github.edit.testButton")}
 									</Button>
-									<Button type="submit" isLoading={form.formState.isSubmitting}>
+									<Button type="submit" isPending={form.formState.isSubmitting}>
 										{t("settings.gitProviders.github.edit.updateButton")}
 									</Button>
 								</div>
@@ -317,3 +317,4 @@ export const EditGithubProvider = ({ githubId }: Props) => {
 		</Dialog>
 	);
 };
+

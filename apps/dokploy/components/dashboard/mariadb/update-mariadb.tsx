@@ -1,7 +1,7 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBoxIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -43,9 +43,10 @@ interface Props {
 }
 
 export const UpdateMariadb = ({ mariadbId }: Props) => {
+	const [isOpen, setIsOpen] = useState(false);
 	const utils = api.useUtils();
 	const { t } = useTranslation("common");
-	const { mutateAsync, error, isError, isLoading } =
+	const { mutateAsync, error, isError, isPending } =
 		api.mariadb.update.useMutation();
 	const { data } = api.mariadb.one.useQuery(
 		{
@@ -60,7 +61,7 @@ export const UpdateMariadb = ({ mariadbId }: Props) => {
 			description: data?.description ?? "",
 			name: data?.name ?? "",
 		},
-		resolver: zodResolver(createUpdateMariadbSchema(t)),
+		resolver: zodResolver(createUpdateMariadbSchema(t) as any) as any,
 	});
 	useEffect(() => {
 		if (data) {
@@ -82,6 +83,7 @@ export const UpdateMariadb = ({ mariadbId }: Props) => {
 				utils.mariadb.one.invalidate({
 					mariadbId: mariadbId,
 				});
+				setIsOpen(false);
 			})
 			.catch(() => {
 				toast.error(t("database.mariadb.update.error"));
@@ -90,7 +92,7 @@ export const UpdateMariadb = ({ mariadbId }: Props) => {
 	};
 
 	return (
-		<Dialog>
+		<Dialog open={isOpen} onOpenChange={setIsOpen}>
 			<DialogTrigger asChild>
 				<Button
 					variant="ghost"
@@ -154,7 +156,7 @@ export const UpdateMariadb = ({ mariadbId }: Props) => {
 								/>
 								<DialogFooter>
 									<Button
-										isLoading={isLoading}
+										isPending={isPending}
 										form="hook-form-update-mariadb"
 										type="submit"
 									>
@@ -169,3 +171,4 @@ export const UpdateMariadb = ({ mariadbId }: Props) => {
 		</Dialog>
 	);
 };
+

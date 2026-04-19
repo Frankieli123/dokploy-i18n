@@ -13,15 +13,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { authClient } from "@/lib/auth-client";
 import { api } from "@/utils/api";
 
 export const AddGithubProvider = () => {
 	const [isOpen, setIsOpen] = useState(false);
 	const { t } = useTranslation("settings");
-	const { data: activeOrganization } = authClient.useActiveOrganization();
-	const { data: session } = authClient.useSession();
-	const { data } = api.user.get.useQuery();
+	const { data: activeOrganization } = api.organization.active.useQuery();
+	const { data: session } = api.user.session.useQuery();
 	const [manifest, setManifest] = useState("");
 	const [isOrganization, setIsOrganization] = useState(false);
 	const [organizationName, setOrganization] = useState("");
@@ -32,7 +30,7 @@ export const AddGithubProvider = () => {
 		const url = document.location.origin;
 		const manifest = JSON.stringify(
 			{
-				redirect_url: `${origin}/api/providers/github/setup?organizationId=${activeOrganization?.id}&userId=${session?.user?.id}`,
+				redirect_url: `${origin}/api/providers/github/setup?organizationId=${activeOrganization?.id ?? ""}&userId=${session?.user?.id ?? ""}`,
 				name: `Dokploy-${format(new Date(), "yyyy-MM-dd")}-${randomString()}`,
 				url: origin,
 				hook_attributes: {
@@ -54,7 +52,7 @@ export const AddGithubProvider = () => {
 		);
 
 		setManifest(manifest);
-	}, [data?.id]);
+	}, [activeOrganization?.id, session?.user?.id]);
 
 	return (
 		<Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -102,8 +100,8 @@ export const AddGithubProvider = () => {
 							<form
 								action={
 									isOrganization
-										? `https://github.com/organizations/${organizationName}/settings/apps/new?state=gh_init:${activeOrganization?.id}`
-										: `https://github.com/settings/apps/new?state=gh_init:${activeOrganization?.id}`
+										? `https://github.com/organizations/${organizationName}/settings/apps/new?state=gh_init:${activeOrganization?.id ?? ""}:${session?.user?.id ?? ""}`
+										: `https://github.com/settings/apps/new?state=gh_init:${activeOrganization?.id ?? ""}:${session?.user?.id ?? ""}`
 								}
 								method="post"
 							>

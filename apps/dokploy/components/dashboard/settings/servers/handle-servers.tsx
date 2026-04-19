@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PlusIcon } from "lucide-react";
 import Link from "next/link";
 import { useTranslation } from "next-i18next";
@@ -80,7 +80,7 @@ export const HandleServers = ({ serverId }: Props) => {
 	);
 
 	const { data: sshKeys } = api.sshKey.all.useQuery();
-	const { mutateAsync, error, isLoading, isError } = serverId
+	const { mutateAsync, error, isPending, isError } = serverId
 		? api.server.update.useMutation()
 		: api.server.create.useMutation();
 	const schema = useMemo(() => buildSchema(t), [t]);
@@ -95,7 +95,7 @@ export const HandleServers = ({ serverId }: Props) => {
 			sshKeyId: "",
 			serverType: "deploy",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	useEffect(() => {
@@ -445,7 +445,7 @@ export const HandleServers = ({ serverId }: Props) => {
 
 					<DialogFooter>
 						<Button
-							isLoading={isLoading}
+							isPending={isPending}
 							disabled={!canCreateMoreServers && !serverId}
 							form="hook-form-add-server"
 							type="submit"
@@ -460,3 +460,4 @@ export const HandleServers = ({ serverId }: Props) => {
 		</Dialog>
 	);
 };
+

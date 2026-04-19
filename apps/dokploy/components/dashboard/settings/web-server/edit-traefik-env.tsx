@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -46,7 +46,7 @@ export const EditTraefikEnv = ({ children, serverId }: Props) => {
 		serverId,
 	});
 
-	const { mutateAsync, isLoading, error, isError } =
+	const { mutateAsync, isPending, error, isError } =
 		api.settings.writeTraefikEnv.useMutation();
 
 	const { execute: executeWithHealthCheck, isExecuting: isHealthCheckExecuting } =
@@ -60,7 +60,7 @@ export const EditTraefikEnv = ({ children, serverId }: Props) => {
 			env: data || "",
 		},
 		disabled: canEdit,
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	useEffect(() => {
@@ -85,7 +85,7 @@ export const EditTraefikEnv = ({ children, serverId }: Props) => {
 	// Add keyboard shortcut for Ctrl+S/Cmd+S
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
-			if ((e.ctrlKey || e.metaKey) && e.key === "s" && !isLoading && !canEdit) {
+			if ((e.ctrlKey || e.metaKey) && e.key === "s" && !isPending && !canEdit) {
 				e.preventDefault();
 				form.handleSubmit(onSubmit)();
 			}
@@ -95,7 +95,7 @@ export const EditTraefikEnv = ({ children, serverId }: Props) => {
 		return () => {
 			document.removeEventListener("keydown", handleKeyDown);
 		};
-	}, [form, onSubmit, isLoading, canEdit]);
+	}, [form, onSubmit, isPending, canEdit]);
 
 	return (
 		<Dialog>
@@ -165,8 +165,8 @@ TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_HTTP_CHALLENGE_DNS_PROVIDER=cloudflare
 
 					<DialogFooter>
 						<Button
-							isLoading={isLoading || isHealthCheckExecuting}
-							disabled={canEdit || isLoading || isHealthCheckExecuting}
+							isPending={isPending || isHealthCheckExecuting}
+							disabled={canEdit || isPending || isHealthCheckExecuting}
 							form="hook-form-update-server-traefik-config"
 							type="submit"
 						>
@@ -178,3 +178,4 @@ TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_HTTP_CHALLENGE_DNS_PROVIDER=cloudflare
 		</Dialog>
 	);
 };
+

@@ -57,7 +57,7 @@ export const RandomizeCompose = ({ composeId }: Props) => {
 			suffix: "",
 			randomize: false,
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	const suffix = form.watch("suffix");

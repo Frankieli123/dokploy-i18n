@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { Cog } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useMemo } from "react";
@@ -45,18 +45,7 @@ const createSchema = (t: (key: string) => string) =>
 	z.discriminatedUnion("buildType", [
 		z.object({
 			buildType: z.literal(BuildType.dockerfile),
-			dockerfile: z
-				.string({
-					required_error: t(
-						"application.build.validation.dockerfilePathRequired",
-					),
-					invalid_type_error: t(
-						"application.build.validation.dockerfilePathRequired",
-					),
-				})
-				.min(1, {
-					message: t("application.build.validation.dockerfileRequired"),
-				}),
+			dockerfile: z.string().nullable().default(""),
 			dockerContextPath: z.string().nullable().default(""),
 			dockerBuildStage: z.string().nullable().default(""),
 		}),
@@ -148,7 +137,7 @@ export const ShowBuildChooseForm = ({ applicationId }: Props) => {
 	const { t } = useTranslation("common");
 	const schema = useMemo(() => createSchema(t), [t]);
 
-	const { mutateAsync, isLoading } =
+	const { mutateAsync, isPending } =
 		api.application.saveBuildType.useMutation();
 	const { data, refetch } = api.application.one.useQuery(
 		{ applicationId },
@@ -159,7 +148,7 @@ export const ShowBuildChooseForm = ({ applicationId }: Props) => {
 		defaultValues: {
 			buildType: BuildType.nixpacks,
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	const buildType = form.watch("buildType");
@@ -184,7 +173,9 @@ export const ShowBuildChooseForm = ({ applicationId }: Props) => {
 			publishDirectory:
 				data.buildType === BuildType.nixpacks ? data.publishDirectory : null,
 			dockerfile:
-				data.buildType === BuildType.dockerfile ? data.dockerfile : null,
+				data.buildType === BuildType.dockerfile
+					? (data.dockerfile?.trim() || null)
+					: null,
 			dockerContextPath:
 				data.buildType === BuildType.dockerfile ? data.dockerContextPath : null,
 			dockerBuildStage:
@@ -317,18 +308,21 @@ export const ShowBuildChooseForm = ({ applicationId }: Props) => {
 											<FormLabel>
 												{t("application.build.dockerfile.label")}
 											</FormLabel>
-											<FormControl>
-												<Input
-													placeholder={t(
-														"application.build.dockerfile.placeholder",
-													)}
-													{...field}
-													value={field.value ?? ""}
-												/>
-											</FormControl>
-											<FormMessage />
-										</FormItem>
-									)}
+												<FormControl>
+													<Input
+														placeholder={t(
+															"application.build.dockerfile.placeholder",
+														)}
+														{...field}
+														value={field.value ?? ""}
+													/>
+												</FormControl>
+												<FormDescription>
+													Dockerfile
+												</FormDescription>
+												<FormMessage />
+											</FormItem>
+										)}
 								/>
 								<FormField
 									control={form.control}
@@ -454,7 +448,7 @@ export const ShowBuildChooseForm = ({ applicationId }: Props) => {
 							/>
 						)}
 						<div className="flex w-full justify-end">
-							<Button isLoading={isLoading} type="submit">
+							<Button isPending={isPending} type="submit">
 								{t("button.save")}
 							</Button>
 						</div>
@@ -464,3 +458,4 @@ export const ShowBuildChooseForm = ({ applicationId }: Props) => {
 		</Card>
 	);
 };
+

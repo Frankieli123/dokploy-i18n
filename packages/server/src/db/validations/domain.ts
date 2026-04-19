@@ -1,26 +1,28 @@
 import { z } from "zod";
 
+export const domainShape = {
+	host: z
+		.string()
+		.min(1, { message: "Add a hostname" })
+		.refine((val) => val === val.trim(), {
+			message: "Domain name cannot have leading or trailing spaces",
+		})
+		.transform((val) => val.trim()),
+	path: z.string().min(1).optional(),
+	internalPath: z.string().optional(),
+	stripPath: z.boolean().optional(),
+	port: z
+		.number()
+		.min(1, { message: "Port must be at least 1" })
+		.max(65535, { message: "Port must be 65535 or below" })
+		.optional(),
+	https: z.boolean().optional(),
+	certificateType: z.enum(["letsencrypt", "none", "custom"]).optional(),
+	customCertResolver: z.string(),
+} satisfies z.ZodRawShape;
+
 export const domain = z
-	.object({
-		host: z
-			.string()
-			.min(1, { message: "Add a hostname" })
-			.refine((val) => val === val.trim(), {
-				message: "Domain name cannot have leading or trailing spaces",
-			})
-			.transform((val) => val.trim()),
-		path: z.string().min(1).optional(),
-		internalPath: z.string().optional(),
-		stripPath: z.boolean().optional(),
-		port: z
-			.number()
-			.min(1, { message: "Port must be at least 1" })
-			.max(65535, { message: "Port must be 65535 or below" })
-			.optional(),
-		https: z.boolean().optional(),
-		certificateType: z.enum(["letsencrypt", "none", "custom"]).optional(),
-		customCertResolver: z.string(),
-	})
+	.object(domainShape)
 	.superRefine((input, ctx) => {
 		if (input.https && !input.certificateType) {
 			ctx.addIssue({
@@ -62,28 +64,13 @@ export const domain = z
 		}
 	});
 
+export const domainComposeShape = {
+	...domainShape,
+	serviceName: z.string().min(1, { message: "Service name is required" }),
+} satisfies z.ZodRawShape;
+
 export const domainCompose = z
-	.object({
-		host: z
-			.string()
-			.min(1, { message: "Add a hostname" })
-			.refine((val) => val === val.trim(), {
-				message: "Domain name cannot have leading or trailing spaces",
-			})
-			.transform((val) => val.trim()),
-		path: z.string().min(1).optional(),
-		internalPath: z.string().optional(),
-		stripPath: z.boolean().optional(),
-		port: z
-			.number()
-			.min(1, { message: "Port must be at least 1" })
-			.max(65535, { message: "Port must be 65535 or below" })
-			.optional(),
-		https: z.boolean().optional(),
-		certificateType: z.enum(["letsencrypt", "none", "custom"]).optional(),
-		customCertResolver: z.string(),
-		serviceName: z.string().min(1, { message: "Service name is required" }),
-	})
+	.object(domainComposeShape)
 	.superRefine((input, ctx) => {
 		if (input.https && !input.certificateType) {
 			ctx.addIssue({

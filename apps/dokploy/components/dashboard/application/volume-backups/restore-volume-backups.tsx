@@ -74,6 +74,20 @@ const normalizeRestorePrefix = (value?: string | null) => {
 const normalizeRestorePath = (value: string) =>
 	value.trim().replace(/\\/g, "/").replace(/^\/+/, "");
 
+const getRestorePathCandidates = (value: string) => {
+	const normalizedValue = normalizeRestorePath(value);
+	if (!normalizedValue) return [];
+
+	const segments = normalizedValue.split("/").filter(Boolean);
+	const candidates = [normalizedValue];
+
+	if (segments.length > 1) {
+		candidates.push(segments.slice(1).join("/"));
+	}
+
+	return Array.from(new Set(candidates));
+};
+
 const isBindPath = (value: string) =>
 	value.startsWith("/") ||
 	value.startsWith("./") ||
@@ -189,7 +203,7 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 			backupFile: "",
 			volumeName: "",
 		},
-		resolver: zodResolver(createRestoreVolumeBackupSchema(t)),
+		resolver: zodResolver(createRestoreVolumeBackupSchema(t) as any) as any,
 	});
 
 	const destinationId = form.watch("destinationId");
@@ -329,7 +343,7 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 		if (configuredVolumeBackups.length === 0) return;
 
 		const syncVolumeNameFromBackupFile = async () => {
-			const normalizedBackupPath = normalizeRestorePath(backupFile);
+			const normalizedBackupPaths = getRestorePathCandidates(backupFile);
 			const orderedConfigs = [...configuredVolumeBackups].sort(
 				(a, b) =>
 					normalizeRestorePrefix(b.prefix).length -
@@ -338,11 +352,16 @@ export const RestoreVolumeBackups = ({ id, type, serverId }: Props) => {
 
 			for (const config of orderedConfigs) {
 				const normalizedPrefix = normalizeRestorePrefix(config.prefix);
-				const relativePath = normalizedPrefix
-					? normalizedBackupPath.startsWith(normalizedPrefix)
-						? normalizedBackupPath.slice(normalizedPrefix.length)
-						: null
-					: normalizedBackupPath;
+				const matchedPath = normalizedBackupPaths.find((backupPath) =>
+					normalizedPrefix
+						? backupPath.startsWith(normalizedPrefix)
+						: Boolean(backupPath),
+				);
+				const relativePath = matchedPath
+					? normalizedPrefix
+						? matchedPath.slice(normalizedPrefix.length)
+						: matchedPath
+					: null;
 
 				if (!relativePath) continue;
 

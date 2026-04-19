@@ -1,4 +1,4 @@
-import { formatDistanceToNow } from "date-fns";
+﻿import { formatDistanceToNow } from "date-fns";
 import { Clock, ExternalLinkIcon, KeyIcon, Tag, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useTranslation } from "next-i18next";
@@ -19,7 +19,7 @@ import { AddApiKey } from "./add-api-key";
 export const ShowApiKeys = () => {
 	const { t } = useTranslation("settings");
 	const { data, refetch } = api.user.get.useQuery();
-	const { mutateAsync: deleteApiKey, isLoading: isLoadingDelete } =
+	const { mutateAsync: deleteApiKey, isPending: isPendingDelete } =
 		api.user.deleteApiKey.useMutation();
 
 	return (
@@ -128,7 +128,7 @@ export const ShowApiKeys = () => {
 													<Button
 														variant="ghost"
 														size="icon"
-														isLoading={isLoadingDelete}
+														isPending={isPendingDelete}
 													>
 														<Trash2 className="size-4" />
 													</Button>
@@ -157,3 +157,4 @@ export const ShowApiKeys = () => {
 		</div>
 	);
 };
+

@@ -74,7 +74,7 @@ export const CreateServer = ({ stepper }: Props) => {
 			username: "root",
 			sshKeyId: cloudSSHKey?.sshKeyId || "",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	useEffect(() => {

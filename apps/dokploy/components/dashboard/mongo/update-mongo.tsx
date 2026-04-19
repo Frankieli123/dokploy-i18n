@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBoxIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -46,7 +46,7 @@ export const UpdateMongo = ({ mongoId }: Props) => {
 	const [isOpen, setIsOpen] = useState(false);
 	const utils = api.useUtils();
 	const { t } = useTranslation("common");
-	const { mutateAsync, error, isError, isLoading } =
+	const { mutateAsync, error, isError, isPending } =
 		api.mongo.update.useMutation();
 	const { data } = api.mongo.one.useQuery(
 		{
@@ -61,7 +61,7 @@ export const UpdateMongo = ({ mongoId }: Props) => {
 			description: data?.description ?? "",
 			name: data?.name ?? "",
 		},
-		resolver: zodResolver(createUpdateMongoSchema(t)),
+		resolver: zodResolver(createUpdateMongoSchema(t) as any) as any,
 	});
 	useEffect(() => {
 		if (data) {
@@ -156,7 +156,7 @@ export const UpdateMongo = ({ mongoId }: Props) => {
 								/>
 								<DialogFooter>
 									<Button
-										isLoading={isLoading}
+										isPending={isPending}
 										form="hook-form-update-mongo"
 										type="submit"
 									>
@@ -171,3 +171,4 @@ export const UpdateMongo = ({ mongoId }: Props) => {
 		</Dialog>
 	);
 };
+

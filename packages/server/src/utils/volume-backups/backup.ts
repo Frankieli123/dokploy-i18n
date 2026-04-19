@@ -2,12 +2,35 @@ import path from "node:path";
 import { paths } from "@dokploy/server/constants";
 import { findComposeById } from "@dokploy/server/services/compose";
 import type { findVolumeBackupById } from "@dokploy/server/services/volume-backups";
-import { getS3Credentials, normalizeS3Path } from "../backups/utils";
+import {
+	buildS3ObjectPath,
+	getS3Credentials,
+} from "../backups/utils";
 import { ALL_MOUNTS_VOLUME_NAME, getBackupBaseName, isBindPath } from "./naming";
 
 const shEscape = (value: string | undefined): string => {
 	if (!value) return "''";
 	return `'${value.replace(/'/g, `'\\''`)}'`;
+};
+
+export const getVolumeServiceAppName = (
+	volumeBackup: Awaited<ReturnType<typeof findVolumeBackupById>>,
+): string => {
+	if (volumeBackup.compose?.appName) {
+		return volumeBackup.serviceName
+			? `${volumeBackup.compose.appName}_${volumeBackup.serviceName}`
+			: volumeBackup.compose.appName;
+	}
+
+	return (
+		volumeBackup.application?.appName ||
+		volumeBackup.postgres?.appName ||
+		volumeBackup.mysql?.appName ||
+		volumeBackup.mariadb?.appName ||
+		volumeBackup.mongo?.appName ||
+		volumeBackup.redis?.appName ||
+		volumeBackup.appName
+	);
 };
 
 export const backupVolume = async (
@@ -21,8 +44,13 @@ export const backupVolume = async (
 	const destination = volumeBackup.destination;
 	const isBind = !isAllMounts && isBindPath(volumeName);
 	const backupBaseName = getBackupBaseName(volumeName);
+	const s3AppName = getVolumeServiceAppName(volumeBackup);
 	const backupFileName = `${backupBaseName}-${new Date().toISOString()}.tar`;
-	const bucketDestination = `${normalizeS3Path(prefix)}${backupFileName}`;
+	const bucketDestination = buildS3ObjectPath(
+		backupFileName,
+		s3AppName,
+		prefix || "",
+	);
 	const rcloneFlags = getS3Credentials(volumeBackup.destination);
 	const rcloneDestination = `:s3:${destination.bucket}/${bucketDestination}`;
 	const volumeBackupPath = path.join(VOLUME_BACKUPS_PATH, volumeBackup.appName);
@@ -291,7 +319,7 @@ export const backupVolume = async (
   bash -c "cd /volume_data && tar cvf /backup/${backupFileName} ."
   `;
 
-	const baseCommand = `
+	const backupCommand = `
 	set -e
 	echo "Source: ${volumeName}"
 	echo "Backup file name: ${backupFileName}"
@@ -300,6 +328,9 @@ export const backupVolume = async (
 	echo "Dir: ${volumeBackupPath}"
 	${dockerBackupCommand}
   echo "Volume backup done ✅"
+  `;
+
+	const uploadCommand = `
   echo "Starting upload to S3..."
   ${rcloneCommand}
   echo "Upload to S3 done ✅"
@@ -309,7 +340,10 @@ export const backupVolume = async (
   `;
 
 	if (!turnOff) {
-		return baseCommand;
+		return `
+		${backupCommand}
+		${uploadCommand}
+		`;
 	}
 
 	if (serviceType === "application") {
@@ -318,9 +352,10 @@ export const backupVolume = async (
 		ACTUAL_REPLICAS=$(docker service inspect ${volumeBackup.application?.appName} --format "{{.Spec.Mode.Replicated.Replicas}}")
 		echo "Actual replicas: $ACTUAL_REPLICAS"
 		docker service update --replicas=0 ${volumeBackup.application?.appName}
-        ${baseCommand}
+        ${backupCommand}
 		echo "Starting application to $ACTUAL_REPLICAS replicas"
         docker service update --replicas=$ACTUAL_REPLICAS --with-registry-auth ${volumeBackup.application?.appName}
+		${uploadCommand}
   `);
 	}
 	if (serviceType === "compose") {
@@ -353,8 +388,9 @@ export const backupVolume = async (
 		}
 		return withVolumeBackupLock(`
         ${stopCommand}
-        ${baseCommand}
+        ${backupCommand}
         ${startCommand}
+		${uploadCommand}
   `);
 	}
 };

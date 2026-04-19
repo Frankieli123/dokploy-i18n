@@ -158,7 +158,7 @@ export const AddApiKey = () => {
 	const schema = useMemo(() => createFormSchema(t), [t]);
 
 	const form = useForm<FormValues>({
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 		defaultValues: {
 			name: "",
 			prefix: "",

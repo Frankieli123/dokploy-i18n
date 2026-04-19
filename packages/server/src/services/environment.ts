@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateEnvironment,
 	type apiDuplicateEnvironment,
@@ -9,8 +10,14 @@ import { asc, eq } from "drizzle-orm";
 
 export type Environment = typeof environments.$inferSelect;
 
+const isDefaultEnvironment = (
+	environment:
+		| Pick<Environment, "isDefault" | "name">
+		| { isDefault?: boolean | null; name: string },
+) => environment.isDefault || environment.name === "production";
+
 export const createEnvironment = async (
-	input: typeof apiCreateEnvironment._type,
+	input: z.infer<typeof apiCreateEnvironment>,
 ) => {
 	const newEnvironment = await db
 		.insert(environments)
@@ -33,6 +40,15 @@ export const createEnvironment = async (
 export const findEnvironmentById = async (environmentId: string) => {
 	const environment = await db.query.environments.findFirst({
 		where: eq(environments.environmentId, environmentId),
+		columns: {
+			environmentId: true,
+			name: true,
+			description: true,
+			createdAt: true,
+			env: true,
+			projectId: true,
+			isDefault: true,
+		},
 		with: {
 			applications: {
 				with: {
@@ -87,6 +103,15 @@ export const findEnvironmentsByProjectId = async (projectId: string) => {
 	const projectEnvironments = await db.query.environments.findMany({
 		where: eq(environments.projectId, projectId),
 		orderBy: asc(environments.createdAt),
+		columns: {
+			environmentId: true,
+			name: true,
+			description: true,
+			createdAt: true,
+			env: true,
+			projectId: true,
+			isDefault: true,
+		},
 		with: {
 			applications: true,
 			mariadb: true,
@@ -101,12 +126,33 @@ export const findEnvironmentsByProjectId = async (projectId: string) => {
 	return projectEnvironments;
 };
 
+const environmentHasServices = (
+	env: Awaited<ReturnType<typeof findEnvironmentById>>,
+) => {
+	return (
+		(env.applications?.length ?? 0) > 0 ||
+		(env.compose?.length ?? 0) > 0 ||
+		(env.mariadb?.length ?? 0) > 0 ||
+		(env.mongo?.length ?? 0) > 0 ||
+		(env.mysql?.length ?? 0) > 0 ||
+		(env.postgres?.length ?? 0) > 0 ||
+		(env.redis?.length ?? 0) > 0
+	);
+};
+
 export const deleteEnvironment = async (environmentId: string) => {
 	const currentEnvironment = await findEnvironmentById(environmentId);
-	if (currentEnvironment.name === "production") {
+	if (isDefaultEnvironment(currentEnvironment)) {
 		throw new TRPCError({
 			code: "BAD_REQUEST",
-			message: "You cannot delete the production environment",
+			message: "You cannot delete the default environment",
+		});
+	}
+	if (environmentHasServices(currentEnvironment)) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message:
+				"Cannot delete environment: it has active services. Delete all services first.",
 		});
 	}
 	const deletedEnvironment = await db
@@ -135,7 +181,7 @@ export const updateEnvironmentById = async (
 };
 
 export const duplicateEnvironment = async (
-	input: typeof apiDuplicateEnvironment._type,
+	input: z.infer<typeof apiDuplicateEnvironment>,
 ) => {
 	// Find the original environment
 	const originalEnvironment = await findEnvironmentById(input.environmentId);
@@ -146,7 +192,9 @@ export const duplicateEnvironment = async (
 		.values({
 			name: input.name,
 			description: input.description || originalEnvironment.description,
+			env: originalEnvironment.env,
 			projectId: originalEnvironment.projectId,
+			isDefault: false,
 		})
 		.returning()
 		.then((value) => value[0]);
@@ -162,9 +210,23 @@ export const duplicateEnvironment = async (
 };
 
 export const createProductionEnvironment = async (projectId: string) => {
-	return createEnvironment({
-		name: "production",
-		description: null,
-		projectId,
-	});
+	const newEnvironment = await db
+		.insert(environments)
+		.values({
+			name: "production",
+			description: null,
+			projectId,
+			isDefault: true,
+		})
+		.returning()
+		.then((value) => value[0]);
+
+	if (!newEnvironment) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Error creating the production environment",
+		});
+	}
+
+	return newEnvironment;
 };

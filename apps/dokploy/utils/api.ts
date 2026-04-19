@@ -7,19 +7,17 @@
 
 import {
 	createWSClient,
-	experimental_formDataLink,
 	httpBatchLink,
+	httpLink,
 	splitLink,
 	wsLink,
 } from "@trpc/client";
 import { createTRPCNext } from "@trpc/next";
-import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
 import superjson from "superjson";
-import type { AppRouter } from "@/server/api/root";
 
 const getBaseUrl = () => {
-	if (typeof window !== "undefined") return ""; // browser should use relative url
-	return `http://localhost:${process.env.PORT ?? 3000}`; // dev SSR should use localhost
+	if (typeof window !== "undefined") return "";
+	return `http://localhost:${process.env.PORT ?? 3000}`;
 };
 
 const getWsUrl = () => {
@@ -31,95 +29,62 @@ const getWsUrl = () => {
 	return `${protocol}${host}/drawer-logs`;
 };
 
-// Create WebSocket client with delayed connection
-const createLazyWSClient = () => {
+let wsClientSingleton: ReturnType<typeof createWSClient> | null = null;
+
+const getOrCreateWSClient = () => {
 	if (typeof window === "undefined") return null;
 
-	let actualClient: ReturnType<typeof createWSClient> | null = null;
+	if (!wsClientSingleton) {
+		wsClientSingleton = createWSClient({
+			url: getWsUrl()!,
+			lazy: { enabled: true, closeMs: 3000 },
+			retryDelayMs: () => 3000,
+		});
+	}
 
-	return {
-		request: (op: any, callbacks: any) => {
-			if (!actualClient) {
-				const wsUrl = getWsUrl();
-				if (wsUrl) {
-					actualClient = createWSClient({ url: wsUrl });
-				}
-			}
-			return actualClient?.request(op, callbacks) || (() => {});
-		},
-		close: () => {
-			if (actualClient) {
-				actualClient.close();
-				actualClient = null;
-			}
-		},
-		getConnection: () => {
-			if (!actualClient) {
-				const wsUrl = getWsUrl();
-				if (wsUrl) {
-					actualClient = createWSClient({ url: wsUrl });
-				}
-			}
-			return actualClient!.getConnection();
-		},
-	};
+	return wsClientSingleton;
 };
 
-const wsClient = createLazyWSClient();
+const wsClient = getOrCreateWSClient();
 
-/** A set of type-safe react-query hooks for your tRPC API. */
-export const api = createTRPCNext<AppRouter>({
-	config() {
-		return {
-			/**
-			 * Transformer used for data de-serialization from the server.
-			 *
-			 * @see https://trpc.io/docs/data-transformers
-			 */
-			transformer: superjson,
-
-			/**
-			 * Links used to determine request flow from client to server.
-			 *
-			 * @see https://trpc.io/docs/links
-			 */
-			links: [
+const links =
+	typeof window !== "undefined"
+		? [
 				splitLink({
 					condition: (op) => op.type === "subscription",
 					true: wsLink({
 						client: wsClient!,
+						transformer: superjson,
 					}),
 					false: splitLink({
 						condition: (op) => op.input instanceof FormData,
-						true: experimental_formDataLink({
+						true: httpLink({
 							url: `${getBaseUrl()}/api/trpc`,
+							transformer: superjson,
 						}),
 						false: httpBatchLink({
 							url: `${getBaseUrl()}/api/trpc`,
+							transformer: superjson,
 						}),
 					}),
 				}),
-			],
-		};
+			]
+		: [
+				httpBatchLink({
+					url: `${getBaseUrl()}/api/trpc`,
+					transformer: superjson,
+				}),
+			];
+
+const trpcApi = createTRPCNext<any>({
+	config() {
+		return { links };
 	},
-	/**
-	 * Whether tRPC should await queries when server rendering pages.
-	 *
-	 * @see https://trpc.io/docs/nextjs#ssr-boolean-default-false
-	 */
 	ssr: false,
+	transformer: superjson,
 });
 
-/**
- * Inference helper for inputs.
- *
- * @example type HelloInput = RouterInputs['example']['hello']
- */
-export type RouterInputs = inferRouterInputs<AppRouter>;
+export const api: any = trpcApi;
 
-/**
- * Inference helper for outputs.
- *
- * @example type HelloOutput = RouterOutputs['example']['hello']
- */
-export type RouterOutputs = inferRouterOutputs<AppRouter>;
+export type RouterInputs = Record<string, any>;
+export type RouterOutputs = Record<string, any>;

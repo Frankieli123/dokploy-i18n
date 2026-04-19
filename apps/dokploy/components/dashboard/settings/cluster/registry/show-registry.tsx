@@ -1,4 +1,4 @@
-import { Loader2, Package, Trash2 } from "lucide-react";
+﻿import { Loader2, Package, Trash2 } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { toast } from "sonner";
 import { DialogAction } from "@/components/shared/dialog-action";
@@ -15,9 +15,9 @@ import { HandleRegistry } from "./handle-registry";
 
 export const ShowRegistry = () => {
 	const { t } = useTranslation("settings");
-	const { mutateAsync, isLoading: isRemoving } =
+	const { mutateAsync, isPending: isRemoving } =
 		api.registry.remove.useMutation();
-	const { data, isLoading, refetch } = api.registry.all.useQuery();
+	const { data, isPending, refetch } = api.registry.all.useQuery();
 
 	return (
 		<div className="w-full">
@@ -33,7 +33,7 @@ export const ShowRegistry = () => {
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-2 py-8 border-t">
-						{isLoading ? (
+						{isPending ? (
 							<div className="flex flex-row gap-2 items-center justify-center text-sm text-muted-foreground min-h-[25vh]">
 								<span>{t("settings.common.loading")}</span>
 								<Loader2 className="animate-spin size-4" />
@@ -102,7 +102,7 @@ export const ShowRegistry = () => {
 																	variant="ghost"
 																	size="icon"
 																	className="group hover:bg-red-500/10 "
-																	isLoading={isRemoving}
+																	isPending={isRemoving}
 																>
 																	<Trash2 className="size-4 text-primary group-hover:text-red-500" />
 																</Button>
@@ -126,3 +126,4 @@ export const ShowRegistry = () => {
 		</div>
 	);
 };
+

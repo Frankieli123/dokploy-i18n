@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -145,15 +145,15 @@ export const AiMcpServersForm = () => {
 	const { t } = useTranslation("settings");
 	const utils = api.useUtils();
 
-	const { data: servers, isLoading } = api.ai.mcpServers.list.useQuery(
+	const { data: servers, isPending } = api.ai.mcpServers.list.useQuery(
 		{ limit: 50, offset: 0 },
 		{ refetchOnWindowFocus: false },
 	);
-	const { mutateAsync: createServer, isLoading: isCreating } =
+	const { mutateAsync: createServer, isPending: isCreating } =
 		api.ai.mcpServers.create.useMutation();
-	const { mutateAsync: updateServer, isLoading: isUpdating } =
+	const { mutateAsync: updateServer, isPending: isUpdating } =
 		api.ai.mcpServers.update.useMutation();
-	const { mutateAsync: deleteServer, isLoading: isDeleting } =
+	const { mutateAsync: deleteServer, isPending: isDeleting } =
 		api.ai.mcpServers.delete.useMutation();
 
 	const [open, setOpen] = useState(false);
@@ -165,7 +165,7 @@ export const AiMcpServersForm = () => {
 	const [testing, setTesting] = useState<Record<string, boolean>>({});
 
 	const form = useForm<McpServerFormValues>({
-		resolver: zodResolver(mcpServerSchema),
+		resolver: zodResolver(mcpServerSchema as any) as any,
 		defaultValues: {
 			transportType: "http",
 			name: "",
@@ -623,7 +623,7 @@ export const AiMcpServersForm = () => {
 										</Button>
 										<Button
 											type="submit"
-											isLoading={isCreating || isUpdating}
+											isPending={isCreating || isUpdating}
 											disabled={isCreating || isUpdating}
 										>
 											{t("settings.common.save")}
@@ -637,7 +637,7 @@ export const AiMcpServersForm = () => {
 				</div>
 			</div>
 
-			{isLoading ? (
+			{isPending ? (
 				<div className="flex items-center justify-center text-sm text-muted-foreground min-h-[12vh]">
 					<span>{t("settings.common.loading")}</span>
 					<Loader2 className="animate-spin size-4 ml-2" />
@@ -666,7 +666,7 @@ export const AiMcpServersForm = () => {
 											</div>
 											<CardDescription className="truncate">
 												{`${transportType.toUpperCase()}${
-													subtitle.trim().length > 0 ? ` • ${subtitle}` : ""
+													subtitle.trim().length > 0 ? ` 鈥?${subtitle}` : ""
 												}`}
 											</CardDescription>
 										</div>
@@ -817,3 +817,4 @@ export const AiMcpServersForm = () => {
 		</div>
 	);
 };
+

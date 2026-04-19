@@ -1,4 +1,4 @@
-import * as TooltipPrimitive from "@radix-ui/react-tooltip";
+﻿import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import { Ban, CheckCircle2, RefreshCcw, Rocket, Terminal } from "lucide-react";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
@@ -28,13 +28,13 @@ export const ComposeActions = ({ composeId }: Props) => {
 		{ enabled: !!composeId },
 	);
 	const { mutateAsync: update } = api.compose.update.useMutation();
-	const { mutateAsync: deploy, isLoading: isDeploying } =
+	const { mutateAsync: deploy, isPending: isDeploying } =
 		api.compose.deploy.useMutation();
-	const { mutateAsync: redeploy, isLoading: isRedeploying } =
+	const { mutateAsync: redeploy, isPending: isRedeploying } =
 		api.compose.redeploy.useMutation();
-	const { mutateAsync: start, isLoading: isStarting } =
+	const { mutateAsync: start, isPending: isStarting } =
 		api.compose.start.useMutation();
-	const { mutateAsync: stop, isLoading: isStopping } =
+	const { mutateAsync: stop, isPending: isStopping } =
 		api.compose.stop.useMutation();
 	return (
 		<div className="flex flex-row gap-4 w-full flex-wrap ">
@@ -61,7 +61,7 @@ export const ComposeActions = ({ composeId }: Props) => {
 				>
 					<Button
 						variant="default"
-						isLoading={isDeploying}
+						isPending={isDeploying}
 						className="flex items-center gap-1.5 group focus-visible:ring-2 focus-visible:ring-offset-2"
 					>
 						<Tooltip>
@@ -98,7 +98,7 @@ export const ComposeActions = ({ composeId }: Props) => {
 				>
 					<Button
 						variant="secondary"
-						isLoading={isRedeploying}
+						isPending={isRedeploying}
 						className="flex items-center gap-1.5 group focus-visible:ring-2 focus-visible:ring-offset-2"
 					>
 						<Tooltip>
@@ -137,7 +137,7 @@ export const ComposeActions = ({ composeId }: Props) => {
 					>
 						<Button
 							variant="secondary"
-							isLoading={isStarting}
+							isPending={isStarting}
 							className="flex items-center gap-1.5 group focus-visible:ring-2 focus-visible:ring-offset-2"
 						>
 							<Tooltip>
@@ -174,7 +174,7 @@ export const ComposeActions = ({ composeId }: Props) => {
 					>
 						<Button
 							variant="destructive"
-							isLoading={isStopping}
+							isPending={isStopping}
 							className="flex items-center gap-1.5 group focus-visible:ring-2 focus-visible:ring-offset-2"
 						>
 							<Tooltip>
@@ -233,3 +233,4 @@ export const ComposeActions = ({ composeId }: Props) => {
 		</div>
 	);
 };
+

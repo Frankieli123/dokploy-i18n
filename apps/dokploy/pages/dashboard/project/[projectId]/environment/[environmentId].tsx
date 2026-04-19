@@ -2,16 +2,20 @@ import type { findEnvironmentById } from "@dokploy/server";
 import { validateRequest } from "@dokploy/server/lib/auth";
 import { createServerSideHelpers } from "@trpc/react-query/server";
 import {
+	Ban,
 	Check,
+	CheckCircle2,
 	ChevronsUpDown,
 	CircuitBoard,
 	FolderInput,
 	GlobeIcon,
 	Loader2,
+	Play,
 	PlusIcon,
 	Search,
 	ServerIcon,
 	SquareTerminal,
+	Trash2,
 	X,
 } from "lucide-react";
 import type {
@@ -19,7 +23,7 @@ import type {
 	InferGetServerSidePropsType,
 } from "next";
 import Head from "next/head";
-import { useRouter } from "next/router";
+import Link from "next/link";
 import { useTranslation } from "next-i18next";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -30,6 +34,7 @@ import { AddCompose } from "@/components/dashboard/project/add-compose";
 import { AddDatabase } from "@/components/dashboard/project/add-database";
 import { AddTemplate } from "@/components/dashboard/project/add-template";
 import { AdvancedEnvironmentSelector } from "@/components/dashboard/project/advanced-environment-selector";
+import { DuplicateProject } from "@/components/dashboard/project/duplicate-project";
 import { EnvironmentVariables } from "@/components/dashboard/project/environment-variables";
 import { ProjectEnvironment } from "@/components/dashboard/projects/project-environment";
 import {
@@ -40,6 +45,7 @@ import {
 	RedisIcon,
 } from "@/components/icons/data-tools-icons";
 import { DashboardLayout } from "@/components/layouts/dashboard-layout";
+import { AlertBlock } from "@/components/shared/alert-block";
 import { BreadcrumbSidebar } from "@/components/shared/breadcrumb-sidebar";
 import { DateTooltip } from "@/components/shared/date-tooltip";
 import { DialogAction } from "@/components/shared/dialog-action";
@@ -62,6 +68,15 @@ import {
 	CommandInput,
 	CommandItem,
 } from "@/components/ui/command";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+	DialogTrigger,
+} from "@/components/ui/dialog";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -343,8 +358,13 @@ const EnvironmentPage = (
 	const { data: currentEnvironment } = api.environment.one.useQuery({
 		environmentId,
 	});
-	const { data: allProjects } = api.project.all.useQuery();
+	const { data: allProjects } = api.project.allForPermissions.useQuery();
 	const router = useRouter();
+
+	const canDeleteServices =
+		auth?.role === "owner" ||
+		auth?.role === "admin" ||
+		auth?.canDeleteServices === true;
 
 	const [isMoveDialogOpen, setIsMoveDialogOpen] = useState(false);
 	const [selectedTargetProject, setSelectedTargetProject] =
@@ -398,6 +418,7 @@ const EnvironmentPage = (
 	};
 
 	const handleServiceSelect = (serviceId: string, event: React.MouseEvent) => {
+		event.preventDefault();
 		event.stopPropagation();
 		setSelectedServices((prev) =>
 			prev.includes(serviceId)
@@ -1028,18 +1049,32 @@ const EnvironmentPage = (
 													description={t("services.bulk.start.confirm", {
 														count: selectedServices.length,
 													})}
+													type="default"
 													onClick={handleBulkStart}
 												>
-													{t("button.start")}
+													<Button
+														variant="ghost"
+														className="w-full justify-start"
+													>
+														<CheckCircle2 className="mr-2 h-4 w-4" />
+														{t("button.start")}
+													</Button>
 												</DialogAction>
 												<DialogAction
 													title={t("services.bulk.stop.title")}
 													description={t("services.bulk.stop.confirm", {
 														count: selectedServices.length,
 													})}
+													type="destructive"
 													onClick={handleBulkStop}
 												>
-													{t("button.stop")}
+													<Button
+														variant="ghost"
+														className="w-full justify-start text-destructive"
+													>
+														<Ban className="mr-2 h-4 w-4" />
+														{t("button.stop")}
+													</Button>
 												</DialogAction>
 												<DialogAction
 													title={t("services.bulk.deploy.title")}
@@ -1048,28 +1083,331 @@ const EnvironmentPage = (
 													})}
 													onClick={handleBulkDeploy}
 													type="default"
+													disabled={
+														selectedServices.length === 0 || isBulkActionLoading
+													}
 												>
-													{t("button.deploy")}
+													<Button
+														variant="ghost"
+														className="w-full justify-start"
+													>
+														<Play className="mr-2 h-4 w-4" />
+														{t("button.deploy")}
+													</Button>
 												</DialogAction>
-												<DialogAction
-													title={t("services.bulk.delete.title")}
-													description={t("services.bulk.delete.confirm", {
-														count: selectedServices.length,
-													})}
-													onClick={() => setIsBulkDeleteDialogOpen(true)}
+												{canDeleteServices && (
+													<>
+														<DialogAction
+															title={t("services.bulk.delete.title")}
+															description={
+																<div className="space-y-3">
+																	<p>
+																		{t("services.bulk.delete.confirm", {
+																			count: selectedServices.length,
+																		})}
+																	</p>
+																	{selectedServicesWithRunningStatus.length >
+																		0 && (
+																		<AlertBlock type="warning">
+																			{t(
+																				"services.bulk.delete.runningWarning",
+																				{
+																					count:
+																						selectedServicesWithRunningStatus.length,
+																					names:
+																						selectedServicesWithRunningStatus
+																							.map((service) => service.name)
+																							.join(", "),
+																				},
+																			)}
+																		</AlertBlock>
+																	)}
+																</div>
+															}
+															type="destructive"
+															disabled={
+																selectedServicesWithRunningStatus.length > 0
+															}
+															onClick={() => setIsBulkDeleteDialogOpen(true)}
+														>
+															<Button
+																variant="ghost"
+																className="w-full justify-start text-destructive"
+															>
+																<Trash2 className="mr-2 h-4 w-4" />
+																{t("button.delete")}
+															</Button>
+														</DialogAction>
+														<DuplicateProject
+															environmentId={environmentId}
+															services={applications}
+															selectedServiceIds={selectedServices}
+														/>
+													</>
+												)}
+												<Dialog
+													open={isMoveDialogOpen}
+													onOpenChange={(open) => {
+														setIsMoveDialogOpen(open);
+														if (open) {
+															setIsDropdownOpen(false);
+														}
+														if (!open) {
+															setSelectedTargetProject("");
+															setSelectedTargetEnvironment("");
+														}
+													}}
 												>
-													{t("button.delete")}
-												</DialogAction>
-												<DialogAction
-													title={t("services.bulk.move.title")}
-													description={t("services.bulk.move.description", {
-														count: selectedServices.length,
-													})}
-													onClick={() => setIsMoveDialogOpen(true)}
-													type="default"
+													<DialogTrigger asChild>
+														<Button
+															variant="ghost"
+															className="w-full justify-start"
+														>
+															<FolderInput className="mr-2 h-4 w-4" />
+															{t("services.bulk.move.title")}
+														</Button>
+													</DialogTrigger>
+													<DialogContent>
+														<DialogHeader>
+															<DialogTitle>
+																{t("services.bulk.move.title")}
+															</DialogTitle>
+															<DialogDescription>
+																{t("services.bulk.move.description", {
+																	count: selectedServices.length,
+																})}
+															</DialogDescription>
+														</DialogHeader>
+														<div className="flex flex-col gap-4">
+															{allProjects?.length === 0 ? (
+																<div className="flex flex-col items-center justify-center gap-2 py-4">
+																	<FolderInput className="h-8 w-8 text-muted-foreground" />
+																	<p className="text-center text-sm text-muted-foreground">
+																		{t("services.bulk.move.noProjects")}
+																	</p>
+																</div>
+															) : (
+																<>
+																	<div className="flex flex-col gap-2">
+																		<label
+																			htmlFor="target-project"
+																			className="text-sm font-medium"
+																		>
+																			{t(
+																				"services.bulk.move.targetProjectLabel",
+																			)}
+																		</label>
+																		<Select
+																			value={selectedTargetProject}
+																			onValueChange={(value) => {
+																				setSelectedTargetProject(value);
+																				setSelectedTargetEnvironment("");
+																			}}
+																		>
+																			<SelectTrigger id="target-project">
+																				<SelectValue
+																					placeholder={t(
+																						"services.bulk.move.targetProjectPlaceholder",
+																					)}
+																				/>
+																			</SelectTrigger>
+																			<SelectContent>
+																				{allProjects?.map((project) => (
+																					<SelectItem
+																						key={project.projectId}
+																						value={project.projectId}
+																					>
+																						{project.name}
+																					</SelectItem>
+																				))}
+																			</SelectContent>
+																		</Select>
+																	</div>
+																	{selectedTargetProject && (
+																		<div className="flex flex-col gap-2">
+																			<label
+																				htmlFor="target-environment"
+																				className="text-sm font-medium"
+																			>
+																				{t(
+																					"services.bulk.move.targetEnvironmentLabel",
+																				)}
+																			</label>
+																			<Select
+																				value={selectedTargetEnvironment}
+																				onValueChange={
+																					setSelectedTargetEnvironment
+																				}
+																			>
+																				<SelectTrigger id="target-environment">
+																					<SelectValue
+																						placeholder={t(
+																							"services.bulk.move.targetEnvironmentPlaceholder",
+																						)}
+																					/>
+																				</SelectTrigger>
+																				<SelectContent>
+																					{selectedProjectEnvironments
+																						?.filter(
+																							(environment) =>
+																								environment.environmentId !==
+																								environmentId,
+																						)
+																						.map((environment) => (
+																							<SelectItem
+																								key={environment.environmentId}
+																								value={
+																									environment.environmentId
+																								}
+																							>
+																								{environment.name}
+																							</SelectItem>
+																						))}
+																				</SelectContent>
+																			</Select>
+																		</div>
+																	)}
+																</>
+															)}
+														</div>
+														<DialogFooter>
+															<Button
+																variant="outline"
+																onClick={() => setIsMoveDialogOpen(false)}
+															>
+																{t("button.cancel")}
+															</Button>
+															<Button
+																onClick={handleBulkMove}
+																isLoading={isBulkActionLoading}
+																disabled={
+																	allProjects?.length === 0 ||
+																	!selectedTargetProject ||
+																	!selectedTargetEnvironment
+																}
+															>
+																{t("services.bulk.move.title")}
+															</Button>
+														</DialogFooter>
+													</DialogContent>
+												</Dialog>
+												<Dialog
+													open={isBulkDeleteDialogOpen}
+													onOpenChange={(open) => {
+														setIsBulkDeleteDialogOpen(open);
+														if (open) {
+															setIsDropdownOpen(false);
+														}
+														if (!open) {
+															setDeleteVolumes(false);
+														}
+													}}
 												>
-													{t("services.bulk.move.title")}
-												</DialogAction>
+													<DialogContent>
+														<DialogHeader>
+															<DialogTitle>
+																{t("services.bulk.delete.title")}
+															</DialogTitle>
+															<DialogDescription>
+																{t("services.bulk.delete.confirm", {
+																	count: selectedServices.length,
+																})}
+															</DialogDescription>
+														</DialogHeader>
+														<div className="space-y-4">
+															{selectedServicesWithRunningStatus.length > 0 && (
+																<AlertBlock type="warning">
+																	{t("services.bulk.delete.runningWarning", {
+																		count:
+																			selectedServicesWithRunningStatus.length,
+																		names: selectedServicesWithRunningStatus
+																			.map((service) => service.name)
+																			.join(", "),
+																	})}
+																</AlertBlock>
+															)}
+															<div className="max-h-40 space-y-2 overflow-y-auto">
+																{selectedServices.map((serviceId) => {
+																	const service = filteredServices.find(
+																		(item) => item.id === serviceId,
+																	);
+																	if (!service) return null;
+																	return (
+																		<div
+																			key={serviceId}
+																			className="flex items-center space-x-2 text-sm"
+																		>
+																			<span className="rounded bg-secondary px-2 py-1 text-xs">
+																				{service.type}
+																			</span>
+																			<span>{service.name}</span>
+																		</div>
+																	);
+																})}
+															</div>
+															{(() => {
+																const servicesWithVolumeSupport =
+																	selectedServices.filter((serviceId) => {
+																		const service = filteredServices.find(
+																			(item) => item.id === serviceId,
+																		);
+																		return service?.type === "compose";
+																	});
+
+																if (servicesWithVolumeSupport.length === 0) {
+																	return null;
+																}
+
+																return (
+																	<div className="space-y-2">
+																		<div className="flex items-center space-x-2">
+																			<Checkbox
+																				id="deleteVolumes"
+																				checked={deleteVolumes}
+																				onCheckedChange={(checked) =>
+																					setDeleteVolumes(checked === true)
+																				}
+																			/>
+																			<label
+																				htmlFor="deleteVolumes"
+																				className="text-sm font-medium"
+																			>
+																				{t("services.bulk.deleteVolumes.label")}
+																			</label>
+																		</div>
+																		<p className="text-xs text-muted-foreground">
+																			{t("services.bulk.deleteVolumes.info", {
+																				count: servicesWithVolumeSupport.length,
+																			})}
+																		</p>
+																	</div>
+																);
+															})()}
+														</div>
+														<DialogFooter>
+															<Button
+																variant="outline"
+																onClick={() => setIsBulkDeleteDialogOpen(false)}
+															>
+																{t("button.cancel")}
+															</Button>
+															<Button
+																variant="destructive"
+																disabled={
+																	isBulkActionLoading ||
+																	selectedServicesWithRunningStatus.length > 0
+																}
+																onClick={async () => {
+																	await handleBulkDelete(deleteVolumes);
+																	setIsBulkDeleteDialogOpen(false);
+																	setDeleteVolumes(false);
+																}}
+															>
+																{t("services.bulk.delete.title")}
+															</Button>
+														</DialogFooter>
+													</DialogContent>
+												</Dialog>
 											</DropdownMenuContent>
 										</DropdownMenu>
 									</div>
@@ -1247,101 +1585,99 @@ const EnvironmentPage = (
 										<div className="flex w-full flex-col gap-4">
 											<div className="gap-5 pb-10 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
 												{filteredServices?.map((service) => (
-													<Card
+													<Link
 														key={service.id}
-														onClick={() => {
-															router.push(
-																`/dashboard/project/${projectId}/environment/${environmentId}/services/${service.type}/${service.id}`,
-															);
-														}}
-														className="flex flex-col group relative cursor-pointer bg-transparent transition-colors hover:bg-border"
+														href={`/dashboard/project/${projectId}/environment/${environmentId}/services/${service.type}/${service.id}`}
+														className="block"
 													>
-														{service.serverId && (
-															<div className="absolute -left-1 -top-2">
-																<ServerIcon className="size-4 text-muted-foreground" />
-															</div>
-														)}
-														<div className="absolute -right-1 -top-2">
-															<StatusTooltip status={service.status} />
-														</div>
-
-														<div
-															className={cn(
-																"absolute -left-3 -bottom-3 size-9 translate-y-1 rounded-full p-0 transition-all duration-200 z-10 bg-background border",
-																selectedServices.includes(service.id)
-																	? "opacity-100 translate-y-0"
-																	: "opacity-0 group-hover:translate-y-0 group-hover:opacity-100",
-															)}
-															onClick={(e) =>
-																handleServiceSelect(service.id, e)
-															}
-														>
-															<div className="h-full w-full flex items-center justify-center">
-																<Checkbox
-																	checked={selectedServices.includes(
-																		service.id,
-																	)}
-																	className="data-[state=checked]:bg-primary"
-																/>
-															</div>
-														</div>
-
-														<CardHeader>
-															<CardTitle className="flex items-center justify-between">
-																<div className="flex flex-row items-center gap-2 justify-between w-full">
-																	<div className="flex flex-col gap-2">
-																		<span className="text-base flex items-center gap-2 font-medium leading-none flex-wrap">
-																			{service.name}
-																		</span>
-																		{service.description && (
-																			<span className="text-sm font-medium text-muted-foreground">
-																				{service.description}
-																			</span>
-																		)}
-																	</div>
-
-																	<span className="text-sm font-medium text-muted-foreground self-start">
-																		{service.type === "postgres" && (
-																			<PostgresqlIcon className="h-7 w-7" />
-																		)}
-																		{service.type === "redis" && (
-																			<RedisIcon className="h-7 w-7" />
-																		)}
-																		{service.type === "mariadb" && (
-																			<MariadbIcon className="h-7 w-7" />
-																		)}
-																		{service.type === "mongo" && (
-																			<MongodbIcon className="h-7 w-7" />
-																		)}
-																		{service.type === "mysql" && (
-																			<MysqlIcon className="h-7 w-7" />
-																		)}
-																		{service.type === "application" && (
-																			<GlobeIcon className="h-6 w-6" />
-																		)}
-																		{service.type === "compose" && (
-																			<CircuitBoard className="h-6 w-6" />
-																		)}
-																	</span>
+														<Card className="flex flex-col group relative cursor-pointer bg-transparent transition-colors hover:bg-border">
+															{service.serverId && (
+																<div className="absolute -left-1 -top-2">
+																	<ServerIcon className="size-4 text-muted-foreground" />
 																</div>
-															</CardTitle>
-														</CardHeader>
-														<CardFooter className="mt-auto">
-															<div className="space-y-1 text-sm w-full">
-																{service.serverName && (
-																	<div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
-																		<ServerIcon className="size-3" />
-																		<span className="truncate">
-																			{service.serverName}
+															)}
+															<div className="absolute -right-1 -top-2">
+																<StatusTooltip status={service.status} />
+															</div>
+
+															<div
+																className={cn(
+																	"absolute -left-3 -bottom-3 size-9 translate-y-1 rounded-full p-0 transition-all duration-200 z-10 bg-background border",
+																	selectedServices.includes(service.id)
+																		? "opacity-100 translate-y-0"
+																		: "opacity-0 group-hover:translate-y-0 group-hover:opacity-100",
+																)}
+																onClick={(e) =>
+																	handleServiceSelect(service.id, e)
+																}
+															>
+																<div className="h-full w-full flex items-center justify-center">
+																	<Checkbox
+																		checked={selectedServices.includes(
+																			service.id,
+																		)}
+																		className="data-[state=checked]:bg-primary"
+																	/>
+																</div>
+															</div>
+
+															<CardHeader>
+																<CardTitle className="flex items-center justify-between">
+																	<div className="flex flex-row items-center gap-2 justify-between w-full">
+																		<div className="flex flex-col gap-2">
+																			<span className="text-base flex items-center gap-2 font-medium leading-none flex-wrap">
+																				{service.name}
+																			</span>
+																			{service.description && (
+																				<span className="text-sm font-medium text-muted-foreground">
+																					{service.description}
+																				</span>
+																			)}
+																		</div>
+
+																		<span className="text-sm font-medium text-muted-foreground self-start">
+																			{service.type === "postgres" && (
+																				<PostgresqlIcon className="h-7 w-7" />
+																			)}
+																			{service.type === "redis" && (
+																				<RedisIcon className="h-7 w-7" />
+																			)}
+																			{service.type === "mariadb" && (
+																				<MariadbIcon className="h-7 w-7" />
+																			)}
+																			{service.type === "mongo" && (
+																				<MongodbIcon className="h-7 w-7" />
+																			)}
+																			{service.type === "mysql" && (
+																				<MysqlIcon className="h-7 w-7" />
+																			)}
+																			{service.type === "application" && (
+																				<GlobeIcon className="h-6 w-6" />
+																			)}
+																			{service.type === "compose" && (
+																				<CircuitBoard className="h-6 w-6" />
+																			)}
 																		</span>
 																	</div>
-																)}
-																<DateTooltip date={service.createdAt}>
-																	{t("project.createdAt")}
-																</DateTooltip>
-															</div>
-														</CardFooter>
-													</Card>
+																</CardTitle>
+															</CardHeader>
+															<CardFooter className="mt-auto">
+																<div className="space-y-1 text-sm w-full">
+																	{service.serverName && (
+																		<div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
+																			<ServerIcon className="size-3" />
+																			<span className="truncate">
+																				{service.serverName}
+																			</span>
+																		</div>
+																	)}
+																	<DateTooltip date={service.createdAt}>
+																		{t("project.createdAt")}
+																	</DateTooltip>
+																</div>
+															</CardFooter>
+														</Card>
+													</Link>
 												))}
 											</div>
 										</div>

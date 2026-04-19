@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "next-i18next";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
@@ -54,13 +54,13 @@ export const AddCommandCompose = ({ composeId }: Props) => {
 
 	const utils = api.useUtils();
 
-	const { mutateAsync, isLoading } = api.compose.update.useMutation();
+	const { mutateAsync, isPending } = api.compose.update.useMutation();
 
 	const form = useForm<AddCommand>({
 		defaultValues: {
 			command: "",
 		},
-		resolver: zodResolver(AddRedirectSchema),
+		resolver: zodResolver(AddRedirectSchema as any) as any,
 	});
 
 	useEffect(() => {
@@ -134,7 +134,7 @@ export const AddCommandCompose = ({ composeId }: Props) => {
 							/>
 						</div>
 						<div className="flex justify-end">
-							<Button isLoading={isLoading} type="submit" className="w-fit">
+							<Button isPending={isPending} type="submit" className="w-fit">
 								{t("button.save")}
 							</Button>
 						</div>
@@ -144,3 +144,4 @@ export const AddCommandCompose = ({ composeId }: Props) => {
 		</Card>
 	);
 };
+

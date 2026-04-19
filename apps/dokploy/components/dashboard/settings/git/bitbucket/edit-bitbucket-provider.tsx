@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBoxIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -61,7 +61,7 @@ export const EditBitbucketProvider = ({ bitbucketId }: Props) => {
 	const utils = api.useUtils();
 	const [isOpen, setIsOpen] = useState(false);
 	const { mutateAsync, error, isError } = api.bitbucket.update.useMutation();
-	const { mutateAsync: testConnection, isLoading } =
+	const { mutateAsync: testConnection, isPending } =
 		api.bitbucket.testConnection.useMutation();
 	const schema = createSchema(t);
 	const form = useForm<Schema>({
@@ -72,7 +72,7 @@ export const EditBitbucketProvider = ({ bitbucketId }: Props) => {
 			apiToken: "",
 			appPassword: "",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	const username = form.watch("username");
@@ -295,7 +295,7 @@ export const EditBitbucketProvider = ({ bitbucketId }: Props) => {
 									<Button
 										type="button"
 										variant={"secondary"}
-										isLoading={isLoading}
+										isPending={isPending}
 										onClick={async () => {
 											await testConnection({
 												bitbucketId,
@@ -329,7 +329,7 @@ export const EditBitbucketProvider = ({ bitbucketId }: Props) => {
 									>
 										{t("settings.gitProviders.bitbucket.edit.testButton")}
 									</Button>
-									<Button type="submit" isLoading={form.formState.isSubmitting}>
+									<Button type="submit" isPending={form.formState.isSubmitting}>
 										{t("settings.gitProviders.bitbucket.edit.updateButton")}
 									</Button>
 								</div>
@@ -341,3 +341,4 @@ export const EditBitbucketProvider = ({ bitbucketId }: Props) => {
 		</Dialog>
 	);
 };
+

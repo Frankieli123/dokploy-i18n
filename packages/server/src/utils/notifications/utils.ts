@@ -1,3 +1,4 @@
+import { db } from "@dokploy/server/db";
 import type {
 	discord,
 	email,
@@ -7,7 +8,76 @@ import type {
 	slack,
 	telegram,
 } from "@dokploy/server/db/schema";
+import { notifications } from "@dokploy/server/db/schema";
+import { and, eq } from "drizzle-orm";
 import nodemailer from "nodemailer";
+
+export const defaultNotificationWith = {
+	email: true,
+	discord: true,
+	telegram: true,
+	slack: true,
+	gotify: true,
+	ntfy: true,
+	lark: true,
+} as const;
+
+export type NotificationEventFlag =
+	| "appDeploy"
+	| "appBuildError"
+	| "databaseBackup"
+	| "volumeBackup"
+	| "dokployRestart"
+	| "dockerCleanup"
+	| "serverThreshold";
+
+export const getNotificationsByEvent = async (
+	eventFlag: NotificationEventFlag,
+	organizationId?: string | null,
+) => {
+	const where = organizationId
+		? and(
+				eq(notifications[eventFlag], true),
+				eq(notifications.organizationId, organizationId),
+			)
+		: eq(notifications[eventFlag], true);
+
+	return await db.query.notifications.findMany({
+		where,
+		with: defaultNotificationWith,
+	});
+};
+
+export type NotificationDispatchTarget = Awaited<
+	ReturnType<typeof getNotificationsByEvent>
+>[number];
+
+export const dispatchNotifications = async ({
+	eventFlag,
+	organizationId,
+	send,
+}: {
+	eventFlag: NotificationEventFlag;
+	organizationId?: string | null;
+	send: (notification: NotificationDispatchTarget) => Promise<void>;
+}) => {
+	try {
+		const notificationList = await getNotificationsByEvent(
+			eventFlag,
+			organizationId,
+		);
+
+		for (const notification of notificationList) {
+			try {
+				await send(notification);
+			} catch (error) {
+				console.error(`[Notifications/${eventFlag}]`, error);
+			}
+		}
+	} catch (error) {
+		console.error(`[Notifications/${eventFlag}] Failed to dispatch`, error);
+	}
+};
 
 export const sendEmailNotification = async (
 	connection: typeof email.$inferInsert,

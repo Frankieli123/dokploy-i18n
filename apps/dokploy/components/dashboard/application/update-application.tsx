@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { PenBoxIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useState } from "react";
@@ -45,7 +45,7 @@ export const UpdateApplication = ({ applicationId }: Props) => {
 	const [isOpen, setIsOpen] = useState(false);
 	const utils = api.useUtils();
 	const { t } = useTranslation("common");
-	const { mutateAsync, error, isError, isLoading } =
+	const { mutateAsync, error, isError, isPending } =
 		api.application.update.useMutation();
 	const { data } = api.application.one.useQuery(
 		{
@@ -60,7 +60,7 @@ export const UpdateApplication = ({ applicationId }: Props) => {
 			description: data?.description ?? "",
 			name: data?.name ?? "",
 		},
-		resolver: zodResolver(updateApplicationSchema),
+		resolver: zodResolver(updateApplicationSchema as any) as any,
 	});
 	useEffect(() => {
 		if (data) {
@@ -163,7 +163,7 @@ export const UpdateApplication = ({ applicationId }: Props) => {
 								/>
 								<DialogFooter>
 									<Button
-										isLoading={isLoading}
+										isPending={isPending}
 										form="hook-form-update-application"
 										type="submit"
 									>
@@ -178,3 +178,4 @@ export const UpdateApplication = ({ applicationId }: Props) => {
 		</Dialog>
 	);
 };
+

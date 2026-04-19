@@ -3,6 +3,7 @@ import { createServerSideHelpers } from "@trpc/react-query/server";
 import type { GetServerSidePropsContext } from "next";
 import type { ReactElement } from "react";
 import superjson from "superjson";
+import { ManageCustomRoles } from "@/components/proprietary/roles/manage-custom-roles";
 import { ShowInvitations } from "@/components/dashboard/settings/users/show-invitations";
 import { ShowUsers } from "@/components/dashboard/settings/users/show-users";
 import { DashboardLayout } from "@/components/layouts/dashboard-layout";
@@ -12,6 +13,7 @@ import { getLocale, serverSideTranslations } from "@/utils/i18n";
 const Page = () => {
 	return (
 		<div className="flex flex-col gap-4 w-full">
+			<ManageCustomRoles />
 			<ShowUsers />
 			<ShowInvitations />
 		</div>

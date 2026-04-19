@@ -74,7 +74,7 @@ export const Configure2FA = () => {
 	const schema = useMemo(() => createPasswordSchema(t), [t]);
 
 	const form = useForm<PasswordForm>({
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 		defaultValues: {
 			password: "",
 		},

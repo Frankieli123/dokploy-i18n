@@ -66,7 +66,7 @@ export const IsolatedDeploymentTab = ({ composeId }: Props) => {
 		defaultValues: {
 			isolatedDeployment: false,
 		},
-		resolver: zodResolver(isolatedSchema),
+		resolver: zodResolver(isolatedSchema as any) as any,
 	});
 
 	useEffect(() => {

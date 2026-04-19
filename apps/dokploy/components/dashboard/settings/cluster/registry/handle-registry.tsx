@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { AlertTriangle, PenBoxIcon, PlusIcon } from "lucide-react";
 import { useTranslation } from "next-i18next";
 import { useEffect, useMemo, useState } from "react";
@@ -87,7 +87,7 @@ export const HandleRegistry = ({ registryId }: Props) => {
 	const { data: servers } = api.server.withSSHKey.useQuery();
 	const {
 		mutateAsync: testRegistry,
-		isLoading,
+		isPending,
 		error: testRegistryError,
 		isError: testRegistryIsError,
 	} = api.registry.testRegistry.useMutation();
@@ -101,7 +101,7 @@ export const HandleRegistry = ({ registryId }: Props) => {
 			registryName: "",
 			serverId: "",
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	const password = form.watch("password");
@@ -376,7 +376,7 @@ export const HandleRegistry = ({ registryId }: Props) => {
 								<Button
 									type="button"
 									variant={"secondary"}
-									isLoading={isLoading}
+									isPending={isPending}
 									onClick={async () => {
 										const validationResult = schema.safeParse({
 											username,
@@ -424,7 +424,7 @@ export const HandleRegistry = ({ registryId }: Props) => {
 								>
 									{t("settings.registry.form.test")}
 								</Button>
-								<Button isLoading={form.formState.isSubmitting} type="submit">
+								<Button isPending={form.formState.isSubmitting} type="submit">
 									{registryId
 										? t("settings.common.update")
 										: t("settings.common.create")}
@@ -437,3 +437,4 @@ export const HandleRegistry = ({ registryId }: Props) => {
 		</Dialog>
 	);
 };
+

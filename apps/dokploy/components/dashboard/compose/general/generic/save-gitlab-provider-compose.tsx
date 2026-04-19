@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { CheckIcon, ChevronsUpDown, X } from "lucide-react";
 import Link from "next/link";
 import { useTranslation } from "next-i18next";
@@ -89,7 +89,7 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 	const { data: gitlabProviders } = api.gitlab.gitlabProviders.useQuery();
 	const { data, refetch } = api.compose.one.useQuery({ composeId });
 
-	const { mutateAsync, isLoading: isSavingGitlabProvider } =
+	const { mutateAsync, isPending: isSavingGitlabProvider } =
 		api.compose.update.useMutation();
 
 	const schema = createGitlabProviderSchema(t);
@@ -108,7 +108,7 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 			watchPaths: [],
 			enableSubmodules: false,
 		},
-		resolver: zodResolver(schema),
+		resolver: zodResolver(schema as any) as any,
 	});
 
 	const repository = form.watch("repository");
@@ -116,7 +116,7 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 
 	const {
 		data: repositories,
-		isLoading: isLoadingRepositories,
+		isPending: isPendingRepositories,
 		error,
 	} = api.gitlab.getGitlabRepositories.useQuery(
 		{
@@ -273,7 +273,7 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 														!field.value && "text-muted-foreground",
 													)}
 												>
-													{isLoadingRepositories
+													{isPendingRepositories
 														? t(
 																"application.git.gitlab.state.loadingRepositories",
 															)
@@ -296,7 +296,7 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 													)}
 													className="h-9"
 												/>
-												{isLoadingRepositories && (
+												{isPendingRepositories && (
 													<span className="py-6 text-center text-sm">
 														{t(
 															"application.git.gitlab.state.loadingRepositories",
@@ -377,7 +377,7 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 														!field.value && "text-muted-foreground",
 													)}
 												>
-													{status === "loading" && fetchStatus === "fetching"
+													{status === "pending" && fetchStatus === "fetching"
 														? t("application.git.gitlab.state.loadingBranches")
 														: field.value
 															? branches?.find(
@@ -398,7 +398,7 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 													)}
 													className="h-9"
 												/>
-												{status === "loading" && fetchStatus === "fetching" && (
+												{status === "pending" && fetchStatus === "fetching" && (
 													<span className="py-6 text-center text-sm text-muted-foreground">
 														{t("application.git.gitlab.state.loadingBranches")}
 													</span>
@@ -557,7 +557,7 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 					</div>
 					<div className="flex w-full justify-end">
 						<Button
-							isLoading={isSavingGitlabProvider}
+							isPending={isSavingGitlabProvider}
 							type="submit"
 							className="w-fit"
 						>
@@ -569,3 +569,4 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 		</div>
 	);
 };
+

@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreatePostgres,
 	backups,
@@ -27,7 +28,7 @@ export function getMountPath(dockerImage: string): string {
 
 export type Postgres = typeof postgres.$inferSelect;
 
-export const createPostgres = async (input: typeof apiCreatePostgres._type) => {
+export const createPostgres = async (input: z.infer<typeof apiCreatePostgres>) => {
 	const appName = buildAppName("postgres", input.appName);
 
 	const valid = await validUniqueServerAppName(appName);

@@ -1,4 +1,4 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "next-i18next";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -48,11 +48,11 @@ export const ShowRollbackSettings = ({ applicationId, children }: Props) => {
 		},
 	);
 
-	const { mutateAsync: updateApplication, isLoading } =
+	const { mutateAsync: updateApplication, isPending } =
 		api.application.update.useMutation();
 
 	const form = useForm<FormValues>({
-		resolver: zodResolver(formSchema),
+		resolver: zodResolver(formSchema as any) as any,
 		defaultValues: {
 			rollbackActive: application?.rollbackActive ?? false,
 		},
@@ -110,7 +110,7 @@ export const ShowRollbackSettings = ({ applicationId, children }: Props) => {
 							)}
 						/>
 
-						<Button type="submit" className="w-full" isLoading={isLoading}>
+						<Button type="submit" className="w-full" isPending={isPending}>
 							{t("application.rollbacks.button.save")}
 						</Button>
 					</form>
@@ -119,3 +119,4 @@ export const ShowRollbackSettings = ({ applicationId, children }: Props) => {
 		</Dialog>
 	);
 };
+

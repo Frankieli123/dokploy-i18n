@@ -2,6 +2,7 @@ import { existsSync, promises as fsPromises } from "node:fs";
 import path from "node:path";
 import { paths } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
+import type { z } from "zod";
 import {
 	type apiCreateDeployment,
 	type apiCreateDeploymentBackup,
@@ -10,13 +11,20 @@ import {
 	type apiCreateDeploymentSchedule,
 	type apiCreateDeploymentServer,
 	type apiCreateDeploymentVolumeBackup,
+	applications,
+	compose as composeTable,
 	deployments,
+	environments,
+	projects,
 } from "@dokploy/server/db/schema";
 import { removeDirectoryIfExistsContent } from "@dokploy/server/utils/filesystem/directory";
-import { execAsyncRemote } from "@dokploy/server/utils/process/execAsync";
+import {
+	execAsync,
+	execAsyncRemote,
+} from "@dokploy/server/utils/process/execAsync";
 import { TRPCError } from "@trpc/server";
 import { format } from "date-fns";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import {
 	type Application,
 	findApplicationById,
@@ -69,7 +77,7 @@ export const findDeploymentByApplicationId = async (applicationId: string) => {
 
 export const createDeployment = async (
 	deployment: Omit<
-		typeof apiCreateDeployment._type,
+		z.infer<typeof apiCreateDeployment>,
 		"deploymentId" | "createdAt" | "status" | "logPath"
 	>,
 ) => {
@@ -150,7 +158,7 @@ export const createDeployment = async (
 
 export const createDeploymentPreview = async (
 	deployment: Omit<
-		typeof apiCreateDeploymentPreview._type,
+		z.infer<typeof apiCreateDeploymentPreview>,
 		"deploymentId" | "createdAt" | "status" | "logPath"
 	>,
 ) => {
@@ -233,7 +241,7 @@ export const createDeploymentPreview = async (
 
 export const createDeploymentCompose = async (
 	deployment: Omit<
-		typeof apiCreateDeploymentCompose._type,
+		z.infer<typeof apiCreateDeploymentCompose>,
 		"deploymentId" | "createdAt" | "status" | "logPath"
 	>,
 ) => {
@@ -310,7 +318,7 @@ echo "Initializing deployment\n" >> ${logFilePath};
 
 export const createDeploymentBackup = async (
 	deployment: Omit<
-		typeof apiCreateDeploymentBackup._type,
+		z.infer<typeof apiCreateDeploymentBackup>,
 		"deploymentId" | "createdAt" | "status" | "logPath"
 	>,
 ) => {
@@ -390,7 +398,7 @@ echo "Initializing backup\n" >> ${logFilePath};
 
 export const createDeploymentSchedule = async (
 	deployment: Omit<
-		typeof apiCreateDeploymentSchedule._type,
+		z.infer<typeof apiCreateDeploymentSchedule>,
 		"deploymentId" | "createdAt" | "status" | "logPath"
 	>,
 ) => {
@@ -466,7 +474,7 @@ export const createDeploymentSchedule = async (
 
 export const createDeploymentVolumeBackup = async (
 	deployment: Omit<
-		typeof apiCreateDeploymentVolumeBackup._type,
+		z.infer<typeof apiCreateDeploymentVolumeBackup>,
 		"deploymentId" | "createdAt" | "status" | "logPath"
 	>,
 ) => {
@@ -554,11 +562,27 @@ export const removeDeployment = async (deploymentId: string) => {
 		const deployment = await db
 			.delete(deployments)
 			.where(eq(deployments.deploymentId, deploymentId))
-			.returning();
-		return deployment[0];
+			.returning()
+			.then((result) => result[0]);
+
+		if (!deployment) {
+			return null;
+		}
+
+		const logPath = path.join(deployment.logPath);
+		if (logPath && logPath !== ".") {
+			const command = `rm -f ${logPath};`;
+			if (deployment.serverId) {
+				await execAsyncRemote(deployment.serverId, command);
+			} else {
+				await execAsync(command);
+			}
+		}
+
+		return deployment;
 	} catch (error) {
 		const message =
-			error instanceof Error ? error.message : "Error creating the deployment";
+			error instanceof Error ? error.message : "Error removing the deployment";
 		throw new TRPCError({
 			code: "BAD_REQUEST",
 			message,
@@ -626,34 +650,49 @@ const removeLastTenDeployments = async (
 		if (serverId) {
 			let command = "";
 			for (const oldDeployment of deploymentsToDelete) {
-				const logPath = path.join(oldDeployment.logPath);
-				if (oldDeployment.rollbackId) {
-					await removeRollbackById(oldDeployment.rollbackId);
-				}
+				try {
+					const logPath = path.join(oldDeployment.logPath);
+					if (oldDeployment.rollbackId) {
+						await removeRollbackById(oldDeployment.rollbackId);
+					}
 
-				if (logPath !== ".") {
-					command += `
-					rm -rf ${logPath};
-					`;
+					if (logPath && logPath !== ".") {
+						command += `rm -rf ${logPath};`;
+					}
+					await removeDeployment(oldDeployment.deploymentId);
+				} catch (err) {
+					console.error(
+						`Failed to remove deployment ${oldDeployment.deploymentId} during cleanup:`,
+						err,
+					);
 				}
-				await removeDeployment(oldDeployment.deploymentId);
 			}
 
-			await execAsyncRemote(serverId, command);
+			if (command) {
+				await execAsyncRemote(serverId, command);
+			}
 		} else {
 			for (const oldDeployment of deploymentsToDelete) {
-				if (oldDeployment.rollbackId) {
-					await removeRollbackById(oldDeployment.rollbackId);
+				try {
+					if (oldDeployment.rollbackId) {
+						await removeRollbackById(oldDeployment.rollbackId);
+					}
+					const logPath = path.join(oldDeployment.logPath);
+					if (
+						logPath &&
+						logPath !== "." &&
+						existsSync(logPath) &&
+						!oldDeployment.errorMessage
+					) {
+						await fsPromises.unlink(logPath);
+					}
+					await removeDeployment(oldDeployment.deploymentId);
+				} catch (err) {
+					console.error(
+						`Failed to remove deployment ${oldDeployment.deploymentId} during cleanup:`,
+						err,
+					);
 				}
-				const logPath = path.join(oldDeployment.logPath);
-				if (
-					existsSync(logPath) &&
-					!oldDeployment.errorMessage &&
-					logPath !== "."
-				) {
-					await fsPromises.unlink(logPath);
-				}
-				await removeDeployment(oldDeployment.deploymentId);
 			}
 		}
 	}
@@ -717,6 +756,167 @@ export const findAllDeploymentsByComposeId = async (composeId: string) => {
 	return deploymentsList;
 };
 
+export type ServicePath = { href: string | null; label: string };
+
+export async function resolveServicePath(
+	orgId: string,
+	data: Record<string, unknown>,
+): Promise<ServicePath> {
+	try {
+		const applicationId = data.applicationId as string | undefined;
+		const composeId = data.composeId as string | undefined;
+
+		if (applicationId) {
+			const app = await findApplicationById(applicationId);
+			if (app.environment.project.organizationId !== orgId) {
+				return { href: null, label: "Application" };
+			}
+			return {
+				href: `/dashboard/project/${app.environment.project.projectId}/environment/${app.environment.environmentId}/services/application/${app.applicationId}`,
+				label: "Application",
+			};
+		}
+
+		if (composeId) {
+			const comp = await findComposeById(composeId);
+			if (comp.environment.project.organizationId !== orgId) {
+				return { href: null, label: "Compose" };
+			}
+			return {
+				href: `/dashboard/project/${comp.environment.project.projectId}/environment/${comp.environment.environmentId}/services/compose/${comp.composeId}`,
+				label: "Compose",
+			};
+		}
+	} catch {}
+
+	return { href: null, label: "—" };
+}
+
+const centralizedDeploymentsWith = {
+	application: {
+		columns: { applicationId: true, name: true, appName: true },
+		with: {
+			environment: {
+				columns: { environmentId: true, name: true },
+				with: {
+					project: {
+						columns: { projectId: true, name: true },
+					},
+				},
+			},
+			server: {
+				columns: { serverId: true, name: true, serverType: true },
+			},
+			buildServer: {
+				columns: { serverId: true, name: true, serverType: true },
+			},
+		},
+	},
+	compose: {
+		columns: { composeId: true, name: true, appName: true },
+		with: {
+			environment: {
+				columns: { environmentId: true, name: true },
+				with: {
+					project: {
+						columns: { projectId: true, name: true },
+					},
+				},
+			},
+			server: {
+				columns: { serverId: true, name: true, serverType: true },
+			},
+		},
+	},
+	server: {
+		columns: { serverId: true, name: true, serverType: true },
+	},
+	buildServer: {
+		columns: { serverId: true, name: true, serverType: true },
+	},
+} as const;
+
+async function getApplicationIdsInOrg(
+	orgId: string,
+	accessedServices: string[] | null,
+): Promise<string[]> {
+	const rows = await db
+		.select({ applicationId: applications.applicationId })
+		.from(applications)
+		.innerJoin(
+			environments,
+			eq(applications.environmentId, environments.environmentId),
+		)
+		.innerJoin(projects, eq(environments.projectId, projects.projectId))
+		.where(
+			accessedServices !== null
+				? and(
+						eq(projects.organizationId, orgId),
+						inArray(applications.applicationId, accessedServices),
+					)
+				: eq(projects.organizationId, orgId),
+		);
+	return rows.map((row) => row.applicationId);
+}
+
+async function getComposeIdsInOrg(
+	orgId: string,
+	accessedServices: string[] | null,
+): Promise<string[]> {
+	const rows = await db
+		.select({ composeId: composeTable.composeId })
+		.from(composeTable)
+		.innerJoin(
+			environments,
+			eq(composeTable.environmentId, environments.environmentId),
+		)
+		.innerJoin(projects, eq(environments.projectId, projects.projectId))
+		.where(
+			accessedServices !== null
+				? and(
+						eq(projects.organizationId, orgId),
+						inArray(composeTable.composeId, accessedServices),
+					)
+				: eq(projects.organizationId, orgId),
+		);
+	return rows.map((row) => row.composeId);
+}
+
+export const findAllDeploymentsCentralized = async (
+	orgId: string,
+	accessedServices: string[] | null,
+) => {
+	if (accessedServices !== null && accessedServices.length === 0) {
+		return [];
+	}
+
+	const [appIds, compIds] = await Promise.all([
+		getApplicationIdsInOrg(orgId, accessedServices),
+		getComposeIdsInOrg(orgId, accessedServices),
+	]);
+
+	if (appIds.length === 0 && compIds.length === 0) {
+		return [];
+	}
+
+	const conditions = [
+		...(appIds.length > 0 ? [inArray(deployments.applicationId, appIds)] : []),
+		...(compIds.length > 0 ? [inArray(deployments.composeId, compIds)] : []),
+	];
+	const whereClause =
+		conditions.length === 0
+			? sql`1 = 0`
+			: conditions.length === 1
+				? conditions[0]
+				: or(...conditions);
+
+	return await db.query.deployments.findMany({
+		where: whereClause,
+		orderBy: desc(deployments.createdAt),
+		with: centralizedDeploymentsWith,
+	});
+};
+
 export const updateDeployment = async (
 	deploymentId: string,
 	deploymentData: Partial<Deployment>,
@@ -753,7 +953,7 @@ export const updateDeploymentStatus = async (
 
 export const createServerDeployment = async (
 	deployment: Omit<
-		typeof apiCreateDeploymentServer._type,
+		z.infer<typeof apiCreateDeploymentServer>,
 		"deploymentId" | "createdAt" | "status" | "logPath"
 	>,
 ) => {
