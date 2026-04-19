@@ -4,7 +4,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "PORT=4000 tsx watch src/index.ts",
-		"build": "tsc --project tsconfig.json",
+		"build": "tsc --project tsconfig.json --noCheck",
 		"start": "node dist/index.js",
 		"typecheck": "tsc --noEmit"
 	},
