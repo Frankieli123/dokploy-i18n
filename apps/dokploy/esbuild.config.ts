@@ -23,6 +23,7 @@ try {
 	esbuild
 		.build({
 			entryPoints: {
+				migration: "migration.ts",
 				server: "server/server.ts",
 				"wait-for-postgres": "wait-for-postgres.ts",
 				"reset-password": "reset-password.ts",
