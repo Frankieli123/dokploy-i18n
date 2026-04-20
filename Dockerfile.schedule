@@ -1,10 +1,6 @@
 # syntax=docker/dockerfile:1
 FROM node:24.4.0-slim AS base
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN npm install -g corepack@latest \
-    && corepack enable \
-    && corepack prepare pnpm@10.22.0 --activate
+RUN npm install -g pnpm@10.22.0
 
 FROM base AS build
 COPY . /usr/src/app
