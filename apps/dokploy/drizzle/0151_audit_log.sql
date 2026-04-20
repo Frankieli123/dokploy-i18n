@@ -1,4 +1,4 @@
-﻿ALTER TABLE "notification" ADD COLUMN IF NOT EXISTS "volumeBackup" boolean DEFAULT false NOT NULL;
+ALTER TABLE "notification" ADD COLUMN IF NOT EXISTS "volumeBackup" boolean DEFAULT false NOT NULL;
 
 CREATE TABLE IF NOT EXISTS "audit_log" (
   "id" text PRIMARY KEY NOT NULL,

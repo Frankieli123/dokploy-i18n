@@ -1,4 +1,4 @@
-﻿CREATE TYPE "public"."patchType" AS ENUM('create', 'update', 'delete');--> statement-breakpoint
+CREATE TYPE "public"."patchType" AS ENUM('create', 'update', 'delete');--> statement-breakpoint
 CREATE TABLE "patch" (
 	"patchId" text PRIMARY KEY NOT NULL,
 	"type" "patchType" DEFAULT 'update' NOT NULL,
