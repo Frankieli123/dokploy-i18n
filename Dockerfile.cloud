@@ -54,7 +54,7 @@ COPY --from=build /prod/dokploy/node_modules ./node_modules
 RUN curl https://rclone.org/install.sh | bash
 
 # tsx
-RUN pnpm install -g tsx
+RUN npm install -g tsx
 
 EXPOSE 3000
 CMD [ "pnpm", "start" ]
