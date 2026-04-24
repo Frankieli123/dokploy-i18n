@@ -24,6 +24,7 @@ import type {
 } from "next";
 import Head from "next/head";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
