@@ -22,6 +22,7 @@ import {
 	Server,
 } from "lucide-react";
 import Link from "next/link";
+import { useTranslation } from "next-i18next";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -94,6 +95,7 @@ function getServiceInfo(d: DeploymentRow) {
 }
 
 export function ShowDeploymentsTable() {
+	const { t } = useTranslation("common");
 	const [sorting, setSorting] = useState<SortingState>([
 		{ id: "createdAt", desc: true },
 	]);
@@ -165,7 +167,7 @@ export function ShowDeploymentsTable() {
 						className="-ml-3 h-8"
 						onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
 					>
-						Service
+						{t("deployments.overview.columns.service")}
 						<ArrowUpDown className="ml-2 size-4" />
 					</Button>
 				),
@@ -182,7 +184,9 @@ export function ShowDeploymentsTable() {
 							<div className="flex flex-col min-w-0">
 								<span className="font-medium truncate">{info.name}</span>
 								<Badge variant="outline" className="w-fit text-[10px]">
-									{info.type}
+									{info.type === "Application"
+										? t("deployments.overview.type.application")
+										: t("deployments.overview.type.compose")}
 								</Badge>
 							</div>
 						</div>
@@ -206,7 +210,7 @@ export function ShowDeploymentsTable() {
 						className="-ml-3 h-8"
 						onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
 					>
-						Project
+						{t("deployments.overview.columns.project")}
 						<ArrowUpDown className="ml-2 size-4" />
 					</Button>
 				),
@@ -236,7 +240,7 @@ export function ShowDeploymentsTable() {
 						className="-ml-3 h-8"
 						onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
 					>
-						Environment
+						{t("deployments.overview.columns.environment")}
 						<ArrowUpDown className="ml-2 size-4" />
 					</Button>
 				),
@@ -269,7 +273,7 @@ export function ShowDeploymentsTable() {
 						className="-ml-3 h-8"
 						onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
 					>
-						Server
+						{t("deployments.overview.columns.server")}
 						<ArrowUpDown className="ml-2 size-4" />
 					</Button>
 				),
@@ -314,7 +318,9 @@ export function ShowDeploymentsTable() {
 							)}
 							{showBuild && buildServerName && (
 								<div className="flex items-center gap-1.5 text-muted-foreground flex-wrap">
-									<span className="text-[10px]">Build:</span>
+									<span className="text-[10px]">
+										{t("deployments.overview.buildServer")}:
+									</span>
 									<span className="truncate text-xs">{buildServerName}</span>
 									{buildServerType && (
 										<Badge
@@ -345,7 +351,7 @@ export function ShowDeploymentsTable() {
 						className="-ml-3 h-8"
 						onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
 					>
-						Title
+						{t("deployments.overview.columns.title")}
 						<ArrowUpDown className="ml-2 size-4" />
 					</Button>
 				),
@@ -370,7 +376,7 @@ export function ShowDeploymentsTable() {
 						className="-ml-3 h-8"
 						onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
 					>
-						Status
+						{t("deployments.overview.columns.status")}
 						<ArrowUpDown className="ml-2 size-4" />
 					</Button>
 				),
@@ -398,7 +404,7 @@ export function ShowDeploymentsTable() {
 						className="-ml-3 h-8"
 						onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
 					>
-						Created
+						{t("deployments.overview.columns.created")}
 						<ArrowUpDown className="ml-2 size-4" />
 					</Button>
 				),
@@ -421,7 +427,7 @@ export function ShowDeploymentsTable() {
 						<Button variant="ghost" size="sm" asChild>
 							<Link href={info.href} className="gap-1">
 								<ExternalLink className="size-4" />
-								Open
+								{t("deployments.overview.columns.open")}
 							</Link>
 						</Button>
 					);
@@ -454,31 +460,39 @@ export function ShowDeploymentsTable() {
 		<div className="space-y-2">
 			<div className="flex flex-wrap items-center gap-2">
 				<Input
-					placeholder="Search by name, project, environment, server..."
+					placeholder={t("deployments.overview.searchPlaceholder")}
 					value={globalFilter}
 					onChange={(e) => setGlobalFilter(e.target.value)}
 					className="max-w-xs"
 				/>
 				<Select value={statusFilter} onValueChange={setStatusFilter}>
 					<SelectTrigger className="w-[140px]">
-						<SelectValue placeholder="Status" />
+						<SelectValue placeholder={t("deployments.overview.filter.status")} />
 					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="all">All statuses</SelectItem>
-						<SelectItem value="running">Running</SelectItem>
-						<SelectItem value="done">Done</SelectItem>
-						<SelectItem value="error">Error</SelectItem>
+						<SelectItem value="all">
+							{t("deployments.overview.filter.allStatuses")}
+						</SelectItem>
+						<SelectItem value="running">{t("deployments.status.running")}</SelectItem>
+						<SelectItem value="done">{t("deployments.status.done")}</SelectItem>
+						<SelectItem value="error">{t("deployments.status.error")}</SelectItem>
 						<SelectItem value="cancelled">Cancelled</SelectItem>
 					</SelectContent>
 				</Select>
 				<Select value={typeFilter} onValueChange={setTypeFilter}>
 					<SelectTrigger className="w-[140px]">
-						<SelectValue placeholder="Type" />
+						<SelectValue placeholder={t("deployments.overview.filter.type")} />
 					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="all">All types</SelectItem>
-						<SelectItem value="application">Application</SelectItem>
-						<SelectItem value="compose">Compose</SelectItem>
+						<SelectItem value="all">
+							{t("deployments.overview.filter.allTypes")}
+						</SelectItem>
+						<SelectItem value="application">
+							{t("deployments.overview.type.application")}
+						</SelectItem>
+						<SelectItem value="compose">
+							{t("deployments.overview.type.compose")}
+						</SelectItem>
 					</SelectContent>
 				</Select>
 			</div>
@@ -486,7 +500,7 @@ export function ShowDeploymentsTable() {
 				{isLoading ? (
 					<div className="flex gap-4 w-full items-center justify-center min-h-[45vh] text-muted-foreground">
 						<Loader2 className="size-4 animate-spin" />
-						<span>Loading deployments...</span>
+						<span>{t("deployments.overview.loading")}</span>
 					</div>
 				) : (
 					<>
@@ -530,10 +544,11 @@ export function ShowDeploymentsTable() {
 											>
 												<div className="flex flex-col min-h-[45vh] items-center justify-center gap-2 text-muted-foreground">
 													<Rocket className="size-8" />
-													<p className="font-medium">No deployments found</p>
+													<p className="font-medium">
+														{t("deployments.overview.emptyTitle")}
+													</p>
 													<p className="text-sm">
-														Deployments from applications and compose will
-														appear here.
+														{t("deployments.overview.emptyDescription")}
 													</p>
 												</div>
 											</TableCell>
@@ -545,7 +560,7 @@ export function ShowDeploymentsTable() {
 						<div className="flex flex-col gap-4 px-4 py-4 border-t sm:flex-row sm:items-center sm:justify-between">
 							<div className="flex items-center gap-2 flex-wrap">
 								<span className="text-sm text-muted-foreground whitespace-nowrap">
-									Rows per page
+									{t("deployments.overview.rowsPerPage")}
 								</span>
 								<Select
 									value={String(pagination.pageSize)}
@@ -569,16 +584,17 @@ export function ShowDeploymentsTable() {
 									</SelectContent>
 								</Select>
 								<span className="text-sm text-muted-foreground whitespace-nowrap">
-									Showing{" "}
-									{filteredData.length === 0
-										? 0
-										: pagination.pageIndex * pagination.pageSize + 1}{" "}
-									to{" "}
-									{Math.min(
-										(pagination.pageIndex + 1) * pagination.pageSize,
-										filteredData.length,
-									)}{" "}
-									of {filteredData.length} entries
+									{t("deployments.overview.pagination", {
+										from:
+											filteredData.length === 0
+												? 0
+												: pagination.pageIndex * pagination.pageSize + 1,
+										to: Math.min(
+											(pagination.pageIndex + 1) * pagination.pageSize,
+											filteredData.length,
+										),
+										total: filteredData.length,
+									})}
 								</span>
 							</div>
 							<div className="flex items-center gap-2">
@@ -590,7 +606,7 @@ export function ShowDeploymentsTable() {
 									disabled={!table.getCanPreviousPage()}
 								>
 									<ChevronLeft className="size-4" />
-									Previous
+									{t("deployments.overview.previous")}
 								</Button>
 								<Button
 									variant="outline"
@@ -599,7 +615,7 @@ export function ShowDeploymentsTable() {
 									onClick={() => table.nextPage()}
 									disabled={!table.getCanNextPage()}
 								>
-									Next
+									{t("deployments.overview.next")}
 									<ChevronRight className="size-4" />
 								</Button>
 							</div>

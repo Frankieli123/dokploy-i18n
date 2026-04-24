@@ -2,6 +2,7 @@ import { validateRequest } from "@dokploy/server/lib/auth";
 import { hasPermission } from "@dokploy/server/services/permission";
 import { Rocket } from "lucide-react";
 import type { GetServerSidePropsContext } from "next";
+import { useTranslation } from "next-i18next";
 import { useRouter } from "next/router";
 import type { ReactElement } from "react";
 import { ShowDeploymentsTable } from "@/components/dashboard/deployments/show-deployments-table";
@@ -14,6 +15,7 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { getLocale, serverSideTranslations } from "@/utils/i18n";
 
 const TAB_VALUES = ["deployments", "queue"] as const;
 type TabValue = (typeof TAB_VALUES)[number];
@@ -23,6 +25,7 @@ function isValidTab(t: string): t is TabValue {
 }
 
 function DeploymentsPage() {
+	const { t } = useTranslation("common");
 	const router = useRouter();
 	const tab =
 		router.query.tab && isValidTab(router.query.tab as string)
@@ -47,17 +50,17 @@ function DeploymentsPage() {
 							<div>
 								<CardTitle className="text-xl font-bold flex items-center gap-2">
 									<Rocket className="size-5" />
-									Deployments
+									{t("deployments.overview.title")}
 								</CardTitle>
 								<CardDescription>
-									All application and compose deployments in one place.
+									{t("deployments.overview.description")}
 								</CardDescription>
 							</div>
 						</div>
 						<Tabs value={tab} onValueChange={setTab} className="w-full">
 							<TabsList className="mt-2">
-								<TabsTrigger value="deployments">Deployments</TabsTrigger>
-								<TabsTrigger value="queue">Queue</TabsTrigger>
+								<TabsTrigger value="deployments">{t("tabs.deployments")}</TabsTrigger>
+								<TabsTrigger value="queue">{t("deployments.overview.tabQueue")}</TabsTrigger>
 							</TabsList>
 							<TabsContent value="deployments" className="mt-0 pt-4">
 								<ShowDeploymentsTable />
@@ -81,6 +84,7 @@ DeploymentsPage.getLayout = (page: ReactElement) => {
 
 export async function getServerSideProps(ctx: GetServerSidePropsContext) {
 	const { user, session } = await validateRequest(ctx.req);
+	const locale = getLocale((ctx.req as any).cookies ?? {});
 	if (!user) {
 		return {
 			redirect: {
@@ -108,6 +112,8 @@ export async function getServerSideProps(ctx: GetServerSidePropsContext) {
 	}
 
 	return {
-		props: {},
+		props: {
+			...(await serverSideTranslations(locale)),
+		},
 	};
 }

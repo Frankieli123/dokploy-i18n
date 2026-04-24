@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ArrowRight, ListTodo, Loader2, XCircle } from "lucide-react";
+import { useTranslation } from "next-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -65,6 +66,7 @@ function getJobLabel(row: QueueRow): string {
 }
 
 export function ShowQueueTable(props: { embedded?: boolean }) {
+	const { t } = useTranslation("common");
 	const { embedded: _embedded = false } = props;
 	const { data: queueList, isLoading } = api.deployment.queueList.useQuery(
 		undefined,
@@ -91,22 +93,24 @@ export function ShowQueueTable(props: { embedded?: boolean }) {
 			{isLoading ? (
 				<div className="flex gap-4 w-full items-center justify-center min-h-[30vh] text-muted-foreground">
 					<Loader2 className="size-4 animate-spin" />
-					<span>Loading queue...</span>
+					<span>{t("deployments.queue.loading")}</span>
 				</div>
 			) : (
 				<div className="rounded-md border overflow-x-auto">
 					<Table>
 						<TableHeader>
 							<TableRow>
-								<TableHead>Job ID</TableHead>
-								<TableHead>Label</TableHead>
-								<TableHead>Type</TableHead>
-								<TableHead>State</TableHead>
-								<TableHead>Added</TableHead>
-								<TableHead>Processed</TableHead>
-								<TableHead>Finished</TableHead>
-								<TableHead>Error</TableHead>
-								<TableHead className="w-[100px]">Actions</TableHead>
+								<TableHead>{t("deployments.queue.columns.jobId")}</TableHead>
+								<TableHead>{t("deployments.queue.columns.label")}</TableHead>
+								<TableHead>{t("deployments.queue.columns.type")}</TableHead>
+								<TableHead>{t("deployments.queue.columns.state")}</TableHead>
+								<TableHead>{t("deployments.queue.columns.added")}</TableHead>
+								<TableHead>{t("deployments.queue.columns.processed")}</TableHead>
+								<TableHead>{t("deployments.queue.columns.finished")}</TableHead>
+								<TableHead>{t("deployments.queue.columns.error")}</TableHead>
+								<TableHead className="w-[100px]">
+									{t("deployments.queue.columns.actions")}
+								</TableHead>
 							</TableRow>
 						</TableHeader>
 						<TableBody>
@@ -148,7 +152,7 @@ export function ShowQueueTable(props: { embedded?: boolean }) {
 														<Button variant="ghost" size="sm" asChild>
 															<Link href={pathInfo!.href!}>
 																<ArrowRight className="size-4 mr-1" />
-																Service
+																{t("deployments.queue.service")}
 															</Link>
 														</Button>
 													) : (
@@ -186,7 +190,7 @@ export function ShowQueueTable(props: { embedded?: boolean }) {
 																}}
 															>
 																<XCircle className="size-4 mr-1" />
-																Cancel
+																{t("deployments.queue.cancel")}
 															</Button>
 														)}
 												</div>
@@ -199,9 +203,11 @@ export function ShowQueueTable(props: { embedded?: boolean }) {
 									<TableCell colSpan={9} className="text-center py-12">
 										<div className="flex flex-col items-center justify-center gap-2 text-muted-foreground min-h-[30vh]">
 											<ListTodo className="size-8" />
-											<p className="font-medium">Queue is empty</p>
+											<p className="font-medium">
+												{t("deployments.queue.emptyTitle")}
+											</p>
 											<p className="text-sm">
-												Deployment jobs will appear here when they are queued.
+												{t("deployments.queue.emptyDescription")}
 											</p>
 										</div>
 									</TableCell>

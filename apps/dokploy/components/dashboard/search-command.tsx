@@ -436,7 +436,7 @@ export const SearchCommand = () => {
 								setOpen(false);
 							}}
 						>
-							Deployments
+							{t("tabs.deployments")}
 						</CommandItem>
 						{!isCloud && (
 							<>
