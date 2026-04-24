@@ -2,6 +2,7 @@ import { migration } from "./server/db/migration.ts";
 
 try {
 	await migration();
+	process.exit(0);
 } catch {
-	process.exitCode = 1;
+	process.exit(1);
 }

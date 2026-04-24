@@ -1,12 +1,25 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
+import Docker from "dockerode";
 import postgres from "postgres";
-import { docker } from "@dokploy/server";
 
 const DEFAULT_DB_URL =
 	"postgres://dokploy:amukds4wi9001583845717ad2@dokploy-postgres:5432/dokploy";
 const MANAGED_POSTGRES_SERVICE = "dokploy-postgres";
 const PGVECTOR_IMAGE = "pgvector/pgvector:pg16";
+const docker = new Docker({
+	...(process.env.DOKPLOY_DOCKER_API_VERSION &&
+		process.env.DOKPLOY_DOCKER_API_VERSION.trim() && {
+			version: process.env.DOKPLOY_DOCKER_API_VERSION,
+		}),
+	...(process.env.DOKPLOY_DOCKER_HOST &&
+		process.env.DOKPLOY_DOCKER_HOST.trim() && {
+			host: process.env.DOKPLOY_DOCKER_HOST,
+		}),
+	...((process.env.DOKPLOY_DOCKER_PORT || process.env.DOCKER_PORT) && {
+			port: Number(process.env.DOKPLOY_DOCKER_PORT || process.env.DOCKER_PORT),
+		}),
+});
 
 const isPgvectorMissingError = (error: unknown) => {
 	const message = error instanceof Error ? error.message : String(error);
