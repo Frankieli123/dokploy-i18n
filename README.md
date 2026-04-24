@@ -108,7 +108,7 @@ https://hub.docker.com/v2/repositories/a3180623/dokploy-i18n/tags
 
 相关环境变量：
 - `DOKPLOY_UPDATE_FETCH_TIMEOUT_MS` — 更新检查超时（默认 `8000`，毫秒）
-- `RELEASE_TAG` — 当前运行的 tag（默认 `latest`）。若固定运行某版本（如 `v0.28.8-i18n.19`），建议同步设置
+- `RELEASE_TAG` — 当前运行的 tag（默认 `latest`）。若固定运行某版本（如 `v0.28.8-i18n.20`），建议同步设置
 
 </details>
 

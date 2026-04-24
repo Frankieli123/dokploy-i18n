@@ -217,7 +217,33 @@ const ACTION_META: Record<string, Record<string, string>> = {
 	},
 };
 
+const getResourceLabel = (
+	t: (key: string, options?: Record<string, unknown>) => string,
+	resource: string,
+) =>
+	t(`settings.users.roles.resources.${resource}.label`, {
+		defaultValue: RESOURCE_META[resource]?.label ?? resource,
+	});
+
+const getResourceDescription = (
+	t: (key: string, options?: Record<string, unknown>) => string,
+	resource: string,
+) =>
+	t(`settings.users.roles.resources.${resource}.description`, {
+		defaultValue: RESOURCE_META[resource]?.description ?? resource,
+	});
+
+const getActionLabel = (
+	t: (key: string, options?: Record<string, unknown>) => string,
+	resource: string,
+	action: string,
+) =>
+	t(`settings.users.roles.actions.${resource}.${action}`, {
+		defaultValue: ACTION_META[resource]?.[action] ?? action,
+	});
+
 function MembersBadge({ role }: { role: string }) {
+	const { t } = useTranslation("settings");
 	const [open, setOpen] = useState(false);
 	const { data: members = [], isLoading } = api.customRole.membersByRole.useQuery(
 		{ roleName: role },
@@ -237,7 +263,9 @@ function MembersBadge({ role }: { role: string }) {
 			</PopoverTrigger>
 			<PopoverContent className="w-64 p-2" align="start">
 				<p className="px-1 pb-2 text-xs font-medium text-muted-foreground">
-					Assigned members
+					{t("settings.users.roles.membersAssignedTitle", {
+						defaultValue: "Assigned members",
+					})}
 				</p>
 				{isLoading ? (
 					<div className="flex justify-center py-3">
@@ -245,7 +273,9 @@ function MembersBadge({ role }: { role: string }) {
 					</div>
 				) : members.length === 0 ? (
 					<p className="px-1 py-2 text-xs text-muted-foreground">
-						No members assigned
+						{t("settings.users.roles.membersAssignedEmpty", {
+							defaultValue: "No members assigned",
+						})}
 					</p>
 				) : (
 					<ul className="space-y-1">
@@ -274,28 +304,33 @@ function PermissionEditor({
 	permissions: RolePermissions;
 	onToggle: (resource: string, action: string) => void;
 }) {
+	const { t } = useTranslation("settings");
 	const resources = Object.entries(catalog).filter(
 		([resource]) => !HIDDEN_RESOURCES.includes(resource),
 	);
 
 	return (
 		<div className="space-y-3 pt-2">
-			<p className="text-sm font-medium">Permissions</p>
+			<p className="text-sm font-medium">
+				{t("settings.users.roles.permissionsSectionTitle", {
+					defaultValue: "Permissions",
+				})}
+			</p>
 			<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
 				{resources.map(([resource, actions]) => (
-					<div key={resource} className="rounded-lg border p-3 space-y-3">
+					<div key={getResourceLabel(t, resource)} className="rounded-lg border p-3 space-y-3">
 						<div>
 							<p className="text-sm font-medium">
-								{RESOURCE_META[resource]?.label ?? resource}
+								{getResourceLabel(t, resource)}
 							</p>
 							<p className="text-xs text-muted-foreground">
-								{RESOURCE_META[resource]?.description ?? resource}
+								{getResourceDescription(t, resource)}
 							</p>
 						</div>
 						<div className="space-y-2">
 							{actions.map((action) => (
 								<div
-									key={`${resource}-${action}`}
+									key={`${getResourceLabel(t, resource)}-${action}`}
 									className="flex items-center gap-3 rounded-md border p-2 hover:bg-muted/50 cursor-pointer"
 									onClick={() => onToggle(resource, action)}
 								>
@@ -305,7 +340,7 @@ function PermissionEditor({
 									/>
 									<div className="flex flex-col">
 										<span className="text-xs font-medium">
-											{ACTION_META[resource]?.[action] ?? action}
+											{getActionLabel(t, resource, action)}
 										</span>
 									</div>
 								</div>
@@ -419,7 +454,9 @@ function RoleDialog({
 											{...field}
 											readOnly={!!role}
 											className={role ? "bg-muted" : undefined}
-											placeholder="developer"
+											placeholder={t("settings.users.roles.rolePlaceholder", {
+												defaultValue: "developer",
+											})}
 										/>
 									</FormControl>
 									<FormMessage />
@@ -520,7 +557,11 @@ export const ManageCustomRoles = () => {
 														<MembersBadge role={role.role} />
 													</div>
 													<p className="text-xs text-muted-foreground">
-														{enabledResources.length} resources · {totalPermissions} permissions
+														{t("settings.users.roles.summary", {
+															countResources: enabledResources.length,
+															countPermissions: totalPermissions,
+															defaultValue: `${enabledResources.length} resources ? ${totalPermissions} permissions`,
+														})}
 													</p>
 												</div>
 											</div>
@@ -565,15 +606,15 @@ export const ManageCustomRoles = () => {
 											<div className="flex flex-wrap gap-1.5 pt-1 border-t">
 												{enabledResources.map(([resource, actions]) => (
 													<div
-														key={resource}
+														key={getResourceLabel(t, resource)}
 														className="flex items-center gap-1 rounded-md bg-background border px-2 py-1"
 													>
 														<span className="text-xs font-medium">
-															{resource}
+															{getResourceLabel(t, resource)}
 														</span>
 														<span className="text-xs text-muted-foreground">·</span>
 														<span className="text-xs text-muted-foreground">
-															{actions.join(", ")}
+															{actions.map((action) => getActionLabel(t, resource, action)).join(", ")}
 														</span>
 													</div>
 												))}
