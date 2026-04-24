@@ -2239,5 +2239,6 @@
 	"deployments.queue.service": "Service",
 	"deployments.queue.cancel": "Cancel",
 	"deployments.queue.emptyTitle": "Queue is empty",
-	"deployments.queue.emptyDescription": "Deployment jobs will appear here when they are queued."
+	"deployments.queue.emptyDescription": "Deployment jobs will appear here when they are queued.",
+	"deployments.status.cancelled": "Cancelled"
 }

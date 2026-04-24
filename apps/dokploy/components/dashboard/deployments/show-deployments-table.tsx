@@ -476,7 +476,7 @@ export function ShowDeploymentsTable() {
 						<SelectItem value="running">{t("deployments.status.running")}</SelectItem>
 						<SelectItem value="done">{t("deployments.status.done")}</SelectItem>
 						<SelectItem value="error">{t("deployments.status.error")}</SelectItem>
-						<SelectItem value="cancelled">Cancelled</SelectItem>
+						<SelectItem value="cancelled">{t("deployments.status.cancelled")}</SelectItem>
 					</SelectContent>
 				</Select>
 				<Select value={typeFilter} onValueChange={setTypeFilter}>
