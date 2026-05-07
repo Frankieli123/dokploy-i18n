@@ -231,6 +231,33 @@ function getProviderErrorText(err: unknown): string {
 	return `${msg}\n${responseBodyText}`;
 }
 
+function clampText(text: string, maxChars: number): string {
+	if (maxChars <= 0) return "";
+	if (text.length <= maxChars) return text;
+	return `${text.slice(0, maxChars)}\n…(truncated)`;
+}
+
+function formatMcpToolListError(err: unknown): string {
+	const raw = getProviderErrorText(err).trim();
+	if (!raw) return "";
+
+	const lower = raw.toLowerCase();
+	const looksLikeZodJsonSchemaCrash =
+		lower.includes("reading '_zod'") ||
+		lower.includes('reading "_zod"') ||
+		(lower.includes("_zod") && lower.includes("to-json-schema"));
+
+	if (!looksLikeZodJsonSchemaCrash) return clampText(raw, 8192);
+
+	const hint =
+		"MCP tools/list 失败：Zod JSON Schema 转换崩溃（_zod）。\n" +
+		"如果该 MCP Server 是你自己运行的：升级 zod 至 >= 4.4.0，或将 `z.record(valueType)` 改为 `z.record(z.string(), valueType)`。\n" +
+		"如果是第三方/远程 MCP Server：需要在对方服务端修复。";
+
+	const firstLine = raw.split(/\r?\n/)[0] ?? raw;
+	return clampText(`${hint}\n\n${firstLine}`, 8192);
+}
+
 function normalizeMcpHeaders(value: unknown): Record<string, string> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
 	const headers: Record<string, string> = {};
@@ -897,7 +924,7 @@ export const testAiMcpServer = async (params: {
 	} catch (error) {
 		return {
 			status: "error",
-			error: getProviderErrorText(error) || "MCP test failed",
+			error: formatMcpToolListError(error) || "MCP test failed",
 			latencyMs: Date.now() - startedAt,
 		};
 	}
@@ -1029,7 +1056,7 @@ export const listAiMcpToolsCached = async (params: {
 				tools: [],
 				fetchedAt,
 				expiresAt: fetchedAt + MCP_TOOL_LIST_ERROR_TTL_MS,
-				error: getProviderErrorText(error) || "MCP tool list failed",
+				error: formatMcpToolListError(error) || "MCP tool list failed",
 			};
 			mcpToolListCache.set(cacheKey, entry);
 			enforceMcpToolListCacheLimit();

@@ -123,7 +123,7 @@ const schema = createInsertSchema(deployments, {
 	applicationId: z.string(),
 	composeId: z.string(),
 	description: z.string().optional(),
-	previewDeploymentId: z.string(),
+	previewDeploymentId: z.string().optional(),
 	buildServerId: z.string(),
 });
 

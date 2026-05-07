@@ -11,9 +11,7 @@ export type BackupScheduleList = Awaited<ReturnType<typeof findBackupsByDbId>>;
 export const createBackup = async (input: z.infer<typeof apiCreateBackup>) => {
 	const newBackup = await db
 		.insert(backups)
-		.values({
-			...input,
-		})
+		.values({ ...input } as typeof backups.$inferInsert)
 		.returning()
 		.then((value) => value[0]);
 

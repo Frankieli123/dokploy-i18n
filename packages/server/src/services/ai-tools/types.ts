@@ -22,7 +22,7 @@ export interface Tool<TParams = unknown, TResult = unknown> {
 	category: string;
 	aliases?: string[];
 	tags?: string[];
-	parameters: z.ZodType<TParams, any, unknown>;
+	parameters: z.ZodType<TParams>;
 	riskLevel: RiskLevel;
 	requiresApproval: boolean;
 	execute: (params: TParams, ctx: ToolContext) => Promise<ToolResult<TResult>>;

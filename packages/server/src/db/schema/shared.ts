@@ -180,7 +180,7 @@ export const NetworkSwarmSchema = z.array(
 		.strict(),
 );
 
-export const LabelsSwarmSchema = z.record(z.string());
+export const LabelsSwarmSchema = z.record(z.string(), z.string());
 
 export const EndpointPortConfigSwarmSchema = z
 	.object({

@@ -143,7 +143,7 @@ export const createVolumeBackup = async (
 
 	const newVolumeBackup = await db
 		.insert(volumeBackups)
-		.values(normalized)
+		.values(normalized as unknown as typeof volumeBackups.$inferInsert)
 		.returning()
 		.then((e) => e[0]);
 
@@ -204,7 +204,7 @@ export const updateVolumeBackup = async (
 
 	return await db
 		.update(volumeBackups)
-		.set(normalized)
+		.set(normalized as unknown as Partial<typeof volumeBackups.$inferInsert>)
 		.where(eq(volumeBackups.volumeBackupId, volumeBackupId))
 		.returning()
 		.then((e) => e[0]);

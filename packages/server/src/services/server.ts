@@ -20,7 +20,7 @@ export const createServer = async (
 			...input,
 			organizationId: organizationId,
 			createdAt: new Date().toISOString(),
-		})
+		} as typeof server.$inferInsert)
 		.returning()
 		.then((value) => value[0]);
 

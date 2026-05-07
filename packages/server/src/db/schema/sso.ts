@@ -66,7 +66,7 @@ export const ssoProviderBodySchema = z.object({
 					emailVerified: z.string().optional(),
 					name: z.string(),
 					image: z.string().optional(),
-					extraFields: z.record(z.any()).optional(),
+					extraFields: z.record(z.string(), z.any()).optional(),
 				})
 				.optional(),
 		})
@@ -114,7 +114,7 @@ export const ssoProviderBodySchema = z.object({
 			identifierFormat: z.string().optional(),
 			privateKey: z.string().optional(),
 			decryptionPvk: z.string().optional(),
-			additionalParams: z.record(z.any()).optional(),
+			additionalParams: z.record(z.string(), z.any()).optional(),
 			mapping: z
 				.object({
 					id: z.string(),
@@ -123,7 +123,7 @@ export const ssoProviderBodySchema = z.object({
 					name: z.string(),
 					firstName: z.string().optional(),
 					lastName: z.string().optional(),
-					extraFields: z.record(z.any()).optional(),
+					extraFields: z.record(z.string(), z.any()).optional(),
 				})
 				.optional(),
 		})

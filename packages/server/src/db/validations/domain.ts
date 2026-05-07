@@ -18,7 +18,7 @@ export const domainShape = {
 		.optional(),
 	https: z.boolean().optional(),
 	certificateType: z.enum(["letsencrypt", "none", "custom"]).optional(),
-	customCertResolver: z.string(),
+	customCertResolver: z.string().optional(),
 } satisfies z.ZodRawShape;
 
 export const domain = z

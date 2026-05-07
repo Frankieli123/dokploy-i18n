@@ -3321,7 +3321,7 @@ function buildChatTools(params: {
 				.object({
 					toolName: z.string().min(1).describe("Exact tool name to execute"),
 					params: z
-						.record(z.any())
+						.record(z.string(), z.any())
 						.optional()
 						.default({})
 						.describe("Parameters object for the tool"),

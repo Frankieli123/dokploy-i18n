@@ -21,7 +21,7 @@ export const createDomain = async (input: z.infer<typeof apiCreateDomain>) => {
 			.values({
 				...input,
 				host: input.host?.trim(),
-			})
+			} as typeof domains.$inferInsert)
 			.returning()
 			.then((response) => response[0]);
 

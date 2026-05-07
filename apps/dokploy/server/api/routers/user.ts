@@ -65,7 +65,7 @@ const customRoleSchema = z.object({
 		.string()
 		.min(1)
 		.regex(/^[a-zA-Z0-9:_-]+$/),
-	permissions: z.record(z.array(z.string())),
+	permissions: z.record(z.string(), z.array(z.string())),
 });
 
 type Resource = keyof typeof statements;
