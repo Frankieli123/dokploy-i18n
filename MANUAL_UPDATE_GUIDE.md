@@ -40,13 +40,13 @@ curl http://localhost:3000/api/health
 
 ```bash
 # 1. 拉取指定版本镜像
-docker pull a3180623/dokploy-i18n:v0.28.8-i18n.22
+docker pull a3180623/dokploy-i18n:v0.28.8-i18n.23
 
 # 2. 更新服务
-docker service update --force --image a3180623/dokploy-i18n:v0.28.8-i18n.22 dokploy
+docker service update --force --image a3180623/dokploy-i18n:v0.28.8-i18n.23 dokploy
 
 # 3. （可选）如果要固定使用这个版本，设置环境变量
-docker service update --env-add RELEASE_TAG=v0.28.8-i18n.22 dokploy
+docker service update --env-add RELEASE_TAG=v0.28.8-i18n.23 dokploy
 
 # 4. 等待并验证
 sleep 30
@@ -61,7 +61,7 @@ docker service logs dokploy --tail 30
 bash install.sh update
 
 # 升级到指定版本
-DOKPLOY_VERSION=v0.28.8-i18n.22 bash install.sh update
+DOKPLOY_VERSION=v0.28.8-i18n.23 bash install.sh update
 ```
 
 ### 方法 3: 通过 Web UI
@@ -294,7 +294,7 @@ docker service inspect dokploy --pretty | grep RELEASE_TAG
 docker service update --env-rm RELEASE_TAG dokploy
 
 # 或者设置为当前版本
-docker service update --env-add RELEASE_TAG=v0.28.8-i18n.22 dokploy
+docker service update --env-add RELEASE_TAG=v0.28.8-i18n.23 dokploy
 ```
 
 ### Q2: 如何查看当前运行的版本？
