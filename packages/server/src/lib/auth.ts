@@ -4,7 +4,7 @@ import { sso } from "@better-auth/sso";
 import * as bcrypt from "bcrypt";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError } from "better-auth/api";
+import { APIError, isAPIError } from "better-auth/api";
 import { admin, organization, twoFactor } from "better-auth/plugins";
 import { and, desc, eq } from "drizzle-orm";
 import { BETTER_AUTH_SECRET, IS_CLOUD } from "../constants";
@@ -518,11 +518,30 @@ export const validateRequest = async (request: IncomingMessage) => {
 	}
 
 	// If no API key, proceed with normal session validation
-	const session = await api.getSession({
-		headers: new Headers({
-			cookie: request.headers.cookie || "",
-		}),
-	});
+	let session: Awaited<ReturnType<typeof api.getSession>> | null = null;
+	try {
+		session = await api.getSession({
+			headers: new Headers({
+				cookie: request.headers.cookie || "",
+			}),
+		});
+	} catch (error) {
+		const err = error as unknown;
+		if (isAPIError(err)) {
+			const apiError = err as APIError;
+			console.error("[auth] getSession failed", {
+				status: apiError.status,
+				code: apiError.body?.code,
+				message: apiError.body?.message ?? apiError.message,
+			});
+		} else {
+			console.error("[auth] getSession unexpected error", err);
+		}
+		return {
+			session: null,
+			user: null,
+		};
+	}
 
 	if (!session?.session || !session.user) {
 		return {
