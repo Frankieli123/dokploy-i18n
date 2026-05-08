@@ -1,6 +1,6 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { IS_CLOUD, paths } from "@dokploy/server/constants";
 import type { Destination } from "@dokploy/server/services/destination";
 import { getS3Credentials } from "../backups/utils";
@@ -15,13 +15,23 @@ export const restoreWebServerBackup = async (
 		return;
 	}
 	try {
+		const normalizedBackupFile = String(backupFile ?? "")
+			.trim()
+			.replace(/\\/g, "/")
+			.replace(/^\/+/, "");
+		const backupFileName = posix.basename(normalizedBackupFile);
+		if (!backupFileName || backupFileName === "." || backupFileName === "/") {
+			throw new Error("Invalid backup file path");
+		}
+
 		const rcloneFlags = getS3Credentials(destination);
 		const bucketPath = `:s3:${destination.bucket}`;
-		const backupPath = `${bucketPath}/${backupFile}`;
+		const backupPath = `${bucketPath}/${normalizedBackupFile}`;
 		const { BASE_PATH } = paths();
 
 		// Create a temporary directory outside of BASE_PATH
 		const tempDir = await mkdtemp(join(tmpdir(), "dokploy-restore-"));
+		const localBackupPath = `${tempDir}/${backupFileName}`;
 
 		try {
 			emit("Starting restore...");
@@ -35,7 +45,7 @@ export const restoreWebServerBackup = async (
 			// Download backup from S3
 			emit("Downloading backup from S3...");
 			await execAsync(
-				`rclone copyto ${rcloneFlags.join(" ")} "${backupPath}" "${tempDir}/${backupFile}"`,
+				`rclone copyto ${rcloneFlags.join(" ")} "${backupPath}" "${localBackupPath}"`,
 			);
 
 			// List files before extraction
@@ -45,7 +55,27 @@ export const restoreWebServerBackup = async (
 
 			// Extract backup
 			emit("Extracting backup...");
-			await execAsync(`cd ${tempDir} && unzip ${backupFile} > /dev/null 2>&1`);
+			await execAsync(
+				`cd ${tempDir} && unzip "${backupFileName}" > /dev/null 2>&1`,
+			);
+
+			// Validate extracted structure before overwriting BASE_PATH
+			const { stdout: hasFilesystemDir } = await execAsync(
+				`test -d "${tempDir}/filesystem" && echo ok || true`,
+			);
+			if (!hasFilesystemDir.includes("ok")) {
+				throw new Error("Invalid backup structure: filesystem folder not found");
+			}
+
+			// Validate database dump exists (either compressed or plain)
+			const { stdout: hasAnyDbDump } = await execAsync(
+				`ls "${tempDir}/database.sql" "${tempDir}/database.sql.gz" 2>/dev/null | head -n 1 || true`,
+			);
+			if (!hasAnyDbDump.trim()) {
+				throw new Error(
+					"Invalid backup structure: database.sql(.gz) not found",
+				);
+			}
 
 			// Restore filesystem first
 			emit("Restoring filesystem...");
