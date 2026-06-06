@@ -408,7 +408,12 @@ export const apiSaveBuildType = createSchema
 		railpackVersion: true,
 	})
 	.required()
-	.merge(createSchema.pick({ publishDirectory: true, isStaticSpa: true }));
+	.merge(
+		z.object({
+			publishDirectory: z.string().nullable().optional(),
+			isStaticSpa: z.boolean().nullable().optional(),
+		}),
+	);
 
 export const apiSaveGithubProvider = createSchema
 	.pick({

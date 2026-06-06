@@ -1,12 +1,13 @@
+import { createHash } from "node:crypto";
 import { db } from "@dokploy/server/db";
 import {
 	ai,
-	aiEmbeddingProviders,
 	aiAgentPlaybooks,
 	aiConversations,
+	aiDisplayMessages,
+	aiEmbeddingProviders,
 	aiMcpServers,
 	aiMessages,
-	aiDisplayMessages,
 	aiRuns,
 	aiToolExecutions,
 } from "@dokploy/server/db/schema";
@@ -21,8 +22,18 @@ import {
 	streamText,
 	tool,
 } from "ai";
-import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
-import { createHash } from "node:crypto";
+import {
+	and,
+	desc,
+	eq,
+	gt,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	or,
+	sql,
+} from "drizzle-orm";
 import { z } from "zod";
 import { IS_CLOUD } from "../constants";
 import {
@@ -38,13 +49,18 @@ import {
 } from "../utils/zod-compat";
 import { findOrganizationById } from "./admin";
 import {
+	buildAgentDisplayMessageFromEvents,
+	type ParsedAgentEventMessage,
+} from "./ai/agent-display-replay";
+import {
 	callAiMcpTool,
 	listAiMcpServersByOrganizationId,
 	listAiMcpToolsCached,
 	validateAiMcpToolArguments,
 } from "./ai/mcp-servers";
-import { getTrpcBridge } from "./ai/trpc-bridge";
 import {
+	type EmbeddingProviderConfig,
+	hashTextToUnitVector,
 	PLAYBOOK_DEFAULT_TOP_K,
 	PLAYBOOK_EMBEDDING_MAX_DISTANCE,
 	PLAYBOOK_HASH_DIMENSIONS,
@@ -53,10 +69,9 @@ import {
 	PLAYBOOK_MAX_INDEXABLE_EMBEDDING_DIMENSIONS,
 	PLAYBOOK_QUERY_CANDIDATE_MULTIPLIER,
 	PLAYBOOK_RETENTION_DAYS,
-	hashTextToUnitVector,
-	type EmbeddingProviderConfig,
 	tryEmbedText,
 } from "./ai/playbook-memory";
+import { getTrpcBridge } from "./ai/trpc-bridge";
 import {
 	initializeTools,
 	type Tool,
@@ -65,17 +80,31 @@ import {
 	toolRegistry,
 } from "./ai-tools";
 import { selectRelevantTools } from "./ai-tools/selector";
-import {
-	type ParsedAgentEventMessage,
-	buildAgentDisplayMessageFromEvents,
-} from "./ai/agent-display-replay";
+import { findServerById } from "./server";
 
 type CoreMessage = ModelMessage;
-import { findServerById } from "./server";
 
 type AiMessageRow = typeof aiMessages.$inferSelect;
 type AiDisplayMessageRow = typeof aiDisplayMessages.$inferSelect;
 type AiMessageAttachment = NonNullable<AiMessageRow["attachments"]>[number];
+
+const OPENAI_RESPONSES_PROVIDER_OPTIONS = {
+	openai: {
+		store: false,
+	},
+};
+
+const AUTO_EXECUTE_ACTION_REQUESTS = false;
+
+function getOpenAIResponsesProviderOptions(aiSettings: {
+	providerType?: string | null;
+}) {
+	return String(aiSettings.providerType ?? "")
+		.trim()
+		.toLowerCase() === "openai"
+		? OPENAI_RESPONSES_PROVIDER_OPTIONS
+		: undefined;
+}
 
 type ToolPromptInfo = {
 	name: string;
@@ -85,7 +114,11 @@ type ToolPromptInfo = {
 	parameters?: string;
 };
 
-type MetaToolName = "tool_suggest" | "tool_search" | "tool_describe" | "tool_call";
+type MetaToolName =
+	| "tool_suggest"
+	| "tool_search"
+	| "tool_describe"
+	| "tool_call";
 
 type ToolBudgetMode = "standard" | "max";
 
@@ -115,7 +148,8 @@ function parseMcpVirtualToolName(
 	toolName: string,
 ): { mcpServerId: string; mcpToolName: string } | null {
 	const normalized = String(toolName ?? "").trim();
-	if (!normalized.toLowerCase().startsWith(MCP_VIRTUAL_TOOL_PREFIX)) return null;
+	if (!normalized.toLowerCase().startsWith(MCP_VIRTUAL_TOOL_PREFIX))
+		return null;
 	const parts = normalized.split("/");
 	if (parts.length < 3) return null;
 	const mcpServerId = String(parts[1] ?? "").trim();
@@ -151,7 +185,10 @@ async function getMcpServerNameCached(params: {
 		}
 	} catch {}
 
-	mcpServerNameCache.set(key, { name, expiresAt: now + MCP_SERVER_NAME_TTL_MS });
+	mcpServerNameCache.set(key, {
+		name,
+		expiresAt: now + MCP_SERVER_NAME_TTL_MS,
+	});
 	return name;
 }
 
@@ -292,12 +329,14 @@ function describeZodParameters(schema: z.ZodTypeAny): string {
 function buildMetaToolPromptInfo(params?: {
 	selectedNames?: readonly MetaToolName[];
 }): ToolPromptInfo[] {
-	const selected = new Set<MetaToolName>(params?.selectedNames ?? [
-		"tool_suggest",
-		"tool_search",
-		"tool_describe",
-		"tool_call",
-	]);
+	const selected = new Set<MetaToolName>(
+		params?.selectedNames ?? [
+			"tool_suggest",
+			"tool_search",
+			"tool_describe",
+			"tool_call",
+		],
+	);
 	return [
 		{
 			name: "tool_suggest",
@@ -484,7 +523,8 @@ function tokenizeToolSearchQuery(query: string): string[] {
 	if (/(router|routers|路由|模块)/i.test(query)) add("router");
 	if (/(procedure|procedures|方法|函数|接口)/i.test(query)) add("procedure");
 	if (/(search|查找|搜索)/i.test(query)) add("search");
-	if (/(describe|schema|入参|参数|字段|说明|描述)/i.test(query)) add("describe");
+	if (/(describe|schema|入参|参数|字段|说明|描述)/i.test(query))
+		add("describe");
 	if (/(call|invoke|execute|run|调用|执行)/i.test(query)) add("call");
 	if (
 		/(\bsql\b|\bdatabase\b|\bdb\b|\btable\b|\bschema\b|\bddl\b|\bdml\b|\bpostgres\b|\bpostgresql\b|\bmysql\b|\bmariadb\b|\bsqlite\b|\bmongodb\b|\bmongo\b|\bredis\b|数据库|数据表|表|查询|结构)/i.test(
@@ -953,7 +993,8 @@ function searchToolCatalog(params: {
 
 	const bestTool = scored.length > 0 ? scored[0]?.t : undefined;
 	const fallbackTool =
-		toolRegistry.get("trpc_procedure_search") ?? toolRegistry.get("trpc_router_list");
+		toolRegistry.get("trpc_procedure_search") ??
+		toolRegistry.get("trpc_router_list");
 	const nextCall = bestTool
 		? {
 				toolName: bestTool.name,
@@ -1073,7 +1114,8 @@ export const saveAiEmbeddingProvider = async (
 	organizationId: string,
 	settings: any,
 ) => {
-	const providerType = String(settings?.providerType ?? "").trim() || "openai_compatible";
+	const providerType =
+		String(settings?.providerType ?? "").trim() || "openai_compatible";
 	const apiUrl = String(settings?.apiUrl ?? "")
 		.trim()
 		.replace(/\/+$/, "");
@@ -1100,11 +1142,9 @@ export const saveAiEmbeddingProvider = async (
 
 		const shouldClearStoredEmbeddings =
 			!!currentProvider &&
-			(
-				currentProvider.providerType !== providerType ||
+			(currentProvider.providerType !== providerType ||
 				currentProvider.apiUrl !== apiUrl ||
-				currentProvider.model !== model
-			);
+				currentProvider.model !== model);
 
 		const result = await tx
 			.insert(aiEmbeddingProviders)
@@ -1196,7 +1236,9 @@ export const testAiEmbeddingProvider = async (params: {
 	const provider = await getAiEmbeddingProviderByOrganizationId(
 		params.organizationId,
 	);
-	const text = String(params.text ?? "Dokploy embedding test").trim() || "Dokploy embedding test";
+	const text =
+		String(params.text ?? "Dokploy embedding test").trim() ||
+		"Dokploy embedding test";
 
 	if (!provider) {
 		return {
@@ -1226,7 +1268,10 @@ export const testAiEmbeddingProvider = async (params: {
 		};
 	}
 
-	const providerClient = selectAIProvider(config) as unknown as Record<string, unknown>;
+	const providerClient = selectAIProvider(config) as unknown as Record<
+		string,
+		unknown
+	>;
 	const embeddingFactory =
 		(providerClient as { textEmbeddingModel?: unknown }).textEmbeddingModel ??
 		(providerClient as { textEmbedding?: unknown }).textEmbedding ??
@@ -1252,7 +1297,8 @@ export const testAiEmbeddingProvider = async (params: {
 			providerType: config.providerType ?? undefined,
 			model: modelId,
 			dim: PLAYBOOK_HASH_DIMENSIONS,
-			error: getProviderErrorText(error) || "Failed to initialize embedding model",
+			error:
+				getProviderErrorText(error) || "Failed to initialize embedding model",
 		};
 	}
 
@@ -1397,7 +1443,9 @@ export const getAiEmbeddingProviderDiagnostics = async (
 		hasMixedDimensions: dimensionBreakdown.length > 1,
 		hasConfiguredModelMismatch:
 			configuredModel !== null &&
-			modelBreakdown.some((row) => String(row.model ?? "").trim() !== configuredModel),
+			modelBreakdown.some(
+				(row) => String(row.model ?? "").trim() !== configuredModel,
+			),
 	};
 };
 const resolveEmbeddingProviderConfig = async (params: {
@@ -1432,7 +1480,8 @@ const resolveEmbeddingProviderConfig = async (params: {
 		const hasOverrideApiUrl = overrideApiUrl.length > 0;
 		return {
 			providerType:
-				params.aiSettings.embeddingProviderType ?? params.aiSettings.providerType,
+				params.aiSettings.embeddingProviderType ??
+				params.aiSettings.providerType,
 			apiUrl: hasOverrideApiUrl ? overrideApiUrl : params.aiSettings.apiUrl,
 			apiKey: hasOverrideApiUrl
 				? String(params.aiSettings.embeddingApiKey ?? "")
@@ -1468,6 +1517,7 @@ export const suggestVariants = async ({
 
 		const provider = selectAIProvider(aiSettings);
 		const model = provider(aiSettings.model);
+		const providerOptions = getOpenAIResponsesProviderOptions(aiSettings);
 
 		let ip = "";
 		if (!IS_CLOUD) {
@@ -1484,6 +1534,7 @@ export const suggestVariants = async ({
 
 		const { object } = await generateObject({
 			model,
+			providerOptions,
 			output: "object",
 			schema: z.object({
 				suggestions: z.array(
@@ -1516,6 +1567,7 @@ ${input}`,
 				try {
 					const { object: docker } = await generateObject({
 						model,
+						providerOptions,
 						output: "object",
 						schema: z.object({
 							dockerCompose: z.string(),
@@ -1710,7 +1762,10 @@ export const listConversations = async (params: {
 	}
 	if (params.serverId === null) {
 		conditions.push(isNull(aiConversations.serverId));
-	} else if (typeof params.serverId === "string" && params.serverId.length > 0) {
+	} else if (
+		typeof params.serverId === "string" &&
+		params.serverId.length > 0
+	) {
 		conditions.push(eq(aiConversations.serverId, params.serverId));
 	}
 	if (params.status) {
@@ -1821,7 +1876,8 @@ export const getConversationIndicators = async (params: {
 
 	return Object.fromEntries(
 		allowedIds.map((conversationId) => {
-			const hasPendingApproval = pendingApprovalByConversationId.has(conversationId);
+			const hasPendingApproval =
+				pendingApprovalByConversationId.has(conversationId);
 			const isRunning =
 				!hasPendingApproval &&
 				(sendingByConversationId.has(conversationId) ||
@@ -1859,6 +1915,7 @@ export const updateConversation = async (
 const scheduleConversationSummaryUpdate = (params: {
 	conversationId: string;
 	model: unknown;
+	providerOptions?: typeof OPENAI_RESPONSES_PROVIDER_OPTIONS;
 	maxMessages?: number;
 }) => {
 	void (async () => {
@@ -1896,6 +1953,7 @@ const scheduleConversationSummaryUpdate = (params: {
 
 			const summaryText = await generatePromptText({
 				model: params.model as any,
+				providerOptions: params.providerOptions,
 				prompt: `Update the conversation memory summary.
 
 Rules:
@@ -1951,7 +2009,9 @@ export const getMessages = async (params: {
 	];
 	if (params.before) {
 		const beforeMessageId =
-			typeof params.beforeMessageId === "string" ? params.beforeMessageId.trim() : "";
+			typeof params.beforeMessageId === "string"
+				? params.beforeMessageId.trim()
+				: "";
 		if (beforeMessageId.length > 0) {
 			conditions.push(
 				or(
@@ -1986,7 +2046,9 @@ export const getDisplayMessages = async (params: {
 	];
 	if (params.before) {
 		const beforeMessageId =
-			typeof params.beforeMessageId === "string" ? params.beforeMessageId.trim() : "";
+			typeof params.beforeMessageId === "string"
+				? params.beforeMessageId.trim()
+				: "";
 		if (beforeMessageId.length > 0) {
 			conditions.push(
 				or(
@@ -2004,20 +2066,28 @@ export const getDisplayMessages = async (params: {
 
 	const messages = await db.query.aiDisplayMessages.findMany({
 		where: and(...conditions),
-		orderBy: [desc(aiDisplayMessages.createdAt), desc(aiDisplayMessages.messageId)],
+		orderBy: [
+			desc(aiDisplayMessages.createdAt),
+			desc(aiDisplayMessages.messageId),
+		],
 		limit: params.limit || 50,
 	});
 	const rawMessages = await getMessages(params);
 	if (rawMessages.length === 0) return messages.reverse();
 
-	const mergedById = new Map(messages.map((message) => [message.messageId, message] as const));
+	const mergedById = new Map(
+		messages.map((message) => [message.messageId, message] as const),
+	);
 	let didRepair = false;
 	for (const rawMessage of rawMessages) {
 		if (rawMessage.role === "system") continue;
 		const inferredIdentity = inferDisplayMessageIdentity(rawMessage);
 		const existing = mergedById.get(rawMessage.messageId);
 		if (!existing) {
-			const snapshot = await syncDisplayMessageFromRawMessage(rawMessage, inferredIdentity);
+			const snapshot = await syncDisplayMessageFromRawMessage(
+				rawMessage,
+				inferredIdentity,
+			);
 			if (!snapshot) continue;
 			mergedById.set(snapshot.messageId, snapshot);
 			didRepair = true;
@@ -2027,9 +2097,13 @@ export const getDisplayMessages = async (params: {
 			toolCalls: rawMessage.toolCalls,
 		});
 		const normalizedContent =
-			normalizeAssistantMessageContent(rawMessage.role, rawMessage.content ?? null) ?? null;
+			normalizeAssistantMessageContent(
+				rawMessage.role,
+				rawMessage.content ?? null,
+			) ?? null;
 		const needsKindRepair =
-			inferredIdentity.kind === "agent" && existing.kind !== inferredIdentity.kind;
+			inferredIdentity.kind === "agent" &&
+			existing.kind !== inferredIdentity.kind;
 		const needsRunIdRepair =
 			inferredIdentity.kind === "agent" &&
 			normalizeDisplayMessageRunId(existing.runId) !== inferredIdentity.runId;
@@ -2041,7 +2115,8 @@ export const getDisplayMessages = async (params: {
 			Array.isArray(repairedToolCalls) &&
 			repairedToolCalls.length > 0;
 		const needsContentRepair =
-			rawMessage.role === "assistant" && normalizedContent !== (existing.content ?? null);
+			rawMessage.role === "assistant" &&
+			normalizedContent !== (existing.content ?? null);
 		if (
 			!needsKindRepair &&
 			!needsRunIdRepair &&
@@ -2078,7 +2153,11 @@ export const getDisplayMessages = async (params: {
 	return Array.from(mergedById.values()).sort((left, right) => {
 		const leftTime = Date.parse(left.createdAt ?? "");
 		const rightTime = Date.parse(right.createdAt ?? "");
-		if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+		if (
+			Number.isFinite(leftTime) &&
+			Number.isFinite(rightTime) &&
+			leftTime !== rightTime
+		) {
 			return leftTime - rightTime;
 		}
 		return left.messageId.localeCompare(right.messageId);
@@ -2096,11 +2175,14 @@ export const getAgentEventMessages = async (params: {
 	const limit = Math.max(1, Math.min(params.limit ?? 200, maxLimit));
 	const batchSize = Math.min(500, Math.max(50, limit * 5));
 	const runId = params.runId.trim();
-	if (runId.length === 0) return { messages: [] as AiMessageRow[], nextCursor: null };
+	if (runId.length === 0)
+		return { messages: [] as AiMessageRow[], nextCursor: null };
 
 	let before = typeof params.before === "string" ? params.before : undefined;
 	let beforeMessageId =
-		typeof params.beforeMessageId === "string" ? params.beforeMessageId.trim() : "";
+		typeof params.beforeMessageId === "string"
+			? params.beforeMessageId.trim()
+			: "";
 
 	const matchedDesc: AiMessageRow[] = [];
 	let nextCursor: { before: string; beforeMessageId: string } | null = null;
@@ -2115,7 +2197,10 @@ export const getAgentEventMessages = async (params: {
 				conditions.push(
 					or(
 						lt(aiMessages.createdAt, before),
-						and(eq(aiMessages.createdAt, before), lt(aiMessages.messageId, beforeMessageId)),
+						and(
+							eq(aiMessages.createdAt, before),
+							lt(aiMessages.messageId, beforeMessageId),
+						),
 					),
 				);
 			} else {
@@ -2143,7 +2228,8 @@ export const getAgentEventMessages = async (params: {
 			if (!isRecord(parsed)) continue;
 			const type = typeof parsed.type === "string" ? parsed.type : "";
 			if (!type.startsWith("agent.")) continue;
-			const messageRunId = typeof parsed.runId === "string" ? parsed.runId.trim() : "";
+			const messageRunId =
+				typeof parsed.runId === "string" ? parsed.runId.trim() : "";
 			if (messageRunId !== runId) continue;
 			matchedDesc.push(msg);
 		}
@@ -2196,7 +2282,10 @@ async function listAgentEventPayloads(params: {
 				conditions.push(
 					or(
 						lt(aiMessages.createdAt, before),
-						and(eq(aiMessages.createdAt, before), lt(aiMessages.messageId, beforeMessageId)),
+						and(
+							eq(aiMessages.createdAt, before),
+							lt(aiMessages.messageId, beforeMessageId),
+						),
 					),
 				);
 			} else {
@@ -2224,8 +2313,9 @@ async function listAgentEventPayloads(params: {
 			if (!isRecord(parsed)) continue;
 			const type = typeof parsed.type === "string" ? parsed.type : "";
 			if (!type.startsWith("agent.")) continue;
-			const messageRunId = typeof parsed.runId === "string" ? parsed.runId.trim() : "";
-			if (messageRunId != runId) continue;
+			const messageRunId =
+				typeof parsed.runId === "string" ? parsed.runId.trim() : "";
+			if (messageRunId !== runId) continue;
 			matchedDesc.push({
 				messageId: msg.messageId,
 				createdAt: msg.createdAt,
@@ -2243,7 +2333,9 @@ async function listAgentEventPayloads(params: {
 	return matchedDesc.reverse();
 }
 
-function normalizeDisplayMessageRunId(value: string | null | undefined): string | null {
+function normalizeDisplayMessageRunId(
+	value: string | null | undefined,
+): string | null {
 	const normalized = typeof value === "string" ? value.trim() : "";
 	return normalized.length > 0 ? normalized : null;
 }
@@ -2268,7 +2360,8 @@ function inferDisplayMessageIdentity(
 	if (overrides.kind) {
 		return {
 			kind: overrides.kind,
-			runId: explicitRunId ?? (overrides.kind === "agent" ? inferredRunId : null),
+			runId:
+				explicitRunId ?? (overrides.kind === "agent" ? inferredRunId : null),
 		};
 	}
 	const runId = explicitRunId ?? inferredRunId;
@@ -2339,15 +2432,19 @@ function buildDisplayToolCalls(params: {
 	toolResults?: unknown[];
 }): AiDisplayMessageRow["toolCalls"] {
 	const toolCalls = Array.isArray(params.toolCalls) ? params.toolCalls : [];
-	const toolResults = Array.isArray(params.toolResults) ? params.toolResults : [];
+	const toolResults = Array.isArray(params.toolResults)
+		? params.toolResults
+		: [];
 	if (toolCalls.length === 0) return null;
 
 	const resultByToolCallId = new Map<string, unknown>();
 	for (const entry of toolResults) {
 		if (!entry || typeof entry !== "object") continue;
 		const toolCallId =
-			(entry as { toolCallId?: unknown }).toolCallId ?? (entry as { id?: unknown }).id;
-		if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) continue;
+			(entry as { toolCallId?: unknown }).toolCallId ??
+			(entry as { id?: unknown }).id;
+		if (typeof toolCallId !== "string" || toolCallId.trim().length === 0)
+			continue;
 		const resultValue =
 			(entry as { result?: unknown }).result ??
 			(entry as { output?: unknown }).output ??
@@ -2357,12 +2454,20 @@ function buildDisplayToolCalls(params: {
 
 	return toolCalls.map((toolCall) => {
 		const resultValue = resultByToolCallId.get(toolCall.id);
-		let status: DisplayToolCallStatus | undefined = resultValue ? "completed" : "executing";
+		let status: DisplayToolCallStatus | undefined = resultValue
+			? "completed"
+			: "executing";
 		let executionId =
-			typeof toolCall.executionId === "string" ? toolCall.executionId.trim() : "";
+			typeof toolCall.executionId === "string"
+				? toolCall.executionId.trim()
+				: "";
 		let result: DisplayToolCallResult | undefined;
 
-		if (resultValue && typeof resultValue === "object" && !Array.isArray(resultValue)) {
+		if (
+			resultValue &&
+			typeof resultValue === "object" &&
+			!Array.isArray(resultValue)
+		) {
 			const record = resultValue as {
 				success?: unknown;
 				message?: unknown;
@@ -2379,14 +2484,16 @@ function buildDisplayToolCalls(params: {
 				status = "pending";
 				result = {
 					success: true,
-					message: typeof record.message === "string" ? record.message : undefined,
+					message:
+						typeof record.message === "string" ? record.message : undefined,
 					data: record.data,
 				};
 			} else if (typeof record.success === "boolean") {
 				status = record.success ? "completed" : "failed";
 				result = {
 					success: record.success,
-					message: typeof record.message === "string" ? record.message : undefined,
+					message:
+						typeof record.message === "string" ? record.message : undefined,
 					data: record.data,
 					error: typeof record.error === "string" ? record.error : undefined,
 				};
@@ -2420,16 +2527,20 @@ async function upsertDisplayMessageSnapshot(params: {
 	createdAt?: string;
 }) {
 	if (params.role === "system") return null;
-	const messageId = typeof params.messageId === "string" ? params.messageId.trim() : "";
+	const messageId =
+		typeof params.messageId === "string" ? params.messageId.trim() : "";
 	const conversationId =
-		typeof params.conversationId === "string" ? params.conversationId.trim() : "";
+		typeof params.conversationId === "string"
+			? params.conversationId.trim()
+			: "";
 	if (messageId.length === 0 || conversationId.length === 0) return null;
 	const now = new Date().toISOString();
 	const insertValue = {
 		messageId,
 		conversationId,
 		sourceMessageId:
-			typeof params.sourceMessageId === "string" && params.sourceMessageId.trim().length > 0
+			typeof params.sourceMessageId === "string" &&
+			params.sourceMessageId.trim().length > 0
 				? params.sourceMessageId.trim()
 				: null,
 		runId:
@@ -2466,7 +2577,9 @@ async function upsertDisplayMessageSnapshot(params: {
 		...(params.attachments !== undefined
 			? { attachments: insertValue.attachments }
 			: {}),
-		...(params.toolCalls !== undefined ? { toolCalls: insertValue.toolCalls } : {}),
+		...(params.toolCalls !== undefined
+			? { toolCalls: insertValue.toolCalls }
+			: {}),
 		...(params.status !== undefined ? { status: insertValue.status } : {}),
 		...(params.error !== undefined ? { error: insertValue.error } : {}),
 	};
@@ -2501,7 +2614,9 @@ async function syncDisplayMessageFromRawMessage(
 		runId: identity.runId,
 		role: message.role,
 		kind: identity.kind,
-		content: normalizeAssistantMessageContent(message.role, message.content ?? null) ?? null,
+		content:
+			normalizeAssistantMessageContent(message.role, message.content ?? null) ??
+			null,
 		reasoning: overrides.reasoning ?? null,
 		attachments: message.attachments ?? null,
 		toolCalls: buildDisplayToolCalls({
@@ -2519,18 +2634,23 @@ async function repairAgentDisplayMessagesFromEvents(params: {
 	rawMessages: AiMessageRow[];
 	mergedById: Map<string, AiDisplayMessageRow>;
 }): Promise<boolean> {
-	const candidates = Array.from(params.mergedById.values()).filter((message) => {
-		if (message.role !== "assistant") return false;
-		if (message.kind !== "agent") return false;
-		return normalizeDisplayMessageRunId(message.runId) !== null;
-	});
+	const candidates = Array.from(params.mergedById.values()).filter(
+		(message) => {
+			if (message.role !== "assistant") return false;
+			if (message.kind !== "agent") return false;
+			return normalizeDisplayMessageRunId(message.runId) !== null;
+		},
+	);
 	if (candidates.length === 0) return false;
 
 	const runIds = Array.from(
 		new Set(
 			candidates
 				.map((message) => normalizeDisplayMessageRunId(message.runId))
-				.filter((runId): runId is string => typeof runId === "string" && runId.length > 0),
+				.filter(
+					(runId): runId is string =>
+						typeof runId === "string" && runId.length > 0,
+				),
 		),
 	);
 	if (runIds.length === 0) return false;
@@ -2566,11 +2686,13 @@ async function repairAgentDisplayMessagesFromEvents(params: {
 		if (!replayed) continue;
 
 		const currentSource =
-			typeof message.sourceMessageId === "string" && message.sourceMessageId.trim().length > 0
+			typeof message.sourceMessageId === "string" &&
+			message.sourceMessageId.trim().length > 0
 				? message.sourceMessageId.trim()
 				: null;
 		const nextSource =
-			typeof replayed.sourceMessageId === "string" && replayed.sourceMessageId.trim().length > 0
+			typeof replayed.sourceMessageId === "string" &&
+			replayed.sourceMessageId.trim().length > 0
 				? replayed.sourceMessageId.trim()
 				: null;
 		const currentContent = message.content ?? null;
@@ -2608,7 +2730,9 @@ async function repairAgentDisplayMessagesFromEvents(params: {
 			...(needsSourceRepair ? { sourceMessageId: nextSource } : {}),
 			...(needsContentRepair ? { content: nextContent } : {}),
 			...(needsReasoningRepair ? { reasoning: nextReasoning } : {}),
-			...(needsToolCallsRepair ? { toolCalls: replayed.toolCalls ?? null } : {}),
+			...(needsToolCallsRepair
+				? { toolCalls: replayed.toolCalls ?? null }
+				: {}),
 			...(needsStatusRepair ? { status: replayed.status } : {}),
 			...(needsErrorRepair ? { error: nextError } : {}),
 			createdAt: message.createdAt,
@@ -2679,7 +2803,8 @@ export const updateMessage = async (params: {
 	if (params.toolCalls !== undefined) update.toolCalls = params.toolCalls;
 	if (params.toolCallId !== undefined) update.toolCallId = params.toolCallId;
 	if (params.toolName !== undefined) update.toolName = params.toolName;
-	if (params.promptTokens !== undefined) update.promptTokens = params.promptTokens;
+	if (params.promptTokens !== undefined)
+		update.promptTokens = params.promptTokens;
 	if (params.completionTokens !== undefined)
 		update.completionTokens = params.completionTokens;
 
@@ -2724,7 +2849,10 @@ function normalizeMessageAttachments(
 	const normalized: AiMessageAttachment[] = [];
 	for (const attachment of attachments) {
 		if (!attachment || attachment.type !== "image") continue;
-		if (typeof attachment.data !== "string" || attachment.data.trim().length === 0) {
+		if (
+			typeof attachment.data !== "string" ||
+			attachment.data.trim().length === 0
+		) {
 			continue;
 		}
 		if (
@@ -2763,8 +2891,12 @@ function messageToCoreMessage(
 ): CoreMessage | null {
 	if (msg.role !== "user" && msg.role !== "assistant") return null;
 
-	const normalizedContent = normalizeAssistantMessageContent(msg.role, msg.content);
-	const content = typeof normalizedContent === "string" ? normalizedContent.trim() : "";
+	const normalizedContent = normalizeAssistantMessageContent(
+		msg.role,
+		msg.content,
+	);
+	const content =
+		typeof normalizedContent === "string" ? normalizedContent.trim() : "";
 	const attachments = Array.isArray(msg.attachments) ? msg.attachments : [];
 
 	if (msg.role === "user" && attachments.length > 0) {
@@ -2844,7 +2976,8 @@ function buildChatTools(params: {
 }): Record<string, any> {
 	let cachedConversationMetadata: unknown | undefined;
 	const getConversationMetadata = async (): Promise<unknown> => {
-		if (cachedConversationMetadata !== undefined) return cachedConversationMetadata;
+		if (cachedConversationMetadata !== undefined)
+			return cachedConversationMetadata;
 		try {
 			const conversation = await db.query.aiConversations.findFirst({
 				where: eq(aiConversations.conversationId, params.conversationId),
@@ -2860,8 +2993,8 @@ function buildChatTools(params: {
 		const metadata = await getConversationMetadata();
 		return getGithubRepoFromMetadata(metadata);
 	};
-		let cachedUserMessageText: string | null | undefined;
-		const getUserMessageTextForToolCall = async (): Promise<string> => {
+	let cachedUserMessageText: string | null | undefined;
+	const getUserMessageTextForToolCall = async (): Promise<string> => {
 		if (cachedUserMessageText !== undefined) return cachedUserMessageText ?? "";
 
 		const messageId =
@@ -2888,12 +3021,13 @@ function buildChatTools(params: {
 				columns: { content: true },
 				orderBy: desc(aiMessages.createdAt),
 			});
-			cachedUserMessageText = typeof msg?.content === "string" ? msg.content : "";
+			cachedUserMessageText =
+				typeof msg?.content === "string" ? msg.content : "";
 		} catch {
 			cachedUserMessageText = "";
 		}
-			return cachedUserMessageText ?? "";
-		};
+		return cachedUserMessageText ?? "";
+	};
 
 	type McpVirtualTool = {
 		name: string;
@@ -2936,7 +3070,8 @@ function buildChatTools(params: {
 				const toolName = t.name.trim();
 				if (!toolName) continue;
 				const name = buildMcpVirtualToolName(server.mcpServerId, toolName);
-				const serverName = String(server.name ?? "").trim() || server.mcpServerId;
+				const serverName =
+					String(server.name ?? "").trim() || server.mcpServerId;
 				const description =
 					typeof t.description === "string" && t.description.trim().length > 0
 						? t.description.trim()
@@ -2947,7 +3082,9 @@ function buildChatTools(params: {
 					category: "mcp",
 					riskLevel: "high",
 					requiresApproval: true,
-					tags: ["mcp", serverName, toolName].filter((x) => x.trim().length > 0),
+					tags: ["mcp", serverName, toolName].filter(
+						(x) => x.trim().length > 0,
+					),
 					aliases: [],
 					mcpServerId: server.mcpServerId,
 					serverName,
@@ -3036,7 +3173,8 @@ function buildChatTools(params: {
 
 			const nameLower = t.name.toLowerCase();
 			const extraTermsLower = t.tags.map((x) => x.toLowerCase());
-			const hayLower = `${t.name} ${t.description} ${t.category} ${t.tags.join(" ")}`.toLowerCase();
+			const hayLower =
+				`${t.name} ${t.description} ${t.category} ${t.tags.join(" ")}`.toLowerCase();
 
 			let score = 0;
 			for (const tTok of tokensLower) {
@@ -3060,9 +3198,7 @@ function buildChatTools(params: {
 
 		if (scored.length === 0) return searchToolCatalog(input);
 
-		scored.sort(
-			(a, b) => b.score - a.score || a.name.localeCompare(b.name),
-		);
+		scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 
 		const limit = input.limit ?? 12;
 		const picked = scored.slice(0, limit);
@@ -3129,7 +3265,8 @@ function buildChatTools(params: {
 		const scored: Array<{ t: McpVirtualTool; score: number }> = [];
 		for (const t of mcpTools) {
 			const nameLower = t.name.toLowerCase();
-			const hayLower = `${t.name} ${t.description} ${t.category} ${t.tags.join(" ")}`.toLowerCase();
+			const hayLower =
+				`${t.name} ${t.description} ${t.category} ${t.tags.join(" ")}`.toLowerCase();
 
 			let score = 0;
 			for (const tTok of tokensLower) {
@@ -3153,12 +3290,15 @@ function buildChatTools(params: {
 		}));
 	};
 
-		return {
-			tool_suggest: tool({
+	return {
+		tool_suggest: tool({
 			description:
 				"Suggest likely relevant tools for a request. Returns a short list; use tool_search if the list is empty or insufficient.",
 			inputSchema: z.object({
-				query: z.string().min(1).describe("The user's request (natural language)"),
+				query: z
+					.string()
+					.min(1)
+					.describe("The user's request (natural language)"),
 				limit: z
 					.number()
 					.min(1)
@@ -3169,42 +3309,42 @@ function buildChatTools(params: {
 			}),
 			execute: async (input: { query: string; limit?: number }) => {
 				const limit = input.limit ?? 15;
-					const selectedRaw = selectRelevantTools(input.query, {
-						projectId: params.toolContext.projectId,
-						serverId: params.toolContext.serverId,
-						minTools: 0,
-						maxTools: limit,
-					});
-					const base = selectedRaw.map((t) => ({
-						name: t.name,
-						description: t.description,
-						category: t.category,
-						riskLevel: t.riskLevel,
-						requiresApproval: t.requiresApproval,
-					}));
-					const remaining = Math.max(0, limit - base.length);
-					const extraMcp =
-						remaining > 0 ? await suggestMcpTools(input.query, remaining) : [];
-					const merged: Array<(typeof base)[number]> = [];
-					const seen = new Set<string>();
-					for (const x of base) {
-						if (seen.has(x.name)) continue;
-						seen.add(x.name);
-						merged.push(x);
-					}
-					for (const x of extraMcp) {
-						if (seen.has(x.name)) continue;
-						seen.add(x.name);
-						merged.push(x);
-						if (merged.length >= limit) break;
-					}
-					return {
-						success: true,
-						message:
-							merged.length > 0
-								? `Suggested ${merged.length} tool(s) for "${input.query}"`
-								: `No direct suggestions for "${input.query}". Use tool_search to explore the full catalog.`,
-						data: merged,
+				const selectedRaw = selectRelevantTools(input.query, {
+					projectId: params.toolContext.projectId,
+					serverId: params.toolContext.serverId,
+					minTools: 0,
+					maxTools: limit,
+				});
+				const base = selectedRaw.map((t) => ({
+					name: t.name,
+					description: t.description,
+					category: t.category,
+					riskLevel: t.riskLevel,
+					requiresApproval: t.requiresApproval,
+				}));
+				const remaining = Math.max(0, limit - base.length);
+				const extraMcp =
+					remaining > 0 ? await suggestMcpTools(input.query, remaining) : [];
+				const merged: Array<(typeof base)[number]> = [];
+				const seen = new Set<string>();
+				for (const x of base) {
+					if (seen.has(x.name)) continue;
+					seen.add(x.name);
+					merged.push(x);
+				}
+				for (const x of extraMcp) {
+					if (seen.has(x.name)) continue;
+					seen.add(x.name);
+					merged.push(x);
+					if (merged.length >= limit) break;
+				}
+				return {
+					success: true,
+					message:
+						merged.length > 0
+							? `Suggested ${merged.length} tool(s) for "${input.query}"`
+							: `No direct suggestions for "${input.query}". Use tool_search to explore the full catalog.`,
+					data: merged,
 				};
 			},
 		}),
@@ -3241,13 +3381,13 @@ function buildChatTools(params: {
 				query: string;
 				limit?: number;
 				category?: string;
-					riskLevelMax?: "low" | "medium" | "high";
-					requiresApproval?: boolean;
-				}) => {
-					return await searchToolCatalogWithMcp(input);
-				},
-			}),
-			tool_describe: tool({
+				riskLevelMax?: "low" | "medium" | "high";
+				requiresApproval?: boolean;
+			}) => {
+				return await searchToolCatalogWithMcp(input);
+			},
+		}),
+		tool_describe: tool({
 			description:
 				"Describe a specific tool, including parameter hints extracted from its schema.",
 			inputSchema: z.object({
@@ -3255,44 +3395,44 @@ function buildChatTools(params: {
 					.string()
 					.min(1)
 					.describe('Exact tool name, e.g. "trpc_procedure_call"'),
-				}),
-				execute: async (input: { toolName: string }) => {
-					const toolName = input.toolName.trim();
+			}),
+			execute: async (input: { toolName: string }) => {
+				const toolName = input.toolName.trim();
 
-					const mcp = parseMcpVirtualToolName(toolName);
-					if (mcp) {
-						const catalog = await getMcpVirtualTools();
-						const match = catalog.find(
-							(t) =>
-								t.mcpServerId === mcp.mcpServerId &&
-								t.mcpToolName === mcp.mcpToolName,
-						);
-						if (!match) return buildUnknownToolSuggestionResult(toolName);
-						return {
-							success: true,
-							message: `MCP tool "${match.mcpToolName}" described`,
-							data: {
-								kind: "mcp_tool",
-								name: match.name,
-								description: match.description,
-								server: {
-									mcpServerId: match.mcpServerId,
-									name: match.serverName,
-								},
-								inputSchema: match.inputSchema,
-								outputSchema: match.outputSchema,
-								exampleToolCall: {
-									toolName: match.name,
-									params: {},
-								},
+				const mcp = parseMcpVirtualToolName(toolName);
+				if (mcp) {
+					const catalog = await getMcpVirtualTools();
+					const match = catalog.find(
+						(t) =>
+							t.mcpServerId === mcp.mcpServerId &&
+							t.mcpToolName === mcp.mcpToolName,
+					);
+					if (!match) return buildUnknownToolSuggestionResult(toolName);
+					return {
+						success: true,
+						message: `MCP tool "${match.mcpToolName}" described`,
+						data: {
+							kind: "mcp_tool",
+							name: match.name,
+							description: match.description,
+							server: {
+								mcpServerId: match.mcpServerId,
+								name: match.serverName,
 							},
-						};
-					}
+							inputSchema: match.inputSchema,
+							outputSchema: match.outputSchema,
+							exampleToolCall: {
+								toolName: match.name,
+								params: {},
+							},
+						},
+					};
+				}
 
-					const t = toolRegistry.get(toolName);
-					if (!t) {
-						if (toolName.includes(".")) {
-							const bridge = getTrpcBridge();
+				const t = toolRegistry.get(toolName);
+				if (!t) {
+					if (toolName.includes(".")) {
+						const bridge = getTrpcBridge();
 						if (bridge) {
 							try {
 								const desc = await bridge.describeProcedure(toolName);
@@ -3326,28 +3466,34 @@ function buildChatTools(params: {
 						.default({})
 						.describe("Parameters object for the tool"),
 				})
-					.passthrough(),
-				execute: async (input: { toolName: string; params?: unknown }) => {
-					const inputAny = input as unknown as Record<string, unknown>;
-					const normalizedToolName = input.toolName.trim();
-					input.toolName = normalizedToolName;
+				.passthrough(),
+			execute: async (input: { toolName: string; params?: unknown }) => {
+				const inputAny = input as unknown as Record<string, unknown>;
+				const normalizedToolName = input.toolName.trim();
+				input.toolName = normalizedToolName;
 
-					const recordCandidates = [
-						inputAny.params,
-						inputAny.input,
-						inputAny.args,
-						input.params,
-					].filter(isRecord) as Record<string, unknown>[];
-					const preferredRecord =
-						recordCandidates.find((candidate) => Object.keys(candidate).length > 0) ??
-						recordCandidates[0];
-					const rawParams: Record<string, unknown> = {
-						...(preferredRecord ?? {}),
-					};
+				const recordCandidates = [
+					inputAny.params,
+					inputAny.input,
+					inputAny.args,
+					input.params,
+				].filter(isRecord) as Record<string, unknown>[];
+				const preferredRecord =
+					recordCandidates.find(
+						(candidate) => Object.keys(candidate).length > 0,
+					) ?? recordCandidates[0];
+				const rawParams: Record<string, unknown> = {
+					...(preferredRecord ?? {}),
+				};
 
 				// Common LLM mistake: provide tool params at the top-level instead of inside `params`.
 				for (const [k, v] of Object.entries(inputAny)) {
-					if (k === "toolName" || k === "params" || k === "input" || k === "args")
+					if (
+						k === "toolName" ||
+						k === "params" ||
+						k === "input" ||
+						k === "args"
+					)
 						continue;
 					if (rawParams[k] == null) rawParams[k] = v;
 				}
@@ -3399,207 +3545,215 @@ function buildChatTools(params: {
 				) {
 					rawParams.query = rawParams.query.trim();
 				}
-					if (
-						(input.toolName === "trpc_procedure_search" ||
-							input.toolName === "tool_search" ||
-							input.toolName === "tool_suggest") &&
-						(typeof rawParams.query !== "string" ||
-							rawParams.query.trim().length === 0) &&
-						typeof rawParams.reason === "string" &&
-						rawParams.reason.trim().length > 0
-					) {
-						rawParams.query = rawParams.reason.trim();
-					}
-					if (
-						input.toolName === "trpc_procedure_search" &&
-						typeof rawParams.limit === "number"
-					) {
-						rawParams.limit = Math.max(1, Math.min(50, rawParams.limit));
-					}
-					if (
-						(input.toolName === "tool_search" ||
-							input.toolName === "tool_suggest") &&
-						typeof rawParams.limit === "number"
-					) {
-						rawParams.limit = Math.max(1, Math.min(30, rawParams.limit));
-					}
+				if (
+					(input.toolName === "trpc_procedure_search" ||
+						input.toolName === "tool_search" ||
+						input.toolName === "tool_suggest") &&
+					(typeof rawParams.query !== "string" ||
+						rawParams.query.trim().length === 0) &&
+					typeof rawParams.reason === "string" &&
+					rawParams.reason.trim().length > 0
+				) {
+					rawParams.query = rawParams.reason.trim();
+				}
+				if (
+					input.toolName === "trpc_procedure_search" &&
+					typeof rawParams.limit === "number"
+				) {
+					rawParams.limit = Math.max(1, Math.min(50, rawParams.limit));
+				}
+				if (
+					(input.toolName === "tool_search" ||
+						input.toolName === "tool_suggest") &&
+					typeof rawParams.limit === "number"
+				) {
+					rawParams.limit = Math.max(1, Math.min(30, rawParams.limit));
+				}
 
-					let t = toolRegistry.get(input.toolName);
-					if (!t) {
-						const mcp = parseMcpVirtualToolName(input.toolName);
-						if (mcp) {
-							const catalog = await getMcpVirtualTools();
-							const match = catalog.find(
-								(t) =>
-									t.mcpServerId === mcp.mcpServerId &&
-									t.mcpToolName === mcp.mcpToolName,
-							);
+				let t = toolRegistry.get(input.toolName);
+				if (!t) {
+					const mcp = parseMcpVirtualToolName(input.toolName);
+					if (mcp) {
+						const catalog = await getMcpVirtualTools();
+						const match = catalog.find(
+							(t) =>
+								t.mcpServerId === mcp.mcpServerId &&
+								t.mcpToolName === mcp.mcpToolName,
+						);
 
-							if (!match) {
-								const searched = await searchToolCatalogWithMcp({
+						if (!match) {
+							const searched = await searchToolCatalogWithMcp({
+								query: input.toolName,
+								limit: 5,
+							});
+							return {
+								success: false,
+								message: `Tool "${input.toolName}" not found`,
+								error: `Unknown tool: ${input.toolName}`,
+								data: {
 									query: input.toolName,
-									limit: 5,
-								});
-								return {
-									success: false,
-									message: `Tool "${input.toolName}" not found`,
-									error: `Unknown tool: ${input.toolName}`,
-									data: {
-										query: input.toolName,
-										suggestions: searched.data,
-										nextCall: searched.meta.nextCall,
-									},
-								};
-							}
+									suggestions: searched.data,
+									nextCall: searched.meta.nextCall,
+								},
+							};
+						}
 
-							const mcpValidation = validateAiMcpToolArguments({
-								inputSchema: match.inputSchema,
-								arguments: rawParams,
-							});
-							if (!mcpValidation.ok) {
-								return {
-									success: false,
-									message: `Invalid parameters for MCP tool "${match.name}"`,
-									error: mcpValidation.errorText.replace(/\s*\n\s*/g, "; ").trim(),
-									data: {
-										toolName: match.name,
-										server: {
-											mcpServerId: match.mcpServerId,
-											name: match.serverName,
-										},
-										issues: mcpValidation.issues,
-										hint: "Use tool_describe to view the MCP tool input schema, then retry tool_call with a params object matching that schema.",
+						const mcpValidation = validateAiMcpToolArguments({
+							inputSchema: match.inputSchema,
+							arguments: rawParams,
+						});
+						if (!mcpValidation.ok) {
+							return {
+								success: false,
+								message: `Invalid parameters for MCP tool "${match.name}"`,
+								error: mcpValidation.errorText
+									.replace(/\s*\n\s*/g, "; ")
+									.trim(),
+								data: {
+									toolName: match.name,
+									server: {
+										mcpServerId: match.mcpServerId,
+										name: match.serverName,
 									},
-								};
-							}
+									issues: mcpValidation.issues,
+									hint: "Use tool_describe to view the MCP tool input schema, then retry tool_call with a params object matching that schema.",
+								},
+							};
+						}
 
-							const requiresApproval = params.toolApprovalsDisabled !== true;
-							const execution = await createToolExecution({
-								conversationId: params.conversationId,
-								runId: params.runId,
-								messageId: params.messageId,
+						const requiresApproval = params.toolApprovalsDisabled !== true;
+						const execution = await createToolExecution({
+							conversationId: params.conversationId,
+							runId: params.runId,
+							messageId: params.messageId,
+							toolName: match.name,
+							parameters: rawParams,
+							requiresApproval,
+						});
+
+						if (requiresApproval) {
+							return {
+								success: true,
+								status: "pending_approval",
+								executionId: execution.executionId,
 								toolName: match.name,
-								parameters: rawParams,
-								requiresApproval,
-							});
-
-							if (requiresApproval) {
-								return {
-									success: true,
-									status: "pending_approval",
+								message: `This action requires approval. Tool: ${match.name}`,
+								data: {
 									executionId: execution.executionId,
 									toolName: match.name,
-									message: `This action requires approval. Tool: ${match.name}`,
-									data: {
-										executionId: execution.executionId,
-										toolName: match.name,
-										confirmLiterals: [],
-										exampleParams: {},
-									},
-								};
-							}
+									confirmLiterals: [],
+									exampleParams: {},
+								},
+							};
+						}
 
-							if (
-								typeof params.runId === "string" &&
-								params.runId.trim().length > 0
-							) {
-								await saveAgentEventMessage({
-									conversationId: params.conversationId,
-									payload: {
-										type: "agent.step.start",
-										runId: params.runId.trim(),
-										stepId: execution.executionId,
-										executionId: execution.executionId,
-										toolName: match.name,
-										parametersPreview: safeJsonForPrompt(rawParams, 4000),
-									},
-								});
-							}
+						if (
+							typeof params.runId === "string" &&
+							params.runId.trim().length > 0
+						) {
+							await saveAgentEventMessage({
+								conversationId: params.conversationId,
+								payload: {
+									type: "agent.step.start",
+									runId: params.runId.trim(),
+									stepId: execution.executionId,
+									executionId: execution.executionId,
+									toolName: match.name,
+									parametersPreview: safeJsonForPrompt(rawParams, 4000),
+								},
+							});
+						}
 
-							try {
-								const res = await callAiMcpTool({
-									organizationId: params.toolContext.organizationId,
+						try {
+							const res = await callAiMcpTool({
+								organizationId: params.toolContext.organizationId,
+								mcpServerId: match.mcpServerId,
+								toolName: match.mcpToolName,
+								arguments: rawParams,
+							});
+							const success = res.isError !== true;
+							const toolResult = normalizeToolResultForStorage({
+								success,
+								message: success
+									? `MCP tool "${match.mcpToolName}" executed`
+									: `MCP tool "${match.mcpToolName}" returned an error`,
+								data: {
 									mcpServerId: match.mcpServerId,
+									serverName: match.serverName,
 									toolName: match.mcpToolName,
-									arguments: rawParams,
-								});
-								const success = res.isError !== true;
-								const toolResult = normalizeToolResultForStorage({
-									success,
-									message: success
-										? `MCP tool "${match.mcpToolName}" executed`
-										: `MCP tool "${match.mcpToolName}" returned an error`,
-									data: {
-										mcpServerId: match.mcpServerId,
-										serverName: match.serverName,
-										toolName: match.mcpToolName,
-										content: res.content,
-										structuredContent: res.structuredContent,
-										isError: res.isError,
-									},
-								});
+									content: res.content,
+									structuredContent: res.structuredContent,
+									isError: res.isError,
+								},
+							});
 
-								const completionUpdate: Record<string, unknown> = {
-									status: success ? "completed" : "failed",
-									result: toolResult,
-									completedAt: new Date().toISOString(),
-								};
-								if (!success) completionUpdate.error = "MCP_TOOL_ERROR";
-								await updateToolExecution(execution.executionId, completionUpdate);
+							const completionUpdate: Record<string, unknown> = {
+								status: success ? "completed" : "failed",
+								result: toolResult,
+								completedAt: new Date().toISOString(),
+							};
+							if (!success) completionUpdate.error = "MCP_TOOL_ERROR";
+							await updateToolExecution(
+								execution.executionId,
+								completionUpdate,
+							);
 
-								return {
-									executionId: execution.executionId,
-									invokedTool: match.name,
-									...(toolResult as object),
-								};
-							} catch (error) {
-								const errorMessage =
-									error instanceof Error ? error.message : String(error);
-								await updateToolExecution(execution.executionId, {
-									status: "failed",
-									error: errorMessage,
-									completedAt: new Date().toISOString(),
-								});
-								return {
-									executionId: execution.executionId,
-									success: false,
-									message: "Tool execution failed",
-									error: errorMessage,
-								};
-							}
+							return {
+								executionId: execution.executionId,
+								invokedTool: match.name,
+								...(toolResult as object),
+							};
+						} catch (error) {
+							const errorMessage =
+								error instanceof Error ? error.message : String(error);
+							await updateToolExecution(execution.executionId, {
+								status: "failed",
+								error: errorMessage,
+								completedAt: new Date().toISOString(),
+							});
+							return {
+								executionId: execution.executionId,
+								success: false,
+								message: "Tool execution failed",
+								error: errorMessage,
+							};
 						}
 					}
-					if (!t) {
-						// Convenience fallback: treat an unknown dotted name as a tRPC procedure call.
-						// Example: { toolName: "project.create", params: { name: "dk" } }
-						if (input.toolName.includes(".")) {
-							const trpcTool = toolRegistry.get("trpc_procedure_call");
-							if (trpcTool) {
-								const wrappedCandidate = (() => {
-									if (isRecord(rawParams.input)) return rawParams.input;
-									if (isRecord(rawParams.params)) return rawParams.params;
-									const filteredEntries = Object.entries(rawParams).filter(
-										([key]) =>
-											key !== "procedureName" &&
-											key !== "input" &&
-											key !== "params",
-									);
-									return Object.fromEntries(filteredEntries);
-								})();
-								const wrapped = isRecord(wrappedCandidate)
-									? { ...wrappedCandidate }
-									: {};
-								rawParams.procedureName = input.toolName;
-								if (Object.keys(wrapped).length > 0) {
-									rawParams.input = wrapped;
-								}
-								t = trpcTool;
+				}
+				if (!t) {
+					// Convenience fallback: treat an unknown dotted name as a tRPC procedure call.
+					// Example: { toolName: "project.create", params: { name: "dk" } }
+					if (input.toolName.includes(".")) {
+						const trpcTool = toolRegistry.get("trpc_procedure_call");
+						if (trpcTool) {
+							const wrappedCandidate = (() => {
+								if (isRecord(rawParams.input)) return rawParams.input;
+								if (isRecord(rawParams.params)) return rawParams.params;
+								const filteredEntries = Object.entries(rawParams).filter(
+									([key]) =>
+										key !== "procedureName" &&
+										key !== "input" &&
+										key !== "params",
+								);
+								return Object.fromEntries(filteredEntries);
+							})();
+							const wrapped = isRecord(wrappedCandidate)
+								? { ...wrappedCandidate }
+								: {};
+							rawParams.procedureName = input.toolName;
+							if (Object.keys(wrapped).length > 0) {
+								rawParams.input = wrapped;
 							}
+							t = trpcTool;
 						}
 					}
+				}
 
 				if (!t) {
-					const searched = searchToolCatalog({ query: input.toolName, limit: 5 });
+					const searched = searchToolCatalog({
+						query: input.toolName,
+						limit: 5,
+					});
 					const candidateName = searched.meta.nextCall?.toolName ?? "";
 					const candidate = candidateName
 						? toolRegistry.get(candidateName)
@@ -3609,7 +3763,8 @@ function buildChatTools(params: {
 						candidate.riskLevel === "low" &&
 						!candidate.requiresApproval
 					) {
-						const candidateValidation = candidate.parameters.safeParse(rawParams);
+						const candidateValidation =
+							candidate.parameters.safeParse(rawParams);
 						if (candidateValidation.success) {
 							t = candidate;
 						}
@@ -3642,118 +3797,69 @@ function buildChatTools(params: {
 					unknown
 				>;
 
-					let requiresApproval =
-						t.requiresApproval && params.toolApprovalsDisabled !== true;
-					if (
-						t.name === "trpc_procedure_call" &&
-						typeof validatedParams.procedureName === "string" &&
-						validatedParams.procedureName.trim().length > 0
-					) {
-						const procedureName = validatedParams.procedureName.trim();
-						const bridge = getTrpcBridge();
-						if (bridge) {
-							try {
-								const desc = await bridge.describeProcedure(procedureName);
-								const inputCandidate =
-									typeof validatedParams.input !== "undefined"
-										? validatedParams.input
-										: typeof validatedParams.params !== "undefined"
-											? validatedParams.params
-											: undefined;
+				let requiresApproval =
+					t.requiresApproval && params.toolApprovalsDisabled !== true;
+				if (
+					t.name === "trpc_procedure_call" &&
+					typeof validatedParams.procedureName === "string" &&
+					validatedParams.procedureName.trim().length > 0
+				) {
+					const procedureName = validatedParams.procedureName.trim();
+					const bridge = getTrpcBridge();
+					if (bridge) {
+						try {
+							const desc = await bridge.describeProcedure(procedureName);
+							const inputCandidate =
+								typeof validatedParams.input !== "undefined"
+									? validatedParams.input
+									: typeof validatedParams.params !== "undefined"
+										? validatedParams.params
+										: undefined;
 
-								if (typeof inputCandidate === "undefined") {
-									if (desc.inputExample !== null) {
-										const requiredFields = (desc.fields ?? [])
-											.filter((f) => f.required)
-											.map((f) => f.name);
+							if (typeof inputCandidate === "undefined") {
+								if (desc.inputExample !== null) {
+									const requiredFields = (desc.fields ?? [])
+										.filter((f) => f.required)
+										.map((f) => f.name);
 
-										if (desc.type === "query" && requiredFields.length === 0) {
-											validatedParams.input = {};
-										} else if (requiredFields.length === 1) {
-											const onlyField = String(
-												requiredFields[0] ?? "",
-											).trim();
-											let inferred: Record<string, unknown> | null = null;
-											if (
-												onlyField === "projectId" &&
-												typeof params.toolContext.projectId === "string" &&
-												params.toolContext.projectId.trim().length > 0
-											) {
-												inferred = {
-													projectId: params.toolContext.projectId.trim(),
-												};
-											} else if (
-												onlyField === "serverId" &&
-												typeof params.toolContext.serverId === "string" &&
-												params.toolContext.serverId.trim().length > 0
-											) {
-												inferred = { serverId: params.toolContext.serverId.trim() };
-											} else if (onlyField === "organizationId") {
-												inferred = { organizationId: params.toolContext.organizationId };
-											} else if (onlyField === "userId") {
-												inferred = { userId: params.toolContext.userId };
-											} else if (onlyField === "repo") {
-												let repo = await getGithubRepoForConversation();
-												if (!repo) {
-													const userText = await getUserMessageTextForToolCall();
-													repo = extractGithubRepoFromText(userText);
-												}
-												if (repo) inferred = { repo };
-											}
-
-											if (inferred) {
-												validatedParams.input = inferred;
-											} else {
-												return {
-													success: false,
-													message: `Invalid parameters: tRPC procedure "${procedureName}" requires an input object`,
-													error: "TRPC_INPUT_REQUIRED",
-													data: {
-														procedure: desc,
-														requiredFields,
-														exampleToolCall: {
-															toolName: "trpc_procedure_call",
-															params: {
-																procedureName,
-																input: desc.inputExample,
-															},
-														},
-													},
-												};
-											}
-										} else if (
-											requiredFields.length === 2 &&
-											requiredFields.includes("repo") &&
-											requiredFields.includes("path")
+									if (desc.type === "query" && requiredFields.length === 0) {
+										validatedParams.input = {};
+									} else if (requiredFields.length === 1) {
+										const onlyField = String(requiredFields[0] ?? "").trim();
+										let inferred: Record<string, unknown> | null = null;
+										if (
+											onlyField === "projectId" &&
+											typeof params.toolContext.projectId === "string" &&
+											params.toolContext.projectId.trim().length > 0
 										) {
-											const repo = await getGithubRepoForConversation();
-											const userText = await getUserMessageTextForToolCall();
-											const path = extractFilePathFromText(userText);
-
-											if (repo && path) {
-												validatedParams.input = { repo, path };
-											} else {
-												const inferred: Record<string, unknown> = {};
-												if (repo) inferred.repo = repo;
-												if (path) inferred.path = path;
-												return {
-													success: false,
-													message: `Invalid parameters: tRPC procedure "${procedureName}" requires an input object`,
-													error: "TRPC_INPUT_REQUIRED",
-													data: {
-														procedure: desc,
-														requiredFields,
-														inferredInput: inferred,
-														exampleToolCall: {
-															toolName: "trpc_procedure_call",
-															params: {
-																procedureName,
-																input: desc.inputExample,
-															},
-														},
-													},
-												};
+											inferred = {
+												projectId: params.toolContext.projectId.trim(),
+											};
+										} else if (
+											onlyField === "serverId" &&
+											typeof params.toolContext.serverId === "string" &&
+											params.toolContext.serverId.trim().length > 0
+										) {
+											inferred = {
+												serverId: params.toolContext.serverId.trim(),
+											};
+										} else if (onlyField === "organizationId") {
+											inferred = {
+												organizationId: params.toolContext.organizationId,
+											};
+										} else if (onlyField === "userId") {
+											inferred = { userId: params.toolContext.userId };
+										} else if (onlyField === "repo") {
+											let repo = await getGithubRepoForConversation();
+											if (!repo) {
+												const userText = await getUserMessageTextForToolCall();
+												repo = extractGithubRepoFromText(userText);
 											}
+											if (repo) inferred = { repo };
+										}
+
+										if (inferred) {
+											validatedParams.input = inferred;
 										} else {
 											return {
 												success: false,
@@ -3772,24 +3878,75 @@ function buildChatTools(params: {
 												},
 											};
 										}
+									} else if (
+										requiredFields.length === 2 &&
+										requiredFields.includes("repo") &&
+										requiredFields.includes("path")
+									) {
+										const repo = await getGithubRepoForConversation();
+										const userText = await getUserMessageTextForToolCall();
+										const path = extractFilePathFromText(userText);
+
+										if (repo && path) {
+											validatedParams.input = { repo, path };
+										} else {
+											const inferred: Record<string, unknown> = {};
+											if (repo) inferred.repo = repo;
+											if (path) inferred.path = path;
+											return {
+												success: false,
+												message: `Invalid parameters: tRPC procedure "${procedureName}" requires an input object`,
+												error: "TRPC_INPUT_REQUIRED",
+												data: {
+													procedure: desc,
+													requiredFields,
+													inferredInput: inferred,
+													exampleToolCall: {
+														toolName: "trpc_procedure_call",
+														params: {
+															procedureName,
+															input: desc.inputExample,
+														},
+													},
+												},
+											};
+										}
+									} else {
+										return {
+											success: false,
+											message: `Invalid parameters: tRPC procedure "${procedureName}" requires an input object`,
+											error: "TRPC_INPUT_REQUIRED",
+											data: {
+												procedure: desc,
+												requiredFields,
+												exampleToolCall: {
+													toolName: "trpc_procedure_call",
+													params: {
+														procedureName,
+														input: desc.inputExample,
+													},
+												},
+											},
+										};
 									}
 								}
+							}
 
-								if (requiresApproval && desc.type === "query") {
-									requiresApproval = false;
-								}
-							} catch {}
-						}
+							if (requiresApproval && desc.type === "query") {
+								requiresApproval = false;
+							}
+						} catch {}
 					}
+				}
 
-					const execution = await createToolExecution({
-						conversationId: params.conversationId,
-						runId: params.runId,
-						messageId: params.messageId,
-						toolName: t.name,
-						parameters: validatedParams,
-						requiresApproval,
-					});
+				const execution = await createToolExecution({
+					conversationId: params.conversationId,
+					runId: params.runId,
+					messageId: params.messageId,
+					toolName: t.name,
+					parameters: validatedParams,
+					requiresApproval,
+				});
 
 				if (requiresApproval) {
 					return {
@@ -3807,7 +3964,10 @@ function buildChatTools(params: {
 					};
 				}
 
-				if (typeof params.runId === "string" && params.runId.trim().length > 0) {
+				if (
+					typeof params.runId === "string" &&
+					params.runId.trim().length > 0
+				) {
 					await saveAgentEventMessage({
 						conversationId: params.conversationId,
 						payload: {
@@ -3997,9 +4157,10 @@ function safeJsonForPrompt(value: unknown, maxLen: number) {
 		}
 
 		if (typeof input === "string") {
-			const s = input.length > limits.maxStringLength
-				? `${input.slice(0, limits.maxStringLength)}…`
-				: input;
+			const s =
+				input.length > limits.maxStringLength
+					? `${input.slice(0, limits.maxStringLength)}…`
+					: input;
 			if (input.length > limits.maxStringLength) truncated = true;
 			push(JSON.stringify(s));
 			return;
@@ -4120,7 +4281,9 @@ function summarizeValueForModelContext(
 			return `[PEM omitted; ${value.length} chars]`;
 		}
 		if (
-			/(?:^|\.)(?:certificateData|privateKey|contentBase64|base64|pem)$/i.test(key) ||
+			/(?:^|\.)(?:certificateData|privateKey|contentBase64|base64|pem)$/i.test(
+				key,
+			) ||
 			looksLikeBase64Blob(trimmed)
 		) {
 			return `[Binary/blob omitted; ${value.length} chars]`;
@@ -4236,7 +4399,8 @@ function getRetryableToolCallFailures(toolResults: unknown): {
 
 		const message =
 			typeof resultValue.message === "string" ? resultValue.message : "";
-		const error = typeof resultValue.error === "string" ? resultValue.error : "";
+		const error =
+			typeof resultValue.error === "string" ? resultValue.error : "";
 		const data = isRecord(resultValue.data) ? resultValue.data : undefined;
 
 		const isInvalidParams = message.startsWith("Invalid parameters");
@@ -4293,7 +4457,7 @@ function safeJsonStringifyForStorage(value: unknown): string {
 		try {
 			return JSON.stringify({ error: "UNSERIALIZABLE", message });
 		} catch {
-			return "{\"error\":\"UNSERIALIZABLE\"}";
+			return '{"error":"UNSERIALIZABLE"}';
 		}
 	}
 }
@@ -4368,7 +4532,8 @@ function setToolApprovalsDisabledInMetadata(
 ): Record<string, unknown> {
 	const next = isRecord(metadata) ? { ...metadata } : {};
 	if (disabled) next.toolApprovalsDisabled = true;
-	else delete (next as { toolApprovalsDisabled?: unknown }).toolApprovalsDisabled;
+	else
+		delete (next as { toolApprovalsDisabled?: unknown }).toolApprovalsDisabled;
 	return next;
 }
 
@@ -4466,7 +4631,9 @@ function extractGithubRepoFromText(text: string): string | null {
 	);
 	if (urlMatch) {
 		const owner = String(urlMatch[1] ?? "").trim();
-		const repo = String(urlMatch[2] ?? "").replace(/\.git$/i, "").trim();
+		const repo = String(urlMatch[2] ?? "")
+			.replace(/\.git$/i, "")
+			.trim();
 		if (owner && repo) return `${owner}/${repo}`;
 	}
 
@@ -4475,9 +4642,15 @@ function extractGithubRepoFromText(text: string): string | null {
 	const candidates: Array<{ owner: string; repo: string; score: number }> = [];
 	for (const match of input.matchAll(tokenRe)) {
 		const owner = String(match[1] ?? "").trim();
-		const repo = String(match[2] ?? "").replace(/\.git$/i, "").trim();
+		const repo = String(match[2] ?? "")
+			.replace(/\.git$/i, "")
+			.trim();
 		if (!owner || !repo) continue;
-		candidates.push({ owner, repo, score: scoreGithubRepoCandidate(owner, repo) });
+		candidates.push({
+			owner,
+			repo,
+			score: scoreGithubRepoCandidate(owner, repo),
+		});
 	}
 	if (candidates.length === 0) return null;
 
@@ -4551,7 +4724,6 @@ function shouldPreferChineseReply(params: {
 	return /[\u4e00-\u9fff]/.test(params.userMessage);
 }
 
-
 async function appendToolOutcomeAssistantMessage(_params: {
 	conversationId?: string | null;
 	toolName: string;
@@ -4564,6 +4736,7 @@ async function appendToolOutcomeAssistantMessage(_params: {
 
 async function generateToolOutcomeSummary(params: {
 	model: unknown;
+	providerOptions?: typeof OPENAI_RESPONSES_PROVIDER_OPTIONS;
 	userMessage: string;
 	uiLocale?: string | null;
 	toolCalls: Array<{ id: string; name: string; arguments: unknown }>;
@@ -4635,6 +4808,7 @@ ${streamErrorText ? `Model streaming error (non-fatal):\n${safeTruncateString(st
 	try {
 		const text = await generatePromptText({
 			model: params.model,
+			providerOptions: params.providerOptions,
 			prompt,
 			maxOutputTokens: 260,
 		});
@@ -4717,12 +4891,14 @@ async function buildToolExecutionContextMessage(params: {
 
 async function generatePromptText(params: {
 	model: unknown;
+	providerOptions?: typeof OPENAI_RESPONSES_PROVIDER_OPTIONS;
 	prompt: string;
 	maxOutputTokens?: number;
 }): Promise<string> {
 	try {
 		const result = await generateText({
 			model: params.model as any,
+			providerOptions: params.providerOptions,
 			prompt: params.prompt,
 			maxOutputTokens: params.maxOutputTokens,
 		});
@@ -4732,6 +4908,7 @@ async function generatePromptText(params: {
 
 		const stream = streamText({
 			model: params.model as any,
+			providerOptions: params.providerOptions,
 			prompt: params.prompt,
 			maxOutputTokens: params.maxOutputTokens,
 		});
@@ -4798,12 +4975,20 @@ export const chat = async ({
 		metadataChanged = true;
 	}
 	const inferredRepo = extractGithubRepoFromText(message);
-	if (inferredRepo && inferredRepo !== getGithubRepoFromMetadata(conversationMetadata)) {
-		conversationMetadata = setGithubRepoInMetadata(conversationMetadata, inferredRepo);
+	if (
+		inferredRepo &&
+		inferredRepo !== getGithubRepoFromMetadata(conversationMetadata)
+	) {
+		conversationMetadata = setGithubRepoInMetadata(
+			conversationMetadata,
+			inferredRepo,
+		);
 		metadataChanged = true;
 	}
 	if (metadataChanged) {
-		await updateConversation(conversationId, { metadata: conversationMetadata ?? {} });
+		await updateConversation(conversationId, {
+			metadata: conversationMetadata ?? {},
+		});
 	}
 	const conversationForPrompt =
 		conversationMetadata === conversation.metadata
@@ -4839,20 +5024,21 @@ export const chat = async ({
 
 	const provider = selectAIProvider(aiSettings);
 	const model = provider(aiSettings.model);
+	const providerOptions = getOpenAIResponsesProviderOptions(aiSettings);
 
-		let playbookPrompt = "";
-		try {
-			const embeddingProvider = await resolveEmbeddingProviderConfig({
-				organizationId: conversation.organizationId,
-				aiSettings,
-			});
-			const playbooks = await findRelevantPlaybooks({
-				organizationId: conversation.organizationId,
-				embeddingProvider,
-				queryText: message,
-			});
-			playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
-		} catch {}
+	let playbookPrompt = "";
+	try {
+		const embeddingProvider = await resolveEmbeddingProviderConfig({
+			organizationId: conversation.organizationId,
+			aiSettings,
+		});
+		const playbooks = await findRelevantPlaybooks({
+			organizationId: conversation.organizationId,
+			embeddingProvider,
+			queryText: message,
+		});
+		playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
+	} catch {}
 
 	const toolExposurePlan = buildToolExposurePlan({
 		userMessage: message,
@@ -4885,9 +5071,8 @@ export const chat = async ({
 		serverId: conversation.serverId || undefined,
 	};
 
-	const toolApprovalsDisabled = getToolApprovalsDisabledFromMetadata(
-		conversationMetadata,
-	);
+	const toolApprovalsDisabled =
+		getToolApprovalsDisabledFromMetadata(conversationMetadata);
 	const toolBudgetMode = getToolBudgetModeFromMetadata(conversationMetadata);
 	const toolStepBudget = getToolStepBudget(toolBudgetMode);
 	const tools = buildChatTools({
@@ -4904,8 +5089,7 @@ export const chat = async ({
 	const initialSystemMode = getInitialSystemMode(aiSettings);
 
 	const isLikelyActionRequest = (text: string): boolean => {
-		void text;
-		return false;
+		if (!AUTO_EXECUTE_ACTION_REQUESTS) return false;
 		const t = text.trim();
 		if (t.length === 0) return false;
 		const hasAction =
@@ -4941,32 +5125,32 @@ export const chat = async ({
 			add(["s3", "destination"]);
 		if (/(计划|定时|cron|schedule)/i.test(text)) add(["schedule", "cron"]);
 		if (/(保留|留存|retention|keep)/i.test(text)) add(["retention"]);
-			if (/(项目|project)/i.test(text)) add(["project"]);
-			if (/(环境|environment|env)/i.test(text)) add(["environment"]);
-			if (/(环境变量|env\s*vars?|environment\s*variables?)/i.test(text))
-				add(["env", "environment", "variables"]);
-			if (/(域名|domain|dns)/i.test(text)) add(["domain", "dns"]);
-			if (/(证书|certificate|ssl|https|tls)/i.test(text))
-				add(["certificate", "ssl", "https", "tls"]);
-			if (
-				/(traefik|特雷菲克|反向代理|反代|网关|代理|转发|路由|ingress|reverse\s*proxy)/i.test(
-					text,
-				)
+		if (/(项目|project)/i.test(text)) add(["project"]);
+		if (/(环境|environment|env)/i.test(text)) add(["environment"]);
+		if (/(环境变量|env\s*vars?|environment\s*variables?)/i.test(text))
+			add(["env", "environment", "variables"]);
+		if (/(域名|domain|dns)/i.test(text)) add(["domain", "dns"]);
+		if (/(证书|certificate|ssl|https|tls)/i.test(text))
+			add(["certificate", "ssl", "https", "tls"]);
+		if (
+			/(traefik|特雷菲克|反向代理|反代|网关|代理|转发|路由|ingress|reverse\s*proxy)/i.test(
+				text,
 			)
-				add(["traefik", "proxy", "router", "ingress"]);
-			if (/(github|仓库|repo|repository|git)/i.test(text))
-				add(["github", "repo"]);
-			if (/(数据库|database|\bdb\b)/i.test(text)) add(["database", "db"]);
-			if (/(postgres|postgresql|\bpg\b|pgsql|postgre)/i.test(text))
-				add(["postgres", "pg"]);
-			if (/(mysql)/i.test(text)) add(["mysql"]);
-			if (/(mariadb)/i.test(text)) add(["mariadb"]);
-			if (/(mongo|mongodb)/i.test(text)) add(["mongo", "mongodb"]);
-			if (/(redis)/i.test(text)) add(["redis"]);
+		)
+			add(["traefik", "proxy", "router", "ingress"]);
+		if (/(github|仓库|repo|repository|git)/i.test(text))
+			add(["github", "repo"]);
+		if (/(数据库|database|\bdb\b)/i.test(text)) add(["database", "db"]);
+		if (/(postgres|postgresql|\bpg\b|pgsql|postgre)/i.test(text))
+			add(["postgres", "pg"]);
+		if (/(mysql)/i.test(text)) add(["mysql"]);
+		if (/(mariadb)/i.test(text)) add(["mariadb"]);
+		if (/(mongo|mongodb)/i.test(text)) add(["mongo", "mongodb"]);
+		if (/(redis)/i.test(text)) add(["redis"]);
 
-			const hint = Array.from(tokens).join(" ");
-			if (hint.length > 0) return hint;
-			const trimmed = text.trim();
+		const hint = Array.from(tokens).join(" ");
+		if (hint.length > 0) return hint;
+		const trimmed = text.trim();
 		return trimmed.length > 0 ? trimmed.slice(0, 200) : "backup";
 	};
 
@@ -4986,15 +5170,16 @@ export const chat = async ({
 						...messages,
 					]
 				: messages;
-			return await generateText({
-				model,
-				system: systemMode === "system" ? effectiveSystemPrompt : undefined,
-				messages: nextMessages,
-				tools: withTools ? tools : undefined,
-				activeTools: withTools ? activeTools : undefined,
-				stopWhen: stepCountIs(toolStepBudget),
-			});
-		};
+		return await generateText({
+			model,
+			providerOptions,
+			system: systemMode === "system" ? effectiveSystemPrompt : undefined,
+			messages: nextMessages,
+			tools: withTools ? tools : undefined,
+			activeTools: withTools ? activeTools : undefined,
+			stopWhen: stepCountIs(toolStepBudget),
+		});
+	};
 
 	type GeneratedTurn = Awaited<ReturnType<typeof generateText>>;
 
@@ -5016,14 +5201,14 @@ export const chat = async ({
 		overrideSystemPrompt?: string,
 	): Promise<GeneratedTurn> => {
 		let result: GeneratedTurn;
+		try {
+			result = await runGenerate(true, initialSystemMode, overrideSystemPrompt);
+		} catch (error) {
+			const aborted = false;
+			if (isSystemMessagePlacementError(error) && !aborted) {
 				try {
-					result = await runGenerate(true, initialSystemMode, overrideSystemPrompt);
-				} catch (error) {
-					const aborted = false;
-					if (isSystemMessagePlacementError(error) && !aborted) {
-						try {
-							result = await runGenerate(true, "inline", overrideSystemPrompt);
-						} catch (retryError) {
+					result = await runGenerate(true, "inline", overrideSystemPrompt);
+				} catch (retryError) {
 					if (isMissingToolUseIdError(retryError)) {
 						result = await runGenerate(false, "inline", overrideSystemPrompt);
 					} else {
@@ -5032,7 +5217,11 @@ export const chat = async ({
 				}
 			} else if (isMissingToolUseIdError(error) && !aborted) {
 				try {
-					result = await runGenerate(false, initialSystemMode, overrideSystemPrompt);
+					result = await runGenerate(
+						false,
+						initialSystemMode,
+						overrideSystemPrompt,
+					);
 				} catch (retryError) {
 					if (isSystemMessagePlacementError(retryError)) {
 						result = await runGenerate(false, "inline", overrideSystemPrompt);
@@ -5097,7 +5286,7 @@ export const chat = async ({
 				const hint = deriveTrpcSearchQueryHint(message);
 				const hintForPrompt = hint
 					.replaceAll("\\", "\\\\")
-					.replaceAll("\"", "\\\"")
+					.replaceAll('"', '\\"')
 					.replaceAll("\n", " ")
 					.replaceAll("\r", " ");
 				const failureDetails = needsParamRepair
@@ -5120,7 +5309,8 @@ export const chat = async ({
 			) ?? "";
 		finalText += turnText;
 		if (Array.isArray(result.toolCalls)) allToolCalls.push(...result.toolCalls);
-		const toolResults = (result as unknown as { toolResults?: unknown }).toolResults;
+		const toolResults = (result as unknown as { toolResults?: unknown })
+			.toolResults;
 		if (Array.isArray(toolResults)) allToolResults.push(...toolResults);
 		aggregatedUsage.inputTokens =
 			(aggregatedUsage.inputTokens ?? 0) + (result.usage?.inputTokens ?? 0);
@@ -5142,53 +5332,59 @@ export const chat = async ({
 
 		const assistantSnippet = safeTruncateString(turnText.trim(), 4000);
 		if (assistantSnippet.length > 0) {
-			messages = messages.concat({ role: "assistant", content: assistantSnippet });
+			messages = messages.concat({
+				role: "assistant",
+				content: assistantSnippet,
+			});
 		}
-		messages = messages.concat({ role: "user", content: buildAgentContinuePrompt() });
+		messages = messages.concat({
+			role: "user",
+			content: buildAgentContinuePrompt(),
+		});
 	}
-
 
 	// Save assistant response
 	const executionIdByToolCallId = new Map<string, string>();
 	const invokedToolNameByToolCallId = new Map<string, string>();
 	for (const tr of allToolResults) {
-			if (!tr || typeof tr !== "object") continue;
-			const resultValue = (tr as { result?: unknown }).result;
-			if (!resultValue || typeof resultValue !== "object") continue;
+		if (!tr || typeof tr !== "object") continue;
+		const resultValue = (tr as { result?: unknown }).result;
+		if (!resultValue || typeof resultValue !== "object") continue;
 
-			const toolCallId =
-				(tr as { toolCallId?: unknown }).toolCallId ?? (tr as { id?: unknown }).id;
-			if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) {
-				continue;
-			}
-			const toolCallIdKey = toolCallId.trim();
+		const toolCallId =
+			(tr as { toolCallId?: unknown }).toolCallId ??
+			(tr as { id?: unknown }).id;
+		if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) {
+			continue;
+		}
+		const toolCallIdKey = toolCallId.trim();
 
-			const invokedTool =
-				(resultValue as { invokedTool?: unknown }).invokedTool ??
-				(resultValue as { toolName?: unknown }).toolName;
-			if (typeof invokedTool === "string" && invokedTool.trim().length > 0) {
-				invokedToolNameByToolCallId.set(toolCallIdKey, invokedTool.trim());
-			}
+		const invokedTool =
+			(resultValue as { invokedTool?: unknown }).invokedTool ??
+			(resultValue as { toolName?: unknown }).toolName;
+		if (typeof invokedTool === "string" && invokedTool.trim().length > 0) {
+			invokedToolNameByToolCallId.set(toolCallIdKey, invokedTool.trim());
+		}
 
-			{
-				const executionId = (resultValue as { executionId?: unknown })
-					.executionId;
-				const nestedExecutionId =
-					(resultValue as { data?: unknown }).data &&
-					typeof (resultValue as { data?: unknown }).data === "object"
-						? ((resultValue as { data?: { executionId?: unknown } }).data
-								?.executionId as unknown)
-						: undefined;
-				const picked =
-					typeof executionId === "string"
-						? executionId
-						: typeof nestedExecutionId === "string"
-							? nestedExecutionId
-							: "";
-				if (picked.trim().length > 0) {
-					executionIdByToolCallId.set(toolCallIdKey, picked.trim());
-				}
+		{
+			const executionId = (resultValue as { executionId?: unknown })
+				.executionId;
+			const nestedExecutionId =
+				(resultValue as { data?: unknown }).data &&
+				typeof (resultValue as { data?: unknown }).data === "object"
+					? ((resultValue as { data?: { executionId?: unknown } }).data
+							?.executionId as unknown)
+					: undefined;
+			const picked =
+				typeof executionId === "string"
+					? executionId
+					: typeof nestedExecutionId === "string"
+						? nestedExecutionId
+						: "";
+			if (picked.trim().length > 0) {
+				executionIdByToolCallId.set(toolCallIdKey, picked.trim());
 			}
+		}
 	}
 
 	const toolCallsToPersist = (allToolCalls ?? [])
@@ -5235,6 +5431,7 @@ export const chat = async ({
 	scheduleConversationSummaryUpdate({
 		conversationId,
 		model,
+		providerOptions,
 	});
 
 	// Set deterministic title for new conversation (non-blocking)
@@ -5243,7 +5440,8 @@ export const chat = async ({
 			.replace(/\s+/g, " ")
 			.trim()
 			.slice(0, 50);
-		if (title) void updateConversation(conversationId, { title }).catch(() => {});
+		if (title)
+			void updateConversation(conversationId, { title }).catch(() => {});
 	}
 
 	const usage: ChatUsage | undefined =
@@ -5252,7 +5450,7 @@ export const chat = async ({
 					inputTokens: aggregatedUsage.inputTokens,
 					outputTokens: aggregatedUsage.outputTokens,
 				}
-		: undefined;
+			: undefined;
 
 	return {
 		message: assistantMessage,
@@ -5267,7 +5465,10 @@ export const chat = async ({
 
 export type ChatStreamOptions = {
 	abortSignal?: AbortSignal;
-	onStart?: (info: { assistantMessageId: string; userMessageId?: string }) => void;
+	onStart?: (info: {
+		assistantMessageId: string;
+		userMessageId?: string;
+	}) => void;
 	onTextDelta?: (delta: string) => void;
 	onReasoningDelta?: (delta: string) => void;
 	onToolCall?: (toolCallId: string, toolName: string, args: unknown) => void;
@@ -5331,12 +5532,20 @@ export const chatStream = async (
 		metadataChanged = true;
 	}
 	const inferredRepo = extractGithubRepoFromText(message);
-	if (inferredRepo && inferredRepo !== getGithubRepoFromMetadata(conversationMetadata)) {
-		conversationMetadata = setGithubRepoInMetadata(conversationMetadata, inferredRepo);
+	if (
+		inferredRepo &&
+		inferredRepo !== getGithubRepoFromMetadata(conversationMetadata)
+	) {
+		conversationMetadata = setGithubRepoInMetadata(
+			conversationMetadata,
+			inferredRepo,
+		);
 		metadataChanged = true;
 	}
 	if (metadataChanged) {
-		await updateConversation(conversationId, { metadata: conversationMetadata ?? {} });
+		await updateConversation(conversationId, {
+			metadata: conversationMetadata ?? {},
+		});
 	}
 	const conversationForPrompt =
 		conversationMetadata === conversation.metadata
@@ -5433,7 +5642,10 @@ export const chatStream = async (
 			completionTokens: null,
 		});
 		if (!updated) {
-			throw new TRPCError({ code: "NOT_FOUND", message: "Assistant message not found" });
+			throw new TRPCError({
+				code: "NOT_FOUND",
+				message: "Assistant message not found",
+			});
 		}
 		assistantMessage = updated;
 	} else {
@@ -5474,7 +5686,8 @@ export const chatStream = async (
 	let assistantRawTextContent = "";
 	let assistantTextContent = "";
 	let assistantReasoning = "";
-	let latestToolCallsSnapshot: AiMessageRow["toolCalls"] | null | undefined = null;
+	let latestToolCallsSnapshot: AiMessageRow["toolCalls"] | null | undefined =
+		null;
 	let latestToolResultsSnapshot: unknown[] = [];
 
 	let persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -5567,6 +5780,7 @@ export const chatStream = async (
 	try {
 		const provider = selectAIProvider(aiSettings);
 		const model = provider(aiSettings.model);
+		const providerOptions = getOpenAIResponsesProviderOptions(aiSettings);
 
 		let playbookPrompt = "";
 		try {
@@ -5593,88 +5807,87 @@ export const chatStream = async (
 		]
 			.filter((s) => typeof s === "string" && s.trim().length > 0)
 			.join("\n\n");
-	let systemPrompt = baseSystemPrompt;
-	const refreshSystemPrompt = async () => {
-		const toolExecutionContextMessage = await buildToolExecutionContextMessage({
-			conversationId,
-		});
-		systemPrompt =
-			toolExecutionContextMessage.trim().length > 0
-				? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
-				: baseSystemPrompt;
-	};
-	await refreshSystemPrompt();
+		let systemPrompt = baseSystemPrompt;
+		const refreshSystemPrompt = async () => {
+			const toolExecutionContextMessage =
+				await buildToolExecutionContextMessage({
+					conversationId,
+				});
+			systemPrompt =
+				toolExecutionContextMessage.trim().length > 0
+					? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
+					: baseSystemPrompt;
+		};
+		await refreshSystemPrompt();
 
-	const toolContext: ToolContext = {
-		organizationId,
-		userId,
-		projectId: conversation.projectId || undefined,
-		serverId: conversation.serverId || undefined,
-	};
-
-	const toolApprovalsDisabled = getToolApprovalsDisabledFromMetadata(
-		conversationMetadata,
-	);
-	const toolBudgetMode = getToolBudgetModeFromMetadata(conversationMetadata);
-	const toolStepBudget = getToolStepBudget(toolBudgetMode);
-	const tools = buildChatTools({
-		conversationId,
-		toolContext,
-		messageId: userMessageId,
-		toolApprovalsDisabled,
-	});
-	const activeTools = resolveActiveToolNames(
-		tools,
-		toolExposurePlan.activeMetaTools,
-	);
-
-	const initialSystemMode = getInitialSystemMode(aiSettings);
-
-	const isLikelyActionRequest = (text: string): boolean => {
-		void text;
-		return false;
-		const t = text.trim();
-		if (t.length === 0) return false;
-		const hasAction =
-			/(备份|backup|恢复|restore|迁移|migrate|部署|deploy|创建|create|删除|delete|移除|remove|更新|update|修改|编辑|设置|set|配置|config|启动|start|停止|stop|重启|restart|导入|import|导出|export|挂载|mount|日志|log|logs|容器|container|docker)/i.test(
-				t,
-			);
-		if (!hasAction) return false;
-
-		const imperative =
-			/(帮我|请|麻烦|替我|给我|执行|操作|把.*(备份|backup|恢复|restore|迁移|migrate|部署|deploy|创建|create|删除|delete|更新|update|修改|edit|设置|set|配置|config|启动|start|停止|stop|重启|restart|导入|import|导出|export|日志|log|logs|容器|container|docker))/i.test(
-				t,
-			);
-		if (imperative) return true;
-
-		const looksLikeQuestion =
-			/(\?|？|怎么|如何|为何|为什么|是什么|区别|原理|能不能|可以吗|是否)/i.test(
-				t,
-			);
-		return !looksLikeQuestion;
-	};
-
-	const deriveTrpcSearchQueryHint = (text: string): string => {
-		const q = text.toLowerCase();
-		const tokens = new Set<string>();
-		const add = (arr: string[]) => {
-			for (const t of arr) {
-				const trimmed = t.trim();
-				if (trimmed) tokens.add(trimmed);
-			}
+		const toolContext: ToolContext = {
+			organizationId,
+			userId,
+			projectId: conversation.projectId || undefined,
+			serverId: conversation.serverId || undefined,
 		};
 
-		if (/(备份|backup)/i.test(text)) add(["backup"]);
-		if (/(卷备份|volume\s*backup)/i.test(text)) add(["volume", "backup"]);
-		if (/(挂载|mount|卷|volume)/i.test(text)) add(["mount", "volume"]);
-		if (/(日志|logs?)/i.test(text)) add(["logs", "log"]);
-		if (/(容器|container|docker)/i.test(text)) add(["docker", "container"]);
-		if (/(部署|deployment)/i.test(text)) add(["deployment"]);
-		if (/(文件|file)/i.test(text)) add(["file"]);
-		if (/(s3|r2|minio|对象存储|bucket|存储桶|destination)/i.test(text))
-			add(["s3", "destination"]);
-		if (/(每天|定时|cron|schedule)/i.test(text)) add(["schedule", "cron"]);
-		if (/(最多|保留|retention|keep)/i.test(text)) add(["retention"]);
+		const toolApprovalsDisabled =
+			getToolApprovalsDisabledFromMetadata(conversationMetadata);
+		const toolBudgetMode = getToolBudgetModeFromMetadata(conversationMetadata);
+		const toolStepBudget = getToolStepBudget(toolBudgetMode);
+		const tools = buildChatTools({
+			conversationId,
+			toolContext,
+			messageId: userMessageId,
+			toolApprovalsDisabled,
+		});
+		const activeTools = resolveActiveToolNames(
+			tools,
+			toolExposurePlan.activeMetaTools,
+		);
+
+		const initialSystemMode = getInitialSystemMode(aiSettings);
+
+		const isLikelyActionRequest = (text: string): boolean => {
+			if (!AUTO_EXECUTE_ACTION_REQUESTS) return false;
+			const t = text.trim();
+			if (t.length === 0) return false;
+			const hasAction =
+				/(备份|backup|恢复|restore|迁移|migrate|部署|deploy|创建|create|删除|delete|移除|remove|更新|update|修改|编辑|设置|set|配置|config|启动|start|停止|stop|重启|restart|导入|import|导出|export|挂载|mount|日志|log|logs|容器|container|docker)/i.test(
+					t,
+				);
+			if (!hasAction) return false;
+
+			const imperative =
+				/(帮我|请|麻烦|替我|给我|执行|操作|把.*(备份|backup|恢复|restore|迁移|migrate|部署|deploy|创建|create|删除|delete|更新|update|修改|edit|设置|set|配置|config|启动|start|停止|stop|重启|restart|导入|import|导出|export|日志|log|logs|容器|container|docker))/i.test(
+					t,
+				);
+			if (imperative) return true;
+
+			const looksLikeQuestion =
+				/(\?|？|怎么|如何|为何|为什么|是什么|区别|原理|能不能|可以吗|是否)/i.test(
+					t,
+				);
+			return !looksLikeQuestion;
+		};
+
+		const deriveTrpcSearchQueryHint = (text: string): string => {
+			const q = text.toLowerCase();
+			const tokens = new Set<string>();
+			const add = (arr: string[]) => {
+				for (const t of arr) {
+					const trimmed = t.trim();
+					if (trimmed) tokens.add(trimmed);
+				}
+			};
+
+			if (/(备份|backup)/i.test(text)) add(["backup"]);
+			if (/(卷备份|volume\s*backup)/i.test(text)) add(["volume", "backup"]);
+			if (/(挂载|mount|卷|volume)/i.test(text)) add(["mount", "volume"]);
+			if (/(日志|logs?)/i.test(text)) add(["logs", "log"]);
+			if (/(容器|container|docker)/i.test(text)) add(["docker", "container"]);
+			if (/(部署|deployment)/i.test(text)) add(["deployment"]);
+			if (/(文件|file)/i.test(text)) add(["file"]);
+			if (/(s3|r2|minio|对象存储|bucket|存储桶|destination)/i.test(text))
+				add(["s3", "destination"]);
+			if (/(每天|定时|cron|schedule)/i.test(text)) add(["schedule", "cron"]);
+			if (/(最多|保留|retention|keep)/i.test(text)) add(["retention"]);
 			if (/(项目|project)/i.test(text)) add(["project"]);
 			if (/(环境|environment|env)/i.test(text)) add(["environment"]);
 			if (/(环境变量|env\s*vars?|environment\s*variables?)/i.test(text))
@@ -5701,92 +5914,89 @@ export const chatStream = async (
 			const hint = Array.from(tokens).join(" ");
 			if (hint.length > 0) return hint;
 			const trimmed = q.trim();
-		return trimmed.length > 0 ? trimmed.slice(0, 200) : "backup";
-	};
+			return trimmed.length > 0 ? trimmed.slice(0, 200) : "backup";
+		};
 
 		const runStream = async (
 			withTools: boolean,
 			systemMode: "system" | "inline" = "system",
 			overrideSystemPrompt?: string,
 		) => {
-		const stopWhen = stepCountIs(toolStepBudget);
-		const effectiveSystemPrompt = overrideSystemPrompt ?? systemPrompt;
-		const nextMessages =
-			systemMode === "inline"
-				? [
-						{
-							role: "user" as const,
-							content: `SYSTEM INSTRUCTIONS (treat as system):\n${effectiveSystemPrompt}`,
-						},
-						...messages,
-					]
-				: messages;
-		const stream = streamText({
-			model,
-			system:
-				systemMode === "system"
-					? effectiveSystemPrompt
-					: undefined,
-			messages: nextMessages,
-			tools: withTools ? tools : undefined,
-			activeTools: withTools ? activeTools : undefined,
-			stopWhen,
-			abortSignal: options.abortSignal,
-		});
+			const stopWhen = stepCountIs(toolStepBudget);
+			const effectiveSystemPrompt = overrideSystemPrompt ?? systemPrompt;
+			const nextMessages =
+				systemMode === "inline"
+					? [
+							{
+								role: "user" as const,
+								content: `SYSTEM INSTRUCTIONS (treat as system):\n${effectiveSystemPrompt}`,
+							},
+							...messages,
+						]
+					: messages;
+			const stream = streamText({
+				model,
+				providerOptions,
+				system: systemMode === "system" ? effectiveSystemPrompt : undefined,
+				messages: nextMessages,
+				tools: withTools ? tools : undefined,
+				activeTools: withTools ? activeTools : undefined,
+				stopWhen,
+				abortSignal: options.abortSignal,
+			});
 
-		let fullText = "";
-		const toolCalls: Array<{
-			id: string;
-			type: "function";
-			function: { name: string; arguments: string };
-			sourceToolName: string;
-		}> = [];
-		const toolNameByToolCallId = new Map<string, string>();
-		let usage: { promptTokens?: number; completionTokens?: number } = {};
-		let finishReason: string | null = null;
-		const toolResults: Array<{
-			toolCallId: string;
-			toolName: string;
-			result: unknown;
-		}> = [];
-		let streamError: string | null = null;
-		let hasAnyOutput = false;
+			let fullText = "";
+			const toolCalls: Array<{
+				id: string;
+				type: "function";
+				function: { name: string; arguments: string };
+				sourceToolName: string;
+			}> = [];
+			const toolNameByToolCallId = new Map<string, string>();
+			let usage: { promptTokens?: number; completionTokens?: number } = {};
+			let finishReason: string | null = null;
+			const toolResults: Array<{
+				toolCallId: string;
+				toolName: string;
+				result: unknown;
+			}> = [];
+			let streamError: string | null = null;
+			let hasAnyOutput = false;
 
-		const persistAssistantProgress = () => {
-			const mergedToolCalls = buildPersistedToolCallsFromStreamState(
-				[...allToolCalls, ...toolCalls],
-				[...allToolResults, ...toolResults],
-			);
-			const mergedToolResults = [...allToolResults, ...toolResults];
-			latestToolCallsSnapshot = mergedToolCalls;
-			latestToolResultsSnapshot = mergedToolResults;
-			persistChain = persistChain
-				.then(async () => {
-					await updateMessage({
-						messageId: assistantMessageId,
-						conversationId,
-						content: assistantTextContent,
-						toolCalls:
-							mergedToolCalls.length > 0 ? mergedToolCalls : null,
-					});
-					await upsertDisplayMessageSnapshot({
-						messageId: assistantMessageId,
-						conversationId,
-						sourceMessageId: assistantMessageId,
-						role: "assistant",
-						kind: "message",
-						content: assistantTextContent,
-						reasoning: assistantReasoning,
-						toolCalls: buildDisplayToolCalls({
-							toolCalls: mergedToolCalls,
-							toolResults: mergedToolResults,
-						}),
-						status: "sending",
-						createdAt: assistantMessage.createdAt,
-					});
-				})
-				.catch(() => undefined);
-		};
+			const persistAssistantProgress = () => {
+				const mergedToolCalls = buildPersistedToolCallsFromStreamState(
+					[...allToolCalls, ...toolCalls],
+					[...allToolResults, ...toolResults],
+				);
+				const mergedToolResults = [...allToolResults, ...toolResults];
+				latestToolCallsSnapshot = mergedToolCalls;
+				latestToolResultsSnapshot = mergedToolResults;
+				persistChain = persistChain
+					.then(async () => {
+						await updateMessage({
+							messageId: assistantMessageId,
+							conversationId,
+							content: assistantTextContent,
+							toolCalls: mergedToolCalls.length > 0 ? mergedToolCalls : null,
+						});
+						await upsertDisplayMessageSnapshot({
+							messageId: assistantMessageId,
+							conversationId,
+							sourceMessageId: assistantMessageId,
+							role: "assistant",
+							kind: "message",
+							content: assistantTextContent,
+							reasoning: assistantReasoning,
+							toolCalls: buildDisplayToolCalls({
+								toolCalls: mergedToolCalls,
+								toolResults: mergedToolResults,
+							}),
+							status: "sending",
+							createdAt: assistantMessage.createdAt,
+						});
+					})
+					.catch(() => undefined);
+			};
 
 			try {
 				for await (const chunk of stream.fullStream) {
@@ -5809,117 +6019,122 @@ export const chatStream = async (
 						const normalizedToolName = (() => {
 							if (chunk.toolName !== "tool_call") return chunk.toolName;
 							if (!args || typeof args !== "object" || Array.isArray(args)) {
-							return chunk.toolName;
+								return chunk.toolName;
+							}
+							const value = (args as { toolName?: unknown }).toolName;
+							return typeof value === "string" && value.trim().length > 0
+								? value.trim()
+								: chunk.toolName;
+						})();
+						const normalizedArgs = (() => {
+							if (chunk.toolName !== "tool_call") return args ?? {};
+							if (!args || typeof args !== "object" || Array.isArray(args)) {
+								return args ?? {};
+							}
+							const value = (args as { params?: unknown }).params;
+							return value ?? {};
+						})();
+						toolNameByToolCallId.set(chunk.toolCallId, normalizedToolName);
+						toolCalls.push({
+							id: chunk.toolCallId,
+							type: "function",
+							function: {
+								name: normalizedToolName,
+								arguments: JSON.stringify(normalizedArgs ?? {}),
+							},
+							sourceToolName: chunk.toolName,
+						});
+						try {
+							options.onToolCall?.(
+								chunk.toolCallId,
+								normalizedToolName,
+								normalizedArgs ?? {},
+							);
+						} catch {
+							// Ignore callback errors
 						}
-						const value = (args as { toolName?: unknown }).toolName;
-						return typeof value === "string" && value.trim().length > 0
-							? value.trim()
-							: chunk.toolName;
-					})();
-					const normalizedArgs = (() => {
-						if (chunk.toolName !== "tool_call") return args ?? {};
-						if (!args || typeof args !== "object" || Array.isArray(args)) {
-							return args ?? {};
-						}
-						const value = (args as { params?: unknown }).params;
-						return value ?? {};
-					})();
-					toolNameByToolCallId.set(chunk.toolCallId, normalizedToolName);
-					toolCalls.push({
-						id: chunk.toolCallId,
-						type: "function",
-						function: {
-							name: normalizedToolName,
-							arguments: JSON.stringify(normalizedArgs ?? {}),
-						},
-						sourceToolName: chunk.toolName,
-					});
-					try {
-						options.onToolCall?.(
-							chunk.toolCallId,
-							normalizedToolName,
-							normalizedArgs ?? {},
-						);
-					} catch {
-						// Ignore callback errors
-					}
-					persistAssistantProgress();
+						persistAssistantProgress();
 					} else if (chunk.type === "tool-result") {
 						hasAnyOutput = true;
 						const toolResult =
 							(chunk as unknown as { result?: unknown }).result ??
 							(chunk as unknown as { output?: unknown }).output ??
 							chunk;
-					const resolvedToolName = (() => {
-						const current =
-							toolNameByToolCallId.get(chunk.toolCallId) ?? chunk.toolName;
-						if (!toolResult || typeof toolResult !== "object") return current;
-						const invoked =
-							(toolResult as { invokedTool?: unknown }).invokedTool ??
-							(toolResult as { toolName?: unknown }).toolName;
-						if (typeof invoked !== "string") return current;
-						const trimmed = invoked.trim();
-						return trimmed.length > 0 ? trimmed : current;
-					})();
-					if (
-						typeof resolvedToolName === "string" &&
-						resolvedToolName.trim().length > 0
-					) {
-						toolNameByToolCallId.set(chunk.toolCallId, resolvedToolName);
-						const idx = toolCalls.findIndex((tc) => tc.id === chunk.toolCallId);
-						if (idx >= 0) {
-							const existing = toolCalls[idx];
-							if (existing) {
-								toolCalls[idx] = {
-									...existing,
-									function: { ...existing.function, name: resolvedToolName },
-								};
+						const resolvedToolName = (() => {
+							const current =
+								toolNameByToolCallId.get(chunk.toolCallId) ?? chunk.toolName;
+							if (!toolResult || typeof toolResult !== "object") return current;
+							const invoked =
+								(toolResult as { invokedTool?: unknown }).invokedTool ??
+								(toolResult as { toolName?: unknown }).toolName;
+							if (typeof invoked !== "string") return current;
+							const trimmed = invoked.trim();
+							return trimmed.length > 0 ? trimmed : current;
+						})();
+						if (
+							typeof resolvedToolName === "string" &&
+							resolvedToolName.trim().length > 0
+						) {
+							toolNameByToolCallId.set(chunk.toolCallId, resolvedToolName);
+							const idx = toolCalls.findIndex(
+								(tc) => tc.id === chunk.toolCallId,
+							);
+							if (idx >= 0) {
+								const existing = toolCalls[idx];
+								if (existing) {
+									toolCalls[idx] = {
+										...existing,
+										function: { ...existing.function, name: resolvedToolName },
+									};
+								}
 							}
 						}
-					}
-					toolResults.push({
-						toolCallId: chunk.toolCallId,
-						toolName: resolvedToolName,
-						result: toolResult,
-					});
-					try {
-						options.onToolResult?.(
-							chunk.toolCallId,
-							resolvedToolName,
-							toolResult,
-						);
-					} catch {
-						// Ignore callback errors
-					}
-					persistAssistantProgress();
+						toolResults.push({
+							toolCallId: chunk.toolCallId,
+							toolName: resolvedToolName,
+							result: toolResult,
+						});
+						try {
+							options.onToolResult?.(
+								chunk.toolCallId,
+								resolvedToolName,
+								toolResult,
+							);
+						} catch {
+							// Ignore callback errors
+						}
+						persistAssistantProgress();
 					} else if (chunk.type === "finish") {
 						const usageObj = (chunk as { totalUsage?: unknown }).totalUsage as
 							| { inputTokens?: number; outputTokens?: number }
 							| undefined;
-					usage = {
-						promptTokens: usageObj?.inputTokens,
-						completionTokens: usageObj?.outputTokens,
-					};
-					const reason = (chunk as { finishReason?: unknown }).finishReason;
-					finishReason = typeof reason === "string" ? reason : finishReason;
-				} else if (chunk.type === "error") {
-					streamError = normalizeUnknownToString(
-						(chunk as unknown as { error?: unknown }).error,
-					);
+						usage = {
+							promptTokens: usageObj?.inputTokens,
+							completionTokens: usageObj?.outputTokens,
+						};
+						const reason = (chunk as { finishReason?: unknown }).finishReason;
+						finishReason = typeof reason === "string" ? reason : finishReason;
+					} else if (chunk.type === "error") {
+						streamError = normalizeUnknownToString(
+							(chunk as unknown as { error?: unknown }).error,
+						);
+					}
+				}
+			} catch (error) {
+				if ((error as Error).name === "AbortError") {
+					// Client disconnected, save what we have
+				} else {
+					streamError = getProviderErrorText(error);
 				}
 			}
-		} catch (error) {
-			if ((error as Error).name === "AbortError") {
-				// Client disconnected, save what we have
-			} else {
-				streamError = getProviderErrorText(error);
-			}
-		}
 
-		if (streamError != null && !options.abortSignal?.aborted && !hasAnyOutput) {
-			throw new Error(streamError);
+			if (
+				streamError != null &&
+				!options.abortSignal?.aborted &&
+				!hasAnyOutput
+			) {
+				throw new Error(streamError);
 			}
-
 
 			return {
 				fullText: stripAssistantToolMarkers(fullText),
@@ -5931,300 +6146,328 @@ export const chatStream = async (
 			};
 		};
 
-	type StreamedTurn = Awaited<ReturnType<typeof runStream>>;
+		type StreamedTurn = Awaited<ReturnType<typeof runStream>>;
 
-	const buildPersistedToolCallsFromStreamState = (
-		toolCalls: StreamedTurn["toolCalls"],
-		toolResults: StreamedTurn["toolResults"],
-	) => {
-		const executionIdByToolCallId = new Map<string, string>();
-		const invokedToolNameByToolCallId = new Map<string, string>();
+		const buildPersistedToolCallsFromStreamState = (
+			toolCalls: StreamedTurn["toolCalls"],
+			toolResults: StreamedTurn["toolResults"],
+		) => {
+			const executionIdByToolCallId = new Map<string, string>();
+			const invokedToolNameByToolCallId = new Map<string, string>();
 
-		for (const tr of toolResults) {
-			if (!tr || typeof tr !== "object") continue;
-			const resultValue = (tr as { result?: unknown }).result;
-			if (!resultValue || typeof resultValue !== "object") continue;
+			for (const tr of toolResults) {
+				if (!tr || typeof tr !== "object") continue;
+				const resultValue = (tr as { result?: unknown }).result;
+				if (!resultValue || typeof resultValue !== "object") continue;
 
-			const invokedTool =
-				(resultValue as { invokedTool?: unknown }).invokedTool ??
-				(resultValue as { toolName?: unknown }).toolName;
-			if (typeof invokedTool === "string" && invokedTool.trim().length > 0) {
-				invokedToolNameByToolCallId.set(tr.toolCallId, invokedTool.trim());
+				const invokedTool =
+					(resultValue as { invokedTool?: unknown }).invokedTool ??
+					(resultValue as { toolName?: unknown }).toolName;
+				if (typeof invokedTool === "string" && invokedTool.trim().length > 0) {
+					invokedToolNameByToolCallId.set(tr.toolCallId, invokedTool.trim());
+				}
+
+				const executionId = (resultValue as { executionId?: unknown })
+					.executionId;
+				const nestedExecutionId =
+					(resultValue as { data?: unknown }).data &&
+					typeof (resultValue as { data?: unknown }).data === "object"
+						? ((resultValue as { data?: { executionId?: unknown } }).data
+								?.executionId as unknown)
+						: undefined;
+				const picked =
+					typeof executionId === "string"
+						? executionId
+						: typeof nestedExecutionId === "string"
+							? nestedExecutionId
+							: "";
+				if (picked.trim().length > 0) {
+					executionIdByToolCallId.set(tr.toolCallId, picked.trim());
+				}
 			}
 
-			const executionId = (resultValue as { executionId?: unknown }).executionId;
-			const nestedExecutionId =
-				(resultValue as { data?: unknown }).data &&
-				typeof (resultValue as { data?: unknown }).data === "object"
-					? ((resultValue as { data?: { executionId?: unknown } }).data
-							?.executionId as unknown)
-					: undefined;
-			const picked =
-				typeof executionId === "string"
-					? executionId
-					: typeof nestedExecutionId === "string"
-						? nestedExecutionId
-						: "";
-			if (picked.trim().length > 0) {
-				executionIdByToolCallId.set(tr.toolCallId, picked.trim());
-			}
-		}
+			return toolCalls.map((tc) => {
+				const toolName =
+					invokedToolNameByToolCallId.get(tc.id) ||
+					tc.function.name ||
+					"tool_call";
+				return {
+					id: tc.id,
+					type: "function" as const,
+					executionId: executionIdByToolCallId.get(tc.id),
+					function: {
+						name: toolName,
+						arguments: tc.function.arguments,
+					},
+				};
+			});
+		};
 
-		return toolCalls.map((tc) => {
-			const toolName =
-				invokedToolNameByToolCallId.get(tc.id) || tc.function.name || "tool_call";
-			return {
-				id: tc.id,
-				type: "function" as const,
-				executionId: executionIdByToolCallId.get(tc.id),
-				function: {
-					name: toolName,
-					arguments: tc.function.arguments,
-				},
-			};
-		});
-	};
+		const buildAgentContinuePrompt = () => {
+			const clipped = safeTruncateString(message.trim(), 500);
+			return [
+				"Continue the task based on the conversation so far.",
+				`User request: ${clipped}`,
+				"",
+				"Rules:",
+				"- Use the recent tool execution context to avoid repeating completed work.",
+				"- If more actions are required, call tools.",
+				"- If the task is complete, provide a concise final confirmation and DO NOT call any tools.",
+				'- Never ask the user to "wait" or say you are still "processing".',
+			].join("\n");
+		};
 
-	const buildAgentContinuePrompt = () => {
-		const clipped = safeTruncateString(message.trim(), 500);
-		return [
-			"Continue the task based on the conversation so far.",
-			`User request: ${clipped}`,
-			"",
-			"Rules:",
-			"- Use the recent tool execution context to avoid repeating completed work.",
-			"- If more actions are required, call tools.",
-			"- If the task is complete, provide a concise final confirmation and DO NOT call any tools.",
-			'- Never ask the user to "wait" or say you are still "processing".',
-		].join("\n");
-	};
-
-	const runStreamWithFallback = async (
-		overrideSystemPrompt?: string,
-	): Promise<StreamedTurn> => {
-		let streamed: StreamedTurn;
-		try {
-			streamed = await runStream(true, initialSystemMode, overrideSystemPrompt);
-		} catch (error) {
-			const aborted = options.abortSignal?.aborted;
-			if (!aborted && isSystemMessagePlacementError(error)) {
-				try {
-					streamed = await runStream(true, "inline", overrideSystemPrompt);
-				} catch (retryError) {
-					if (!aborted && isMissingToolUseIdError(retryError)) {
-						streamed = await runStream(false, "inline", overrideSystemPrompt);
-					} else {
-						throw retryError;
-					}
-				}
-			} else if (!aborted && isMissingToolUseIdError(error)) {
-				try {
-					streamed = await runStream(false, initialSystemMode, overrideSystemPrompt);
-				} catch (retryError) {
-					if (!aborted && isSystemMessagePlacementError(retryError)) {
-						streamed = await runStream(false, "inline", overrideSystemPrompt);
-					} else {
-						throw retryError;
-					}
-				}
-			} else throw error;
-		}
-		return streamed;
-	};
-
-	const safeSuccessTools = new Set([
-		"trpc_procedure_search",
-		"trpc_procedure_suggest",
-		"trpc_procedure_describe",
-		"tool_search",
-		"tool_suggest",
-		"tool_describe",
-	]);
-	const isSafeSuccessTool = (toolName: string) => {
-		if (safeSuccessTools.has(toolName)) return true;
-		const t = toolRegistry.get(toolName);
-		return !!t && t.riskLevel === "low" && !t.requiresApproval;
-	};
-
-	const agenticEnabled = toolApprovalsDisabled;
-	const maxTurns = agenticEnabled ? 4 : 1;
-	const maxPlatformToolCalls = agenticEnabled ? toolStepBudget : 0;
-
-	let fullText = "";
-	const allToolCalls: StreamedTurn["toolCalls"] = [];
-	const allToolResults: StreamedTurn["toolResults"] = [];
-	const aggregatedUsage: { promptTokens?: number; completionTokens?: number } = {
-		promptTokens: 0,
-		completionTokens: 0,
-	};
-	let streamError: string | null = null;
-	let lastFinishReason: string | null = null;
-	let needsContinue = false;
-	let platformToolCalls = 0;
-
-	const likelyActionRequest = isLikelyActionRequest(message);
-
-	for (let turn = 0; turn < maxTurns; turn++) {
-		if (options.abortSignal?.aborted) break;
-
-		await refreshSystemPrompt();
-		const turnStreams: StreamedTurn[] = [];
-		let streamed = await runStreamWithFallback(systemPrompt);
-		turnStreams.push(streamed);
-
-		if (!options.abortSignal?.aborted && likelyActionRequest) {
-			for (let repairAttempt = 0; repairAttempt < 2; repairAttempt++) {
-				const retryable = getRetryableToolCallFailures(streamed.toolResults);
-				const needsToolKickoff = streamed.toolCalls.every(
-					(tc) => tc.sourceToolName !== "tool_call",
+		const runStreamWithFallback = async (
+			overrideSystemPrompt?: string,
+		): Promise<StreamedTurn> => {
+			let streamed: StreamedTurn;
+			try {
+				streamed = await runStream(
+					true,
+					initialSystemMode,
+					overrideSystemPrompt,
 				);
-				const onlySafeSuccesses =
-					retryable.successfulTools.length === 0 ||
-					retryable.successfulTools.every(isSafeSuccessTool);
-				const needsParamRepair =
-					retryable.failures.length > 0 &&
-					!retryable.hasPendingApproval &&
-					onlySafeSuccesses;
+			} catch (error) {
+				const aborted = options.abortSignal?.aborted;
+				if (!aborted && isSystemMessagePlacementError(error)) {
+					try {
+						streamed = await runStream(true, "inline", overrideSystemPrompt);
+					} catch (retryError) {
+						if (!aborted && isMissingToolUseIdError(retryError)) {
+							streamed = await runStream(false, "inline", overrideSystemPrompt);
+						} else {
+							throw retryError;
+						}
+					}
+				} else if (!aborted && isMissingToolUseIdError(error)) {
+					try {
+						streamed = await runStream(
+							false,
+							initialSystemMode,
+							overrideSystemPrompt,
+						);
+					} catch (retryError) {
+						if (!aborted && isSystemMessagePlacementError(retryError)) {
+							streamed = await runStream(false, "inline", overrideSystemPrompt);
+						} else {
+							throw retryError;
+						}
+					}
+				} else throw error;
+			}
+			return streamed;
+		};
 
-				if (!((turn === 0 && needsToolKickoff) || needsParamRepair)) break;
+		const safeSuccessTools = new Set([
+			"trpc_procedure_search",
+			"trpc_procedure_suggest",
+			"trpc_procedure_describe",
+			"tool_search",
+			"tool_suggest",
+			"tool_describe",
+		]);
+		const isSafeSuccessTool = (toolName: string) => {
+			if (safeSuccessTools.has(toolName)) return true;
+			const t = toolRegistry.get(toolName);
+			return !!t && t.riskLevel === "low" && !t.requiresApproval;
+		};
 
-				const hint = deriveTrpcSearchQueryHint(message);
-				const hintForPrompt = hint
-					.replaceAll("\\", "\\\\")
-					.replaceAll("\"", "\\\"")
-					.replaceAll("\n", " ")
-					.replaceAll("\r", " ");
-				const failureDetails = needsParamRepair
-					? safeJsonForPrompt(retryable.failures, 2500)
-					: "";
-				const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST use tools (not a text-only plan).\n- If you already know the exact tool/procedure + params, call tool_call directly.\n- If you need to discover tRPC procedures, use trpc_procedure_suggest (query: \"${hintForPrompt}\") or trpc_procedure_search, then call trpc_procedure_call.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nIf blocked, ask exactly ONE question.`;
-				try {
-					await refreshSystemPrompt();
-					streamed = await runStreamWithFallback(`${systemPrompt}${extra}`);
-					turnStreams.push(streamed);
-				} catch {
-					break;
+		const agenticEnabled = toolApprovalsDisabled;
+		const maxTurns = agenticEnabled ? 4 : 1;
+		const maxPlatformToolCalls = agenticEnabled ? toolStepBudget : 0;
+
+		let fullText = "";
+		const allToolCalls: StreamedTurn["toolCalls"] = [];
+		const allToolResults: StreamedTurn["toolResults"] = [];
+		const aggregatedUsage: {
+			promptTokens?: number;
+			completionTokens?: number;
+		} = {
+			promptTokens: 0,
+			completionTokens: 0,
+		};
+		let streamError: string | null = null;
+		let lastFinishReason: string | null = null;
+		let needsContinue = false;
+		let platformToolCalls = 0;
+
+		const likelyActionRequest = isLikelyActionRequest(message);
+
+		for (let turn = 0; turn < maxTurns; turn++) {
+			if (options.abortSignal?.aborted) break;
+
+			await refreshSystemPrompt();
+			const turnStreams: StreamedTurn[] = [];
+			let streamed = await runStreamWithFallback(systemPrompt);
+			turnStreams.push(streamed);
+
+			if (!options.abortSignal?.aborted && likelyActionRequest) {
+				for (let repairAttempt = 0; repairAttempt < 2; repairAttempt++) {
+					const retryable = getRetryableToolCallFailures(streamed.toolResults);
+					const needsToolKickoff = streamed.toolCalls.every(
+						(tc) => tc.sourceToolName !== "tool_call",
+					);
+					const onlySafeSuccesses =
+						retryable.successfulTools.length === 0 ||
+						retryable.successfulTools.every(isSafeSuccessTool);
+					const needsParamRepair =
+						retryable.failures.length > 0 &&
+						!retryable.hasPendingApproval &&
+						onlySafeSuccesses;
+
+					if (!((turn === 0 && needsToolKickoff) || needsParamRepair)) break;
+
+					const hint = deriveTrpcSearchQueryHint(message);
+					const hintForPrompt = hint
+						.replaceAll("\\", "\\\\")
+						.replaceAll('"', '\\"')
+						.replaceAll("\n", " ")
+						.replaceAll("\r", " ");
+					const failureDetails = needsParamRepair
+						? safeJsonForPrompt(retryable.failures, 2500)
+						: "";
+					const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST use tools (not a text-only plan).\n- If you already know the exact tool/procedure + params, call tool_call directly.\n- If you need to discover tRPC procedures, use trpc_procedure_suggest (query: \"${hintForPrompt}\") or trpc_procedure_search, then call trpc_procedure_call.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nIf blocked, ask exactly ONE question.`;
+					try {
+						await refreshSystemPrompt();
+						streamed = await runStreamWithFallback(`${systemPrompt}${extra}`);
+						turnStreams.push(streamed);
+					} catch {
+						break;
+					}
 				}
 			}
-		}
 
-		const turnToolCalls: StreamedTurn["toolCalls"] = [];
-		const turnToolResults: StreamedTurn["toolResults"] = [];
-		for (const streamedChunk of turnStreams) {
-			fullText += streamedChunk.fullText;
-			allToolCalls.push(...streamedChunk.toolCalls);
-			allToolResults.push(...streamedChunk.toolResults);
-			turnToolCalls.push(...streamedChunk.toolCalls);
-			turnToolResults.push(...streamedChunk.toolResults);
-			if (typeof streamedChunk.finishReason === "string") {
-				lastFinishReason = streamedChunk.finishReason;
+			const turnToolCalls: StreamedTurn["toolCalls"] = [];
+			const turnToolResults: StreamedTurn["toolResults"] = [];
+			for (const streamedChunk of turnStreams) {
+				fullText += streamedChunk.fullText;
+				allToolCalls.push(...streamedChunk.toolCalls);
+				allToolResults.push(...streamedChunk.toolResults);
+				turnToolCalls.push(...streamedChunk.toolCalls);
+				turnToolResults.push(...streamedChunk.toolResults);
+				if (typeof streamedChunk.finishReason === "string") {
+					lastFinishReason = streamedChunk.finishReason;
+				}
+				aggregatedUsage.promptTokens =
+					(aggregatedUsage.promptTokens ?? 0) +
+					(streamedChunk.usage.promptTokens ?? 0);
+				aggregatedUsage.completionTokens =
+					(aggregatedUsage.completionTokens ?? 0) +
+					(streamedChunk.usage.completionTokens ?? 0);
+				if (
+					typeof streamedChunk.streamError === "string" &&
+					streamedChunk.streamError.length > 0
+				) {
+					streamError = streamedChunk.streamError;
+				}
 			}
-			aggregatedUsage.promptTokens =
-				(aggregatedUsage.promptTokens ?? 0) +
-				(streamedChunk.usage.promptTokens ?? 0);
-			aggregatedUsage.completionTokens =
-				(aggregatedUsage.completionTokens ?? 0) +
-				(streamedChunk.usage.completionTokens ?? 0);
+
+			if (!agenticEnabled || turn >= maxTurns - 1) break;
+
+			const retryable = getRetryableToolCallFailures(turnToolResults);
+			const platformThisTurn = turnToolCalls.filter(
+				(tc) => tc.sourceToolName === "tool_call",
+			).length;
+			platformToolCalls += platformThisTurn;
+
+			if (retryable.hasPendingApproval) break;
+			if (platformThisTurn <= 0) break;
 			if (
-				typeof streamedChunk.streamError === "string" &&
-				streamedChunk.streamError.length > 0
+				maxPlatformToolCalls > 0 &&
+				platformToolCalls >= maxPlatformToolCalls
 			) {
-				streamError = streamedChunk.streamError;
+				needsContinue = true;
+				break;
 			}
+
+			const assistantSnippet = safeTruncateString(
+				streamed.fullText.trim(),
+				4000,
+			);
+			if (assistantSnippet.length > 0) {
+				messages = messages.concat({
+					role: "assistant",
+					content: assistantSnippet,
+				});
+			}
+			messages = messages.concat({
+				role: "user",
+				content: buildAgentContinuePrompt(),
+			});
 		}
 
-		if (!agenticEnabled || turn >= maxTurns - 1) break;
+		await flushPersist();
 
-		const retryable = getRetryableToolCallFailures(turnToolResults);
-		const platformThisTurn = turnToolCalls.filter(
-			(tc) => tc.sourceToolName === "tool_call",
-		).length;
-		platformToolCalls += platformThisTurn;
+		const toolCallsToPersist = buildPersistedToolCallsFromStreamState(
+			allToolCalls,
+			allToolResults,
+		);
+		latestToolCallsSnapshot = toolCallsToPersist;
+		latestToolResultsSnapshot = allToolResults;
 
-		if (retryable.hasPendingApproval) break;
-		if (platformThisTurn <= 0) break;
-		if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls) {
+		const persistedContent = stripAssistantToolMarkers(
+			assistantTextContent.length > 0 ? assistantTextContent : fullText,
+		);
+
+		const updatedAssistantMessage = await updateMessage({
+			messageId: assistantMessageId,
+			conversationId,
+			role: "assistant",
+			content: persistedContent,
+			toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : null,
+			promptTokens: aggregatedUsage.promptTokens ?? null,
+			completionTokens: aggregatedUsage.completionTokens ?? null,
+		});
+
+		const finalAssistantStatus: DisplayMessageStatus = options.abortSignal
+			?.aborted
+			? "stopped"
+			: "sent";
+		await syncDisplayMessageFromRawMessage(updatedAssistantMessage, {
+			reasoning: assistantReasoning,
+			status: finalAssistantStatus,
+			toolResults: allToolResults,
+		});
+
+		const usage: ChatUsage | undefined =
+			aggregatedUsage.promptTokens != null ||
+			aggregatedUsage.completionTokens != null
+				? {
+						inputTokens: aggregatedUsage.promptTokens,
+						outputTokens: aggregatedUsage.completionTokens,
+					}
+				: undefined;
+
+		scheduleConversationSummaryUpdate({
+			conversationId,
+			model,
+			providerOptions,
+		});
+
+		// Set deterministic title for new conversation (non-blocking)
+		if (history.length <= 2 && conversation.title === "New Conversation") {
+			const title = String(message ?? "")
+				.replace(/\s+/g, " ")
+				.trim()
+				.slice(0, 50);
+			if (title)
+				void updateConversation(conversationId, { title }).catch(() => {});
+		}
+
+		if (
+			!options.abortSignal?.aborted &&
+			(lastFinishReason === "tool-calls" || lastFinishReason === "length")
+		) {
 			needsContinue = true;
-			break;
 		}
 
-		const assistantSnippet = safeTruncateString(streamed.fullText.trim(), 4000);
-		if (assistantSnippet.length > 0) {
-			messages = messages.concat({ role: "assistant", content: assistantSnippet });
-		}
-		messages = messages.concat({ role: "user", content: buildAgentContinuePrompt() });
-	}
-
-
-	await flushPersist();
-
-	const toolCallsToPersist = buildPersistedToolCallsFromStreamState(
-		allToolCalls,
-		allToolResults,
-	);
-	latestToolCallsSnapshot = toolCallsToPersist;
-	latestToolResultsSnapshot = allToolResults;
-
-	const persistedContent = stripAssistantToolMarkers(
-		assistantTextContent.length > 0 ? assistantTextContent : fullText,
-	);
-
-	const updatedAssistantMessage = await updateMessage({
-		messageId: assistantMessageId,
-		conversationId,
-		role: "assistant",
-		content: persistedContent,
-		toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : null,
-		promptTokens: aggregatedUsage.promptTokens ?? null,
-		completionTokens: aggregatedUsage.completionTokens ?? null,
-	});
-
-	const finalAssistantStatus: DisplayMessageStatus = options.abortSignal?.aborted
-		? "stopped"
-		: "sent";
-	await syncDisplayMessageFromRawMessage(updatedAssistantMessage, {
-		reasoning: assistantReasoning,
-		status: finalAssistantStatus,
-		toolResults: allToolResults,
-	});
-
-	const usage: ChatUsage | undefined =
-		aggregatedUsage.promptTokens != null ||
-		aggregatedUsage.completionTokens != null
-			? {
-					inputTokens: aggregatedUsage.promptTokens,
-					outputTokens: aggregatedUsage.completionTokens,
-				}
-			: undefined;
-
-	scheduleConversationSummaryUpdate({
-		conversationId,
-		model,
-	});
-
-	// Set deterministic title for new conversation (non-blocking)
-	if (history.length <= 2 && conversation.title === "New Conversation") {
-		const title = String(message ?? "")
-			.replace(/\s+/g, " ")
-			.trim()
-			.slice(0, 50);
-		if (title) void updateConversation(conversationId, { title }).catch(() => {});
-	}
-
-	if (
-		!options.abortSignal?.aborted &&
-		(lastFinishReason === "tool-calls" || lastFinishReason === "length")
-	) {
-		needsContinue = true;
-	}
-
-	return {
-		message: updatedAssistantMessage ?? assistantMessage,
-		usage,
-		toolResults: [],
-		needsContinue,
-		finishReason: lastFinishReason ?? undefined,
-	};
+		return {
+			message: updatedAssistantMessage ?? assistantMessage,
+			usage,
+			toolResults: [],
+			needsContinue,
+			finishReason: lastFinishReason ?? undefined,
+		};
 	} catch (error) {
 		try {
 			await flushPersist();
@@ -6250,7 +6493,9 @@ export const chatStream = async (
 					toolResults: latestToolResultsSnapshot,
 				}),
 				status: options.abortSignal?.aborted ? "stopped" : "error",
-				error: options.abortSignal?.aborted ? null : getProviderErrorText(error),
+				error: options.abortSignal?.aborted
+					? null
+					: getProviderErrorText(error),
 				createdAt: assistantMessage.createdAt,
 			});
 		} catch {}
@@ -6263,79 +6508,204 @@ export const chatStream = async (
 	}
 };
 
-	type PlaybookStep = {
-		toolName: string;
-		procedureName?: string;
-		inputKeys?: string[];
-	};
+type PlaybookStep = {
+	toolName: string;
+	procedureName?: string;
+	inputKeys?: string[];
+};
 
-	function addDaysIso(days: number, from = new Date()): string {
-		const ms = Math.max(0, Number(days) || 0) * 24 * 60 * 60 * 1000;
-		return new Date(from.getTime() + ms).toISOString();
+function addDaysIso(days: number, from = new Date()): string {
+	const ms = Math.max(0, Number(days) || 0) * 24 * 60 * 60 * 1000;
+	return new Date(from.getTime() + ms).toISOString();
+}
+
+function normalizePlaybookInputKeys(inputKeys?: string[]): string[] {
+	if (!Array.isArray(inputKeys)) return [];
+	return Array.from(
+		new Set(
+			inputKeys
+				.map((key) => String(key ?? "").trim())
+				.filter((key) => key.length > 0),
+		),
+	)
+		.sort((left, right) => left.localeCompare(right))
+		.slice(0, 40);
+}
+
+function buildPlaybookSignature(steps: PlaybookStep[]): string {
+	const text = steps
+		.map((step) => {
+			const inputKeys = normalizePlaybookInputKeys(step.inputKeys);
+			return [
+				step.toolName.trim(),
+				step.procedureName?.trim() ?? "",
+				inputKeys.join(","),
+			].join(":");
+		})
+		.join("|");
+	return createHash("sha256").update(text).digest("hex");
+}
+
+function extractTopLevelKeys(value: unknown): string[] {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+	return normalizePlaybookInputKeys(Object.keys(value));
+}
+
+function derivePlaybookTagsFromSteps(steps: PlaybookStep[]): string[] {
+	const tags = new Set<string>();
+	for (const step of steps) {
+		const proc =
+			typeof step.procedureName === "string" ? step.procedureName : "";
+		const prefix = proc.includes(".") ? proc.split(".")[0] : "";
+		if (prefix) tags.add(prefix);
 	}
+	return Array.from(tags).slice(0, 12);
+}
 
-	function normalizePlaybookInputKeys(inputKeys?: string[]): string[] {
-		if (!Array.isArray(inputKeys)) return [];
-		return Array.from(
-			new Set(
-				inputKeys
-					.map((key) => String(key ?? "").trim())
-					.filter((key) => key.length > 0),
+function buildPlaybookVectorText(params: {
+	intent: string;
+	steps: PlaybookStep[];
+	tags: string[];
+}): string {
+	const stepText = params.steps
+		.map((step) => {
+			const inputKeys = normalizePlaybookInputKeys(step.inputKeys);
+			const parts = [step.toolName];
+			if (step.procedureName) parts.push(step.procedureName);
+			if (inputKeys.length > 0) parts.push(`inputs:${inputKeys.join(",")}`);
+			return parts.join(" ");
+		})
+		.join("\n");
+	const tagText =
+		params.tags.length > 0 ? `\nTags: ${params.tags.join(", ")}` : "";
+	return `${params.intent.trim()}\n${stepText}${tagText}`.trim();
+}
+
+type PlaybookMatchSource = "embedding" | "hash";
+type PlaybookMatchRow = {
+	playbookId: string;
+	intent: string;
+	summary: string | null;
+	steps: PlaybookStep[];
+	successCount: number;
+	failCount: number;
+	lastUsedAt: string | null;
+	signature: string;
+	distance: number;
+	source: PlaybookMatchSource;
+};
+
+const PLAYBOOK_CLEANUP_TTL_MS = 60 * 60 * 1000;
+const playbookCleanupThrottle = new Map<string, number>();
+
+function isIndexedEmbeddingDimension(dim: number): boolean {
+	if (!Number.isInteger(dim) || dim <= 0) return false;
+	if (dim > PLAYBOOK_MAX_INDEXABLE_EMBEDDING_DIMENSIONS) return false;
+	return PLAYBOOK_INDEXED_EMBEDDING_DIMENSIONS.includes(
+		dim as (typeof PLAYBOOK_INDEXED_EMBEDDING_DIMENSIONS)[number],
+	);
+}
+
+function buildEmbeddingDistanceExpr(vector: number[], dim: number) {
+	const literal = JSON.stringify(vector);
+	if (isIndexedEmbeddingDimension(dim)) {
+		return sql<number>`${sql.raw(
+			`(("ai_agent_playbook"."embeddingVector")::halfvec(${dim}) <=> '${literal}'::halfvec(${dim}))`,
+		)}`.as("distance");
+	}
+	return sql<number>`${aiAgentPlaybooks.embeddingVector} <=> ${literal}::vector`.as(
+		"distance",
+	);
+}
+
+function getPlaybookReliabilityScore(playbook: {
+	successCount: number;
+	failCount: number;
+}): number {
+	return (
+		(Number(playbook.successCount) || 0) - (Number(playbook.failCount) || 0)
+	);
+}
+
+function comparePlaybookMatches(
+	left: PlaybookMatchRow,
+	right: PlaybookMatchRow,
+): number {
+	if (left.source !== right.source) {
+		return left.source === "embedding" ? -1 : 1;
+	}
+	const leftDistance = Number.isFinite(left.distance)
+		? left.distance
+		: Number.POSITIVE_INFINITY;
+	const rightDistance = Number.isFinite(right.distance)
+		? right.distance
+		: Number.POSITIVE_INFINITY;
+	if (leftDistance !== rightDistance) return leftDistance - rightDistance;
+	const reliabilityDiff =
+		getPlaybookReliabilityScore(right) - getPlaybookReliabilityScore(left);
+	if (reliabilityDiff !== 0) return reliabilityDiff;
+	return String(right.lastUsedAt ?? "").localeCompare(
+		String(left.lastUsedAt ?? ""),
+	);
+}
+
+function uniquePlaybookIds(ids: string[]): string[] {
+	return Array.from(
+		new Set(
+			ids.map((id) => String(id ?? "").trim()).filter((id) => id.length > 0),
+		),
+	);
+}
+
+function scheduleExpiredPlaybookCleanup(organizationId: string) {
+	const orgId = String(organizationId ?? "").trim();
+	if (!orgId) return;
+	const now = Date.now();
+	const nextAllowedAt = playbookCleanupThrottle.get(orgId) ?? 0;
+	if (nextAllowedAt > now) return;
+	playbookCleanupThrottle.set(orgId, now + PLAYBOOK_CLEANUP_TTL_MS);
+	void db
+		.delete(aiAgentPlaybooks)
+		.where(
+			and(
+				eq(aiAgentPlaybooks.organizationId, orgId),
+				lt(aiAgentPlaybooks.expiresAt, new Date().toISOString()),
 			),
 		)
-			.sort((left, right) => left.localeCompare(right))
-			.slice(0, 40);
-	}
+		.catch(() => {
+			playbookCleanupThrottle.set(orgId, Date.now() + 5 * 60 * 1000);
+		});
+}
 
-	function buildPlaybookSignature(steps: PlaybookStep[]): string {
-		const text = steps
-			.map((step) => {
-				const inputKeys = normalizePlaybookInputKeys(step.inputKeys);
-				return [
-					step.toolName.trim(),
-					step.procedureName?.trim() ?? "",
-					inputKeys.join(","),
-				].join(":");
+async function incrementPlaybookFailureCounts(params: {
+	organizationId: string;
+	playbookIds: string[];
+}): Promise<void> {
+	const playbookIds = uniquePlaybookIds(params.playbookIds);
+	if (playbookIds.length === 0) return;
+	try {
+		await db
+			.update(aiAgentPlaybooks)
+			.set({
+				failCount: sql`${aiAgentPlaybooks.failCount} + 1`,
+				lastUsedAt: new Date().toISOString(),
 			})
-			.join("|");
-		return createHash("sha256").update(text).digest("hex");
-	}
+			.where(
+				and(
+					eq(aiAgentPlaybooks.organizationId, params.organizationId),
+					inArray(aiAgentPlaybooks.playbookId, playbookIds),
+				),
+			);
+	} catch {}
+}
 
-	function extractTopLevelKeys(value: unknown): string[] {
-		if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-		return normalizePlaybookInputKeys(Object.keys(value));
-	}
-
-	function derivePlaybookTagsFromSteps(steps: PlaybookStep[]): string[] {
-		const tags = new Set<string>();
-		for (const step of steps) {
-			const proc = typeof step.procedureName === "string" ? step.procedureName : "";
-			const prefix = proc.includes(".") ? proc.split(".")[0] : "";
-			if (prefix) tags.add(prefix);
-		}
-		return Array.from(tags).slice(0, 12);
-	}
-
-	function buildPlaybookVectorText(params: {
-		intent: string;
-		steps: PlaybookStep[];
-		tags: string[];
-	}): string {
-		const stepText = params.steps
-			.map((step) => {
-				const inputKeys = normalizePlaybookInputKeys(step.inputKeys);
-				const parts = [step.toolName];
-				if (step.procedureName) parts.push(step.procedureName);
-				if (inputKeys.length > 0) parts.push(`inputs:${inputKeys.join(",")}`);
-				return parts.join(" ");
-			})
-			.join("\n");
-		const tagText = params.tags.length > 0 ? `\nTags: ${params.tags.join(", ")}` : "";
-		return `${params.intent.trim()}\n${stepText}${tagText}`.trim();
-	}
-
-	type PlaybookMatchSource = "embedding" | "hash";
-	type PlaybookMatchRow = {
+async function findRelevantPlaybooks(params: {
+	organizationId: string;
+	embeddingProvider?: EmbeddingProviderConfig | null;
+	queryText: string;
+	limit?: number;
+}): Promise<
+	Array<{
 		playbookId: string;
 		intent: string;
 		summary: string | null;
@@ -6345,266 +6715,158 @@ export const chatStream = async (
 		lastUsedAt: string | null;
 		signature: string;
 		distance: number;
-		source: PlaybookMatchSource;
-	};
+	}>
+> {
+	const limit = Math.max(
+		1,
+		Math.min(
+			10,
+			Number(params.limit ?? PLAYBOOK_DEFAULT_TOP_K) || PLAYBOOK_DEFAULT_TOP_K,
+		),
+	);
+	const candidateLimit = Math.max(
+		limit,
+		limit * PLAYBOOK_QUERY_CANDIDATE_MULTIPLIER,
+	);
+	const nowIso = new Date().toISOString();
 
-	const PLAYBOOK_CLEANUP_TTL_MS = 60 * 60 * 1000;
-	const playbookCleanupThrottle = new Map<string, number>();
+	const embedding = await tryEmbedText({
+		embeddingProvider: params.embeddingProvider,
+		text: params.queryText,
+	});
 
-	function isIndexedEmbeddingDimension(dim: number): boolean {
-		if (!Number.isInteger(dim) || dim <= 0) return false;
-		if (dim > PLAYBOOK_MAX_INDEXABLE_EMBEDDING_DIMENSIONS) return false;
-		return PLAYBOOK_INDEXED_EMBEDDING_DIMENSIONS.includes(
-			dim as (typeof PLAYBOOK_INDEXED_EMBEDDING_DIMENSIONS)[number],
-		);
-	}
-
-	function buildEmbeddingDistanceExpr(vector: number[], dim: number) {
-		const literal = JSON.stringify(vector);
-		if (isIndexedEmbeddingDimension(dim)) {
-			return sql<number>`${sql.raw(
-				`(("ai_agent_playbook"."embeddingVector")::halfvec(${dim}) <=> '${literal}'::halfvec(${dim}))`,
-			)}`.as("distance");
-		}
-		return sql<number>`${aiAgentPlaybooks.embeddingVector} <=> ${literal}::vector`.as(
-			"distance",
-		);
-	}
-
-	function getPlaybookReliabilityScore(playbook: {
-		successCount: number;
-		failCount: number;
-	}): number {
-		return (Number(playbook.successCount) || 0) - (Number(playbook.failCount) || 0);
-	}
-
-	function comparePlaybookMatches(left: PlaybookMatchRow, right: PlaybookMatchRow): number {
-		if (left.source !== right.source) {
-			return left.source === "embedding" ? -1 : 1;
-		}
-		const leftDistance = Number.isFinite(left.distance)
-			? left.distance
-			: Number.POSITIVE_INFINITY;
-		const rightDistance = Number.isFinite(right.distance)
-			? right.distance
-			: Number.POSITIVE_INFINITY;
-		if (leftDistance !== rightDistance) return leftDistance - rightDistance;
-		const reliabilityDiff =
-			getPlaybookReliabilityScore(right) - getPlaybookReliabilityScore(left);
-		if (reliabilityDiff !== 0) return reliabilityDiff;
-		return String(right.lastUsedAt ?? "").localeCompare(String(left.lastUsedAt ?? ""));
-	}
-
-	function uniquePlaybookIds(ids: string[]): string[] {
-		return Array.from(
-			new Set(
-				ids
-					.map((id) => String(id ?? "").trim())
-					.filter((id) => id.length > 0),
-			),
-		);
-	}
-
-	function scheduleExpiredPlaybookCleanup(organizationId: string) {
-		const orgId = String(organizationId ?? "").trim();
-		if (!orgId) return;
-		const now = Date.now();
-		const nextAllowedAt = playbookCleanupThrottle.get(orgId) ?? 0;
-		if (nextAllowedAt > now) return;
-		playbookCleanupThrottle.set(orgId, now + PLAYBOOK_CLEANUP_TTL_MS);
-		void db
-			.delete(aiAgentPlaybooks)
-			.where(
-				and(
-					eq(aiAgentPlaybooks.organizationId, orgId),
-					lt(aiAgentPlaybooks.expiresAt, new Date().toISOString()),
-				),
-			)
-			.catch(() => {
-				playbookCleanupThrottle.set(orgId, Date.now() + 5 * 60 * 1000);
-			});
-	}
-
-	async function incrementPlaybookFailureCounts(params: {
-		organizationId: string;
-		playbookIds: string[];
-	}): Promise<void> {
-		const playbookIds = uniquePlaybookIds(params.playbookIds);
-		if (playbookIds.length === 0) return;
+	const queryEmbedding = async () => {
+		if (!embedding) return [];
 		try {
-			await db
-				.update(aiAgentPlaybooks)
-				.set({
-					failCount: sql`${aiAgentPlaybooks.failCount} + 1`,
-					lastUsedAt: new Date().toISOString(),
+			const distanceExpr = buildEmbeddingDistanceExpr(
+				embedding.vector,
+				embedding.dim,
+			);
+			return await db
+				.select({
+					playbookId: aiAgentPlaybooks.playbookId,
+					intent: aiAgentPlaybooks.intent,
+					summary: aiAgentPlaybooks.summary,
+					steps: aiAgentPlaybooks.steps,
+					successCount: aiAgentPlaybooks.successCount,
+					failCount: aiAgentPlaybooks.failCount,
+					lastUsedAt: aiAgentPlaybooks.lastUsedAt,
+					signature: aiAgentPlaybooks.signature,
+					distance: distanceExpr,
 				})
+				.from(aiAgentPlaybooks)
 				.where(
 					and(
 						eq(aiAgentPlaybooks.organizationId, params.organizationId),
-						inArray(aiAgentPlaybooks.playbookId, playbookIds),
+						gt(aiAgentPlaybooks.expiresAt, nowIso),
+						eq(aiAgentPlaybooks.embeddingModel, embedding.model),
+						eq(aiAgentPlaybooks.embeddingDim, embedding.dim),
+						isNotNull(aiAgentPlaybooks.embeddingVector),
 					),
-				);
-		} catch {}
-	}
+				)
+				.orderBy(distanceExpr, desc(aiAgentPlaybooks.lastUsedAt))
+				.limit(candidateLimit);
+		} catch {
+			return [];
+		}
+	};
 
-	async function findRelevantPlaybooks(params: {
-		organizationId: string;
-		embeddingProvider?: EmbeddingProviderConfig | null;
-		queryText: string;
-		limit?: number;
-	}): Promise<
-		Array<{
-			playbookId: string;
-			intent: string;
-			summary: string | null;
-			steps: PlaybookStep[];
-			successCount: number;
-			failCount: number;
-			lastUsedAt: string | null;
-			signature: string;
-			distance: number;
-		}>
-	> {
-		const limit = Math.max(
-			1,
-			Math.min(10, Number(params.limit ?? PLAYBOOK_DEFAULT_TOP_K) || PLAYBOOK_DEFAULT_TOP_K),
+	const queryHash = async () => {
+		const vec = hashTextToUnitVector(
+			params.queryText,
+			PLAYBOOK_HASH_DIMENSIONS,
 		);
-		const candidateLimit = Math.max(
-			limit,
-			limit * PLAYBOOK_QUERY_CANDIDATE_MULTIPLIER,
-		);
-		const nowIso = new Date().toISOString();
-
-		const embedding = await tryEmbedText({
-			embeddingProvider: params.embeddingProvider,
-			text: params.queryText,
-		});
-
-		const queryEmbedding = async () => {
-			if (!embedding) return [];
-			try {
-				const distanceExpr = buildEmbeddingDistanceExpr(
-					embedding.vector,
-					embedding.dim,
-				);
-				return await db
-					.select({
-						playbookId: aiAgentPlaybooks.playbookId,
-						intent: aiAgentPlaybooks.intent,
-						summary: aiAgentPlaybooks.summary,
-						steps: aiAgentPlaybooks.steps,
-						successCount: aiAgentPlaybooks.successCount,
-						failCount: aiAgentPlaybooks.failCount,
-						lastUsedAt: aiAgentPlaybooks.lastUsedAt,
-						signature: aiAgentPlaybooks.signature,
-						distance: distanceExpr,
-					})
-					.from(aiAgentPlaybooks)
-					.where(
-						and(
-							eq(aiAgentPlaybooks.organizationId, params.organizationId),
-							gt(aiAgentPlaybooks.expiresAt, nowIso),
-							eq(aiAgentPlaybooks.embeddingModel, embedding.model),
-							eq(aiAgentPlaybooks.embeddingDim, embedding.dim),
-							isNotNull(aiAgentPlaybooks.embeddingVector),
-						),
-					)
-					.orderBy(distanceExpr, desc(aiAgentPlaybooks.lastUsedAt))
-					.limit(candidateLimit);
-			} catch {
-				return [];
-			}
-		};
-
-		const queryHash = async () => {
-			const vec = hashTextToUnitVector(params.queryText, PLAYBOOK_HASH_DIMENSIONS);
-			try {
-				const distanceExpr = sql<number>`${aiAgentPlaybooks.hashVector} <=> ${JSON.stringify(
+		try {
+			const distanceExpr =
+				sql<number>`${aiAgentPlaybooks.hashVector} <=> ${JSON.stringify(
 					vec,
 				)}::vector`.as("distance");
-				return await db
-					.select({
-						playbookId: aiAgentPlaybooks.playbookId,
-						intent: aiAgentPlaybooks.intent,
-						summary: aiAgentPlaybooks.summary,
-						steps: aiAgentPlaybooks.steps,
-						successCount: aiAgentPlaybooks.successCount,
-						failCount: aiAgentPlaybooks.failCount,
-						lastUsedAt: aiAgentPlaybooks.lastUsedAt,
-						signature: aiAgentPlaybooks.signature,
-						distance: distanceExpr,
-					})
-					.from(aiAgentPlaybooks)
+			return await db
+				.select({
+					playbookId: aiAgentPlaybooks.playbookId,
+					intent: aiAgentPlaybooks.intent,
+					summary: aiAgentPlaybooks.summary,
+					steps: aiAgentPlaybooks.steps,
+					successCount: aiAgentPlaybooks.successCount,
+					failCount: aiAgentPlaybooks.failCount,
+					lastUsedAt: aiAgentPlaybooks.lastUsedAt,
+					signature: aiAgentPlaybooks.signature,
+					distance: distanceExpr,
+				})
+				.from(aiAgentPlaybooks)
+				.where(
+					and(
+						eq(aiAgentPlaybooks.organizationId, params.organizationId),
+						gt(aiAgentPlaybooks.expiresAt, nowIso),
+					),
+				)
+				.orderBy(distanceExpr, desc(aiAgentPlaybooks.lastUsedAt))
+				.limit(candidateLimit);
+		} catch {
+			return [];
+		}
+	};
+
+	const [embeddingRows, hashRows] = await Promise.all([
+		queryEmbedding(),
+		queryHash(),
+	]);
+	const merged = new Map<string, PlaybookMatchRow>();
+
+	for (const row of embeddingRows || []) {
+		if (
+			!Number.isFinite(row.distance) ||
+			row.distance > PLAYBOOK_EMBEDDING_MAX_DISTANCE
+		) {
+			continue;
+		}
+		merged.set(row.playbookId, { ...row, source: "embedding" });
+	}
+
+	for (const row of hashRows || []) {
+		if (
+			!Number.isFinite(row.distance) ||
+			row.distance > PLAYBOOK_HASH_MAX_DISTANCE
+		) {
+			continue;
+		}
+		if (!merged.has(row.playbookId)) {
+			merged.set(row.playbookId, { ...row, source: "hash" });
+		}
+	}
+
+	const picked = Array.from(merged.values())
+		.sort(comparePlaybookMatches)
+		.slice(0, limit);
+
+	if (picked.length > 0) {
+		const ids = uniquePlaybookIds(
+			picked.map((playbook) => playbook.playbookId),
+		);
+		const nextExpiry = addDaysIso(PLAYBOOK_RETENTION_DAYS);
+		if (ids.length > 0) {
+			try {
+				await db
+					.update(aiAgentPlaybooks)
+					.set({ lastUsedAt: nowIso, expiresAt: nextExpiry })
 					.where(
 						and(
 							eq(aiAgentPlaybooks.organizationId, params.organizationId),
-							gt(aiAgentPlaybooks.expiresAt, nowIso),
+							inArray(aiAgentPlaybooks.playbookId, ids),
 						),
-					)
-					.orderBy(distanceExpr, desc(aiAgentPlaybooks.lastUsedAt))
-					.limit(candidateLimit);
-			} catch {
-				return [];
-			}
-		};
-
-		const [embeddingRows, hashRows] = await Promise.all([
-			queryEmbedding(),
-			queryHash(),
-		]);
-		const merged = new Map<string, PlaybookMatchRow>();
-
-		for (const row of embeddingRows || []) {
-			if (
-				!Number.isFinite(row.distance) ||
-				row.distance > PLAYBOOK_EMBEDDING_MAX_DISTANCE
-			) {
-				continue;
-			}
-			merged.set(row.playbookId, { ...row, source: "embedding" });
+					);
+			} catch {}
 		}
-
-		for (const row of hashRows || []) {
-			if (
-				!Number.isFinite(row.distance) ||
-				row.distance > PLAYBOOK_HASH_MAX_DISTANCE
-			) {
-				continue;
-			}
-			if (!merged.has(row.playbookId)) {
-				merged.set(row.playbookId, { ...row, source: "hash" });
-			}
-		}
-
-		const picked = Array.from(merged.values())
-			.sort(comparePlaybookMatches)
-			.slice(0, limit);
-
-		if (picked.length > 0) {
-			const ids = uniquePlaybookIds(picked.map((playbook) => playbook.playbookId));
-			const nextExpiry = addDaysIso(PLAYBOOK_RETENTION_DAYS);
-			if (ids.length > 0) {
-				try {
-					await db
-						.update(aiAgentPlaybooks)
-						.set({ lastUsedAt: nowIso, expiresAt: nextExpiry })
-						.where(
-							and(
-								eq(aiAgentPlaybooks.organizationId, params.organizationId),
-								inArray(aiAgentPlaybooks.playbookId, ids),
-							),
-						);
-				} catch {}
-			}
-		}
-
-		return picked.map((p) => ({
-			...p,
-			steps: Array.isArray(p.steps) ? (p.steps as PlaybookStep[]) : [],
-		}));
 	}
 
-	function buildPlaybookMemoryPrompt(playbooks: Array<{
+	return picked.map((p) => ({
+		...p,
+		steps: Array.isArray(p.steps) ? (p.steps as PlaybookStep[]) : [],
+	}));
+}
+
+function buildPlaybookMemoryPrompt(
+	playbooks: Array<{
 		intent: string;
 		summary: string | null;
 		steps: PlaybookStep[];
@@ -6612,168 +6874,174 @@ export const chatStream = async (
 		failCount: number;
 		lastUsedAt: string | null;
 		distance: number;
-	}>): string {
-		if (!Array.isArray(playbooks) || playbooks.length === 0) return "";
+	}>,
+): string {
+	if (!Array.isArray(playbooks) || playbooks.length === 0) return "";
 
-		const items = playbooks
-			.map((p, idx) => {
-				const title = safeTruncateString(p.summary?.trim() || p.intent.trim(), 140);
-				const meta = [
-					`success=${Number(p.successCount) || 0}`,
-					`fail=${Number(p.failCount) || 0}`,
-					p.lastUsedAt ? `lastUsed=${p.lastUsedAt}` : "",
-				]
-					.filter(Boolean)
-					.join(" ");
+	const items = playbooks
+		.map((p, idx) => {
+			const title = safeTruncateString(
+				p.summary?.trim() || p.intent.trim(),
+				140,
+			);
+			const meta = [
+				`success=${Number(p.successCount) || 0}`,
+				`fail=${Number(p.failCount) || 0}`,
+				p.lastUsedAt ? `lastUsed=${p.lastUsedAt}` : "",
+			]
+				.filter(Boolean)
+				.join(" ");
 
-				const steps = p.steps
-					.slice(0, 12)
-					.map((s) => {
-						if (s.toolName === "trpc_procedure_call" && s.procedureName) {
-							const keys =
-								Array.isArray(s.inputKeys) && s.inputKeys.length > 0
-									? ` (input keys: ${s.inputKeys.join(", ")})`
-									: "";
-							return `- ${s.toolName}: ${s.procedureName}${keys}`;
-						}
-						return `- ${s.toolName}${s.procedureName ? `: ${s.procedureName}` : ""}`;
-					})
-					.join("\n");
+			const steps = p.steps
+				.slice(0, 12)
+				.map((s) => {
+					if (s.toolName === "trpc_procedure_call" && s.procedureName) {
+						const keys =
+							Array.isArray(s.inputKeys) && s.inputKeys.length > 0
+								? ` (input keys: ${s.inputKeys.join(", ")})`
+								: "";
+						return `- ${s.toolName}: ${s.procedureName}${keys}`;
+					}
+					return `- ${s.toolName}${s.procedureName ? `: ${s.procedureName}` : ""}`;
+				})
+				.join("\n");
 
-				return [
-					`#${idx + 1} ${title}${meta ? ` [${meta}]` : ""}`,
-					steps.length > 0 ? steps : "- (no steps recorded)",
-				].join("\n");
-			})
-			.join("\n\n");
+			return [
+				`#${idx + 1} ${title}${meta ? ` [${meta}]` : ""}`,
+				steps.length > 0 ? steps : "- (no steps recorded)",
+			].join("\n");
+		})
+		.join("\n\n");
 
-		return [
-			"PLAYBOOK MEMORY (organization-scoped, from past successful runs):",
-			"- If the user request matches a playbook below, follow its steps directly and SKIP exploratory calls (tool_search/trpc_procedure_search/suggest) unless needed.",
-			"- Prefer calling trpc_procedure_call with the correct procedureName and input. Use trpc_procedure_describe only if you need the latest schema.",
-			"- If a required tool needs approval and approvals are manual, create the pending_approval tool_call and stop.",
-			"",
-			items,
-		].join("\n");
+	return [
+		"PLAYBOOK MEMORY (organization-scoped, from past successful runs):",
+		"- If the user request matches a playbook below, follow its steps directly and SKIP exploratory calls (tool_search/trpc_procedure_search/suggest) unless needed.",
+		"- Prefer calling trpc_procedure_call with the correct procedureName and input. Use trpc_procedure_describe only if you need the latest schema.",
+		"- If a required tool needs approval and approvals are manual, create the pending_approval tool_call and stop.",
+		"",
+		items,
+	].join("\n");
+}
+
+async function upsertPlaybookFromSuccessfulRun(params: {
+	organizationId: string;
+	embeddingProvider?: EmbeddingProviderConfig | null;
+	goal: string;
+	runId: string;
+	finalSummary: string;
+}): Promise<void> {
+	const goal = params.goal.trim();
+	if (!goal) return;
+
+	const executions = await db.query.aiToolExecutions.findMany({
+		where: eq(aiToolExecutions.runId, params.runId),
+		orderBy: desc(aiToolExecutions.createdAt),
+		limit: 200,
+	});
+	if (executions.length === 0) return;
+
+	const ordered = executions.slice().reverse();
+	const steps: PlaybookStep[] = [];
+	for (const exec of ordered) {
+		if (exec.status !== "completed") continue;
+		const result = exec.result as unknown as { success?: unknown } | undefined;
+		if (!result || result.success !== true) continue;
+
+		if (exec.toolName === "trpc_procedure_call") {
+			const paramsObj = exec.parameters as unknown as
+				| Record<string, unknown>
+				| undefined;
+			const procedureName =
+				paramsObj && typeof paramsObj.procedureName === "string"
+					? paramsObj.procedureName.trim()
+					: "";
+			if (!procedureName) continue;
+			const input =
+				paramsObj && typeof paramsObj.input !== "undefined"
+					? paramsObj.input
+					: paramsObj && typeof paramsObj.params !== "undefined"
+						? paramsObj.params
+						: undefined;
+			steps.push({
+				toolName: "trpc_procedure_call",
+				procedureName,
+				inputKeys: extractTopLevelKeys(input),
+			});
+		}
 	}
 
-	async function upsertPlaybookFromSuccessfulRun(params: {
-		organizationId: string;
-		embeddingProvider?: EmbeddingProviderConfig | null;
-		goal: string;
-		runId: string;
-		finalSummary: string;
-	}): Promise<void> {
-		const goal = params.goal.trim();
-		if (!goal) return;
+	if (steps.length === 0) return;
 
-		const executions = await db.query.aiToolExecutions.findMany({
-			where: eq(aiToolExecutions.runId, params.runId),
-			orderBy: desc(aiToolExecutions.createdAt),
-			limit: 200,
-		});
-		if (executions.length === 0) return;
+	scheduleExpiredPlaybookCleanup(params.organizationId);
 
-		const ordered = executions.slice().reverse();
-		const steps: PlaybookStep[] = [];
-		for (const exec of ordered) {
-			if (exec.status !== "completed") continue;
-			const result = exec.result as unknown as { success?: unknown } | undefined;
-			if (!result || result.success !== true) continue;
+	const tags = derivePlaybookTagsFromSteps(steps);
+	const vectorText = buildPlaybookVectorText({ intent: goal, steps, tags });
+	const hashVector = hashTextToUnitVector(vectorText, PLAYBOOK_HASH_DIMENSIONS);
+	const signature = buildPlaybookSignature(steps);
 
-			if (exec.toolName === "trpc_procedure_call") {
-				const paramsObj = exec.parameters as unknown as Record<string, unknown> | undefined;
-				const procedureName =
-					paramsObj && typeof paramsObj.procedureName === "string"
-						? paramsObj.procedureName.trim()
-						: "";
-				if (!procedureName) continue;
-				const input =
-					paramsObj && typeof paramsObj.input !== "undefined"
-						? paramsObj.input
-						: paramsObj && typeof paramsObj.params !== "undefined"
-							? paramsObj.params
-							: undefined;
-				steps.push({
-					toolName: "trpc_procedure_call",
-					procedureName,
-					inputKeys: extractTopLevelKeys(input),
-				});
-			}
-		}
+	const now = new Date();
+	const nowIso = now.toISOString();
+	const expiresAt = addDaysIso(PLAYBOOK_RETENTION_DAYS, now);
 
-		if (steps.length === 0) return;
+	const embedding = await tryEmbedText({
+		embeddingProvider: params.embeddingProvider,
+		text: vectorText,
+	});
+	const nextSet: {
+		intent: string;
+		summary: string;
+		tags: string[];
+		steps: PlaybookStep[];
+		lastUsedAt: string;
+		expiresAt: string;
+		hashVector: number[];
+		successCount: ReturnType<typeof sql>;
+		embeddingModel?: string;
+		embeddingDim?: number;
+		embeddingVector?: number[];
+	} = {
+		intent: goal,
+		summary: safeTruncateString(params.finalSummary.trim(), 600),
+		tags,
+		steps,
+		lastUsedAt: nowIso,
+		expiresAt,
+		hashVector,
+		successCount: sql`${aiAgentPlaybooks.successCount} + 1`,
+	};
+	if (embedding) {
+		nextSet.embeddingModel = embedding.model;
+		nextSet.embeddingDim = embedding.dim;
+		nextSet.embeddingVector = embedding.vector;
+	}
 
-		scheduleExpiredPlaybookCleanup(params.organizationId);
-
-		const tags = derivePlaybookTagsFromSteps(steps);
-		const vectorText = buildPlaybookVectorText({ intent: goal, steps, tags });
-		const hashVector = hashTextToUnitVector(vectorText, PLAYBOOK_HASH_DIMENSIONS);
-		const signature = buildPlaybookSignature(steps);
-
-		const now = new Date();
-		const nowIso = now.toISOString();
-		const expiresAt = addDaysIso(PLAYBOOK_RETENTION_DAYS, now);
-
-		const embedding = await tryEmbedText({
-			embeddingProvider: params.embeddingProvider,
-			text: vectorText,
-		});
-		const nextSet: {
-			intent: string;
-			summary: string;
-			tags: string[];
-			steps: PlaybookStep[];
-			lastUsedAt: string;
-			expiresAt: string;
-			hashVector: number[];
-			successCount: ReturnType<typeof sql>;
-			embeddingModel?: string;
-			embeddingDim?: number;
-			embeddingVector?: number[];
-		} = {
+	await db
+		.insert(aiAgentPlaybooks)
+		.values({
+			organizationId: params.organizationId,
+			signature,
 			intent: goal,
 			summary: safeTruncateString(params.finalSummary.trim(), 600),
 			tags,
 			steps,
+			successCount: 1,
+			failCount: 0,
 			lastUsedAt: nowIso,
 			expiresAt,
 			hashVector,
-			successCount: sql`${aiAgentPlaybooks.successCount} + 1`,
-		};
-		if (embedding) {
-			nextSet.embeddingModel = embedding.model;
-			nextSet.embeddingDim = embedding.dim;
-			nextSet.embeddingVector = embedding.vector;
-		}
+			embeddingModel: embedding?.model ?? null,
+			embeddingDim: embedding?.dim ?? null,
+			embeddingVector: embedding?.vector ?? null,
+		})
+		.onConflictDoUpdate({
+			target: [aiAgentPlaybooks.organizationId, aiAgentPlaybooks.signature],
+			set: nextSet,
+		});
+}
 
-		await db
-			.insert(aiAgentPlaybooks)
-			.values({
-				organizationId: params.organizationId,
-				signature,
-				intent: goal,
-				summary: safeTruncateString(params.finalSummary.trim(), 600),
-				tags,
-				steps,
-				successCount: 1,
-				failCount: 0,
-				lastUsedAt: nowIso,
-				expiresAt,
-				hashVector,
-				embeddingModel: embedding?.model ?? null,
-				embeddingDim: embedding?.dim ?? null,
-				embeddingVector: embedding?.vector ?? null,
-			})
-			.onConflictDoUpdate({
-				target: [aiAgentPlaybooks.organizationId, aiAgentPlaybooks.signature],
-				set: nextSet,
-			});
-	}
-
-	function buildSystemPrompt(
-		conversation: Awaited<ReturnType<typeof getConversationById>>,
-		availableTools: ToolPromptInfo[],
+function buildSystemPrompt(
+	conversation: Awaited<ReturnType<typeof getConversationById>>,
+	availableTools: ToolPromptInfo[],
 ) {
 	let context = "";
 	if (conversation.projectId) {
@@ -6943,7 +7211,9 @@ const agentRunAbortControllers = new Map<string, AbortController>();
 
 function getOrCreateAgentRunAbortController(runId: string): AbortController {
 	const normalized = typeof runId === "string" ? runId.trim() : "";
-	const existing = normalized ? agentRunAbortControllers.get(normalized) : undefined;
+	const existing = normalized
+		? agentRunAbortControllers.get(normalized)
+		: undefined;
 	if (existing && !existing.signal.aborted) return existing;
 	const controller = new AbortController();
 	if (normalized) agentRunAbortControllers.set(normalized, controller);
@@ -6981,7 +7251,8 @@ export const cancelRun = async (runId: string) => {
 		where: eq(aiRuns.runId, normalized),
 		columns: { conversationId: true },
 	});
-	const conversationId = typeof run?.conversationId === "string" ? run.conversationId : "";
+	const conversationId =
+		typeof run?.conversationId === "string" ? run.conversationId : "";
 	const updated = await updateRun(normalized, {
 		status: "cancelled",
 		completedAt: new Date().toISOString(),
@@ -7001,7 +7272,10 @@ export const cancelRun = async (runId: string) => {
 					? existingAssistant.content
 					: "";
 			if (current.trim().length === 0) {
-				await ensureAgentAssistantMessage({ conversationId, runId: normalized });
+				await ensureAgentAssistantMessage({
+					conversationId,
+					runId: normalized,
+				});
 			}
 			await upsertDisplayMessageSnapshot({
 				messageId: assistantMessageId,
@@ -7019,7 +7293,11 @@ export const cancelRun = async (runId: string) => {
 		try {
 			await saveAgentEventMessage({
 				conversationId,
-				payload: { type: "agent.run.finish", runId: normalized, status: "cancelled" },
+				payload: {
+					type: "agent.run.finish",
+					runId: normalized,
+					status: "cancelled",
+				},
 			});
 		} catch {}
 	}
@@ -7084,8 +7362,10 @@ function buildPersistedToolCallsFromResults(params: {
 		if (!resultValue || typeof resultValue !== "object") continue;
 
 		const toolCallId =
-			(tr as { toolCallId?: unknown }).toolCallId ?? (tr as { id?: unknown }).id;
-		if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) continue;
+			(tr as { toolCallId?: unknown }).toolCallId ??
+			(tr as { id?: unknown }).id;
+		if (typeof toolCallId !== "string" || toolCallId.trim().length === 0)
+			continue;
 		const toolCallIdKey = toolCallId.trim();
 
 		const invokedTool =
@@ -7125,7 +7405,9 @@ function buildPersistedToolCallsFromResults(params: {
 		if (!tc || typeof tc !== "object") continue;
 		if ((tc as any).toolName !== "tool_call") continue;
 		const toolCallId =
-			typeof (tc as any).toolCallId === "string" ? (tc as any).toolCallId.trim() : "";
+			typeof (tc as any).toolCallId === "string"
+				? (tc as any).toolCallId.trim()
+				: "";
 		if (!toolCallId) continue;
 		if (seen.has(toolCallId)) continue;
 		seen.add(toolCallId);
@@ -7139,7 +7421,8 @@ function buildPersistedToolCallsFromResults(params: {
 				? String((rawArgs as any).toolName)
 				: (tc as any).toolName;
 		const toolName =
-			invokedToolNameByToolCallId.get(toolCallId) ?? String(toolNameFromArgs ?? "tool");
+			invokedToolNameByToolCallId.get(toolCallId) ??
+			String(toolNameFromArgs ?? "tool");
 		const toolParams =
 			rawArgs && typeof rawArgs === "object" && "params" in rawArgs
 				? (rawArgs as any).params
@@ -7167,7 +7450,10 @@ const agentRunQueue: Array<() => Promise<void>> = [];
 const agentRunInFlight = new Set<string>();
 
 function drainAgentRunQueue() {
-	while (agentRunActive < AGENT_RUN_MAX_CONCURRENCY && agentRunQueue.length > 0) {
+	while (
+		agentRunActive < AGENT_RUN_MAX_CONCURRENCY &&
+		agentRunQueue.length > 0
+	) {
 		const next = agentRunQueue.shift();
 		if (!next) break;
 		agentRunActive++;
@@ -7203,7 +7489,8 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 	let selectedPlaybookIds: string[] = [];
 	let selectedPlaybookOrganizationId = "";
 	const markSelectedPlaybooksFailed = async () => {
-		if (!selectedPlaybookOrganizationId || selectedPlaybookIds.length === 0) return;
+		if (!selectedPlaybookOrganizationId || selectedPlaybookIds.length === 0)
+			return;
 		await incrementPlaybookFailureCounts({
 			organizationId: selectedPlaybookOrganizationId,
 			playbookIds: selectedPlaybookIds,
@@ -7211,125 +7498,125 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		selectedPlaybookIds = [];
 	};
 	try {
-	const run = await db.query.aiRuns.findFirst({
-		where: eq(aiRuns.runId, runId),
-	});
-	if (!run) {
-		throw new TRPCError({ code: "NOT_FOUND", message: "Run not found" });
-	}
-	if (["completed", "failed", "cancelled"].includes(run.status)) return;
-
-	const conversation = await getConversationById(run.conversationId);
-	selectedPlaybookOrganizationId = conversation.organizationId;
-	if (conversation.organizationId !== ctx.organizationId) {
-		throw new TRPCError({
-			code: "UNAUTHORIZED",
-			message: "You don't have access to this run",
+		const run = await db.query.aiRuns.findFirst({
+			where: eq(aiRuns.runId, runId),
 		});
-	}
-	const uiLocale = getUiLocaleFromMetadata(conversation.metadata);
-	const assistantMessageId = await ensureAgentAssistantMessage({
-		conversationId: run.conversationId,
-		runId,
-	});
-	if (assistantMessageId) {
-		await upsertDisplayMessageSnapshot({
-			messageId: assistantMessageId,
+		if (!run) {
+			throw new TRPCError({ code: "NOT_FOUND", message: "Run not found" });
+		}
+		if (["completed", "failed", "cancelled"].includes(run.status)) return;
+
+		const conversation = await getConversationById(run.conversationId);
+		selectedPlaybookOrganizationId = conversation.organizationId;
+		if (conversation.organizationId !== ctx.organizationId) {
+			throw new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You don't have access to this run",
+			});
+		}
+		const uiLocale = getUiLocaleFromMetadata(conversation.metadata);
+		const assistantMessageId = await ensureAgentAssistantMessage({
 			conversationId: run.conversationId,
-			sourceMessageId: assistantMessageId,
 			runId,
-			role: "assistant",
-			kind: "agent",
-			content: "",
-			reasoning: null,
-			status: "sending",
-		});
-	}
-
-	const conversationAiId =
-		typeof conversation.aiId === "string" ? conversation.aiId.trim() : "";
-	if (!conversationAiId) {
-		const msg = "Conversation has no AI configuration";
-		await updateRun(runId, {
-			status: "failed",
-			error: msg,
-			completedAt: new Date().toISOString(),
-		});
-		await saveAgentEventMessage({
-			conversationId: run.conversationId,
-			payload: { type: "agent.run.finish", runId, status: "failed" },
 		});
 		if (assistantMessageId) {
-			try {
-				await updateMessage({
-					messageId: assistantMessageId,
-					conversationId: run.conversationId,
-					role: "assistant",
-					content: msg,
-				});
-				await upsertDisplayMessageSnapshot({
-					messageId: assistantMessageId,
-					conversationId: run.conversationId,
-					sourceMessageId: assistantMessageId,
-					runId,
-					role: "assistant",
-					kind: "agent",
-					content: msg,
-					status: "error",
-					error: msg,
-				});
-			} catch {}
+			await upsertDisplayMessageSnapshot({
+				messageId: assistantMessageId,
+				conversationId: run.conversationId,
+				sourceMessageId: assistantMessageId,
+				runId,
+				role: "assistant",
+				kind: "agent",
+				content: "",
+				reasoning: null,
+				status: "sending",
+			});
 		}
-		return;
-	}
 
-	const aiSettings = await getAiSettingById(conversationAiId);
-	if (!aiSettings || !aiSettings.isEnabled) {
-		const msg = "AI features are not enabled for this configuration";
-		await updateRun(runId, {
-			status: "failed",
-			error: msg,
-			completedAt: new Date().toISOString(),
-		});
-		await saveAgentEventMessage({
-			conversationId: run.conversationId,
-			payload: { type: "agent.run.finish", runId, status: "failed" },
-		});
-		if (assistantMessageId) {
-			try {
-				await updateMessage({
-					messageId: assistantMessageId,
-					conversationId: run.conversationId,
-					role: "assistant",
-					content: msg,
-				});
-				await upsertDisplayMessageSnapshot({
-					messageId: assistantMessageId,
-					conversationId: run.conversationId,
-					sourceMessageId: assistantMessageId,
-					runId,
-					role: "assistant",
-					kind: "agent",
-					content: msg,
-					status: "error",
-					error: msg,
-				});
-			} catch {}
+		const conversationAiId =
+			typeof conversation.aiId === "string" ? conversation.aiId.trim() : "";
+		if (!conversationAiId) {
+			const msg = "Conversation has no AI configuration";
+			await updateRun(runId, {
+				status: "failed",
+				error: msg,
+				completedAt: new Date().toISOString(),
+			});
+			await saveAgentEventMessage({
+				conversationId: run.conversationId,
+				payload: { type: "agent.run.finish", runId, status: "failed" },
+			});
+			if (assistantMessageId) {
+				try {
+					await updateMessage({
+						messageId: assistantMessageId,
+						conversationId: run.conversationId,
+						role: "assistant",
+						content: msg,
+					});
+					await upsertDisplayMessageSnapshot({
+						messageId: assistantMessageId,
+						conversationId: run.conversationId,
+						sourceMessageId: assistantMessageId,
+						runId,
+						role: "assistant",
+						kind: "agent",
+						content: msg,
+						status: "error",
+						error: msg,
+					});
+				} catch {}
+			}
+			return;
 		}
-		return;
-	}
 
-	const toolApprovalsDisabled = getToolApprovalsDisabledFromMetadata(
-		conversation.metadata,
-	);
-	const toolBudgetMode = getToolBudgetModeFromMetadata(conversation.metadata);
-	const toolStepBudget = getToolStepBudget(toolBudgetMode);
-	const agenticEnabled = toolApprovalsDisabled;
-	const toolExposurePlan = buildToolExposurePlan({
-		userMessage: typeof run.goal === "string" ? run.goal : "",
-		projectId: conversation.projectId || undefined,
-		serverId: conversation.serverId || undefined,
-	});
+		const aiSettings = await getAiSettingById(conversationAiId);
+		if (!aiSettings || !aiSettings.isEnabled) {
+			const msg = "AI features are not enabled for this configuration";
+			await updateRun(runId, {
+				status: "failed",
+				error: msg,
+				completedAt: new Date().toISOString(),
+			});
+			await saveAgentEventMessage({
+				conversationId: run.conversationId,
+				payload: { type: "agent.run.finish", runId, status: "failed" },
+			});
+			if (assistantMessageId) {
+				try {
+					await updateMessage({
+						messageId: assistantMessageId,
+						conversationId: run.conversationId,
+						role: "assistant",
+						content: msg,
+					});
+					await upsertDisplayMessageSnapshot({
+						messageId: assistantMessageId,
+						conversationId: run.conversationId,
+						sourceMessageId: assistantMessageId,
+						runId,
+						role: "assistant",
+						kind: "agent",
+						content: msg,
+						status: "error",
+						error: msg,
+					});
+				} catch {}
+			}
+			return;
+		}
+
+		const toolApprovalsDisabled = getToolApprovalsDisabledFromMetadata(
+			conversation.metadata,
+		);
+		const toolBudgetMode = getToolBudgetModeFromMetadata(conversation.metadata);
+		const toolStepBudget = getToolStepBudget(toolBudgetMode);
+		const agenticEnabled = toolApprovalsDisabled;
+		const toolExposurePlan = buildToolExposurePlan({
+			userMessage: typeof run.goal === "string" ? run.goal : "",
+			projectId: conversation.projectId || undefined,
+			serverId: conversation.serverId || undefined,
+		});
 		const tools = buildChatTools({
 			conversationId: run.conversationId,
 			runId,
@@ -7337,60 +7624,114 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			messageId: assistantMessageId || undefined,
 			toolApprovalsDisabled,
 		});
-	const activeTools = resolveActiveToolNames(
-		tools,
-		toolExposurePlan.activeMetaTools,
-	);
+		const activeTools = resolveActiveToolNames(
+			tools,
+			toolExposurePlan.activeMetaTools,
+		);
 
-	const provider = selectAIProvider(aiSettings);
-	const model = provider(aiSettings.model);
-	const goal = typeof run.goal === "string" ? run.goal : "";
+		const provider = selectAIProvider(aiSettings);
+		const model = provider(aiSettings.model);
+		const providerOptions = getOpenAIResponsesProviderOptions(aiSettings);
+		const goal = typeof run.goal === "string" ? run.goal : "";
 
-	let lastOutputDelta = "";
-	let lastReasoningDelta = "";
+		let lastOutputDelta = "";
+		let lastReasoningDelta = "";
 
-	// Execute any approved executions first (agent-mode approvals).
-	{
-		const pendingApproved = await db.query.aiToolExecutions.findMany({
-			where: and(
-				eq(aiToolExecutions.runId, runId),
-				eq(aiToolExecutions.status, "approved"),
-			),
-			orderBy: desc(aiToolExecutions.createdAt),
-			limit: 20,
-		});
-		for (const exec of pendingApproved.slice().reverse()) {
-			if (!exec.toolName) continue;
-			await updateToolExecution(exec.executionId, {
-				status: "executing",
-				startedAt: exec.startedAt || new Date().toISOString(),
+		// Execute any approved executions first (agent-mode approvals).
+		{
+			const pendingApproved = await db.query.aiToolExecutions.findMany({
+				where: and(
+					eq(aiToolExecutions.runId, runId),
+					eq(aiToolExecutions.status, "approved"),
+				),
+				orderBy: desc(aiToolExecutions.createdAt),
+				limit: 20,
 			});
-			await saveAgentEventMessage({
-				conversationId: run.conversationId,
-				payload: {
-					type: "agent.step.start",
-					runId,
-					stepId: exec.executionId,
-					executionId: exec.executionId,
-					toolName: exec.toolName,
-					parametersPreview:
-						exec.parameters != null
-							? safeJsonForPrompt(exec.parameters, 4000)
-							: undefined,
-				},
-			});
-			let rawResult: unknown;
-			try {
-				rawResult = await executeToolByNameMaybeMcp(
-					exec.toolName,
-					exec.parameters || {},
-					ctx,
-				);
-			} catch (error) {
-				const errorMessage = error instanceof Error ? error.message : String(error);
+			for (const exec of pendingApproved.slice().reverse()) {
+				if (!exec.toolName) continue;
 				await updateToolExecution(exec.executionId, {
-					status: "failed",
-					error: errorMessage,
+					status: "executing",
+					startedAt: exec.startedAt || new Date().toISOString(),
+				});
+				await saveAgentEventMessage({
+					conversationId: run.conversationId,
+					payload: {
+						type: "agent.step.start",
+						runId,
+						stepId: exec.executionId,
+						executionId: exec.executionId,
+						toolName: exec.toolName,
+						parametersPreview:
+							exec.parameters != null
+								? safeJsonForPrompt(exec.parameters, 4000)
+								: undefined,
+					},
+				});
+				let rawResult: unknown;
+				try {
+					rawResult = await executeToolByNameMaybeMcp(
+						exec.toolName,
+						exec.parameters || {},
+						ctx,
+					);
+				} catch (error) {
+					const errorMessage =
+						error instanceof Error ? error.message : String(error);
+					await updateToolExecution(exec.executionId, {
+						status: "failed",
+						error: errorMessage,
+						completedAt: new Date().toISOString(),
+					});
+					await saveAgentEventMessage({
+						conversationId: run.conversationId,
+						payload: {
+							type: "agent.step.result",
+							runId,
+							stepId: exec.executionId,
+							executionId: exec.executionId,
+							toolName: exec.toolName,
+							success: false,
+							summary: errorMessage,
+						},
+					});
+					await updateRun(runId, {
+						status: "failed",
+						error: errorMessage,
+						completedAt: new Date().toISOString(),
+					});
+					await saveAgentEventMessage({
+						conversationId: run.conversationId,
+						payload: { type: "agent.run.finish", runId, status: "failed" },
+					});
+					if (assistantMessageId) {
+						try {
+							await updateMessage({
+								messageId: assistantMessageId,
+								conversationId: run.conversationId,
+								role: "assistant",
+								content: errorMessage,
+							});
+							await upsertDisplayMessageSnapshot({
+								messageId: assistantMessageId,
+								conversationId: run.conversationId,
+								sourceMessageId: assistantMessageId,
+								runId,
+								role: "assistant",
+								kind: "agent",
+								content: errorMessage,
+								status: "error",
+								error: errorMessage,
+							});
+						} catch {}
+					}
+					return;
+				}
+
+				const result = normalizeToolResultForStorage(rawResult);
+				await updateToolExecution(exec.executionId, {
+					status: result.success ? "completed" : "failed",
+					result,
+					error: result.success ? undefined : result.error || result.message,
 					completedAt: new Date().toISOString(),
 				});
 				await saveAgentEventMessage({
@@ -7401,76 +7742,27 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 						stepId: exec.executionId,
 						executionId: exec.executionId,
 						toolName: exec.toolName,
-						success: false,
-						summary: errorMessage,
+						success: result.success,
+						summary: result.message || (result.success ? "Success" : "Failed"),
+						dataPreview:
+							result.data != null
+								? safeJsonForPrompt(result.data, 4000)
+								: undefined,
 					},
 				});
-				await updateRun(runId, {
-					status: "failed",
-					error: errorMessage,
-					completedAt: new Date().toISOString(),
-				});
-				await saveAgentEventMessage({
-					conversationId: run.conversationId,
-					payload: { type: "agent.run.finish", runId, status: "failed" },
-				});
-					if (assistantMessageId) {
-						try {
-							await updateMessage({
-								messageId: assistantMessageId,
-								conversationId: run.conversationId,
-								role: "assistant",
-								content: errorMessage,
-							});
-							await upsertDisplayMessageSnapshot({
-								messageId: assistantMessageId,
-								conversationId: run.conversationId,
-								sourceMessageId: assistantMessageId,
-								runId,
-								role: "assistant",
-								kind: "agent",
-								content: errorMessage,
-								status: "error",
-								error: errorMessage,
-							});
-						} catch {}
-					}
-					return;
-				}
-
-			const result = normalizeToolResultForStorage(rawResult);
-			await updateToolExecution(exec.executionId, {
-				status: result.success ? "completed" : "failed",
-				result,
-				error: result.success ? undefined : result.error || result.message,
-				completedAt: new Date().toISOString(),
-			});
-			await saveAgentEventMessage({
-				conversationId: run.conversationId,
-				payload: {
-					type: "agent.step.result",
-					runId,
-					stepId: exec.executionId,
-					executionId: exec.executionId,
-					toolName: exec.toolName,
-					success: result.success,
-					summary: result.message || (result.success ? "Success" : "Failed"),
-					dataPreview:
-						result.data != null ? safeJsonForPrompt(result.data, 4000) : undefined,
-				},
-			});
-			if (!result.success) {
-				const errorMessage = result.error || result.message || "Tool execution failed";
-				await markSelectedPlaybooksFailed();
-				await updateRun(runId, {
-					status: "failed",
-					error: errorMessage,
-					completedAt: new Date().toISOString(),
-				});
-				await saveAgentEventMessage({
-					conversationId: run.conversationId,
-					payload: { type: "agent.run.finish", runId, status: "failed" },
-				});
+				if (!result.success) {
+					const errorMessage =
+						result.error || result.message || "Tool execution failed";
+					await markSelectedPlaybooksFailed();
+					await updateRun(runId, {
+						status: "failed",
+						error: errorMessage,
+						completedAt: new Date().toISOString(),
+					});
+					await saveAgentEventMessage({
+						conversationId: run.conversationId,
+						payload: { type: "agent.run.finish", runId, status: "failed" },
+					});
 					if (assistantMessageId) {
 						try {
 							await updateMessage({
@@ -7497,27 +7789,30 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			}
 		}
 
-	const history = await getMessages({ conversationId: run.conversationId, limit: 20 });
-	let messages: CoreMessage[] = history
-		.map(messageToCoreMessage)
-		.filter(Boolean) as CoreMessage[];
+		const history = await getMessages({
+			conversationId: run.conversationId,
+			limit: 20,
+		});
+		let messages: CoreMessage[] = history
+			.map(messageToCoreMessage)
+			.filter(Boolean) as CoreMessage[];
 
-			let playbookPrompt = "";
-			try {
-				const embeddingProvider = await resolveEmbeddingProviderConfig({
-					organizationId: conversation.organizationId,
-					aiSettings,
-				});
-				const playbooks = await findRelevantPlaybooks({
-					organizationId: conversation.organizationId,
-					embeddingProvider,
-					queryText: goal,
-				});
-				selectedPlaybookIds = uniquePlaybookIds(
-					playbooks.map((playbook) => playbook.playbookId),
-				);
-				playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
-			} catch {}
+		let playbookPrompt = "";
+		try {
+			const embeddingProvider = await resolveEmbeddingProviderConfig({
+				organizationId: conversation.organizationId,
+				aiSettings,
+			});
+			const playbooks = await findRelevantPlaybooks({
+				organizationId: conversation.organizationId,
+				embeddingProvider,
+				queryText: goal,
+			});
+			selectedPlaybookIds = uniquePlaybookIds(
+				playbooks.map((playbook) => playbook.playbookId),
+			);
+			playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
+		} catch {}
 
 		const baseSystemPrompt = [
 			buildSystemPrompt(conversation, toolExposurePlan.promptTools),
@@ -7525,236 +7820,254 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 		]
 			.filter((s) => typeof s === "string" && s.trim().length > 0)
 			.join("\n\n");
-	let systemPrompt = baseSystemPrompt;
-	const refreshSystemPrompt = async () => {
-		const toolExecutionContextMessage = await buildToolExecutionContextMessage({
-			conversationId: run.conversationId,
-		});
-		systemPrompt =
-			toolExecutionContextMessage.trim().length > 0
-				? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
-				: baseSystemPrompt;
-	};
+		let systemPrompt = baseSystemPrompt;
+		const refreshSystemPrompt = async () => {
+			const toolExecutionContextMessage =
+				await buildToolExecutionContextMessage({
+					conversationId: run.conversationId,
+				});
+			systemPrompt =
+				toolExecutionContextMessage.trim().length > 0
+					? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
+					: baseSystemPrompt;
+		};
 
-	const initialSystemMode = getInitialSystemMode(aiSettings);
+		const initialSystemMode = getInitialSystemMode(aiSettings);
 
-	const buildAgentContinuePrompt = () => {
-		const clipped = safeTruncateString(goal.trim(), 500);
-		return [
-			"Continue the task based on the conversation so far.",
-			`User request: ${clipped}`,
-			"",
-			"Rules:",
-			"- Use the recent tool execution context to avoid repeating completed work.",
-			"- If more actions are required, call tools.",
-			"- If the task is complete, provide a concise final confirmation and DO NOT call any tools.",
-			'- Never ask the user to \"wait\" or say you are still \"processing\".',
-		].join("\n");
-	};
+		const buildAgentContinuePrompt = () => {
+			const clipped = safeTruncateString(goal.trim(), 500);
+			return [
+				"Continue the task based on the conversation so far.",
+				`User request: ${clipped}`,
+				"",
+				"Rules:",
+				"- Use the recent tool execution context to avoid repeating completed work.",
+				"- If more actions are required, call tools.",
+				"- If the task is complete, provide a concise final confirmation and DO NOT call any tools.",
+				'- Never ask the user to \"wait\" or say you are still \"processing\".',
+			].join("\n");
+		};
 
-	const runGenerate = async (
-		withTools: boolean,
-		systemMode: "system" | "inline" = "system",
-		overrideSystemPrompt?: string,
-	) => {
-		const effectiveSystemPrompt = overrideSystemPrompt ?? systemPrompt;
-		const nextMessages =
-			systemMode === "inline"
-				? [
-						{
-							role: "user" as const,
-							content: `SYSTEM INSTRUCTIONS (treat as system):\n${effectiveSystemPrompt}`,
-						},
-						...messages,
-					]
-				: messages;
-		return await generateText({
-			model,
-			system: systemMode === "system" ? effectiveSystemPrompt : undefined,
-			messages: nextMessages,
-			tools: withTools ? tools : undefined,
-			activeTools: withTools ? activeTools : undefined,
-			stopWhen: stepCountIs(toolStepBudget),
-			abortSignal: runAbortController.signal,
-		});
-	};
+		const runGenerate = async (
+			withTools: boolean,
+			systemMode: "system" | "inline" = "system",
+			overrideSystemPrompt?: string,
+		) => {
+			const effectiveSystemPrompt = overrideSystemPrompt ?? systemPrompt;
+			const nextMessages =
+				systemMode === "inline"
+					? [
+							{
+								role: "user" as const,
+								content: `SYSTEM INSTRUCTIONS (treat as system):\n${effectiveSystemPrompt}`,
+							},
+							...messages,
+						]
+					: messages;
+			return await generateText({
+				model,
+				providerOptions,
+				system: systemMode === "system" ? effectiveSystemPrompt : undefined,
+				messages: nextMessages,
+				tools: withTools ? tools : undefined,
+				activeTools: withTools ? activeTools : undefined,
+				stopWhen: stepCountIs(toolStepBudget),
+				abortSignal: runAbortController.signal,
+			});
+		};
 
-	type GeneratedTurn = Awaited<ReturnType<typeof generateText>>;
+		type GeneratedTurn = Awaited<ReturnType<typeof generateText>>;
 
-	const runGenerateWithFallback = async (
-		overrideSystemPrompt?: string,
-	): Promise<GeneratedTurn> => {
-		let result: GeneratedTurn;
-		try {
-			result = await runGenerate(true, initialSystemMode, overrideSystemPrompt);
-		} catch (error) {
-			const aborted = runAbortController.signal.aborted || isAbortLikeError(error);
-			if (isSystemMessagePlacementError(error) && !aborted) {
-				try {
-					result = await runGenerate(true, "inline", overrideSystemPrompt);
-				} catch (retryError) {
-					if (isMissingToolUseIdError(retryError)) {
-						result = await runGenerate(false, "inline", overrideSystemPrompt);
-					} else {
-						throw retryError;
+		const runGenerateWithFallback = async (
+			overrideSystemPrompt?: string,
+		): Promise<GeneratedTurn> => {
+			let result: GeneratedTurn;
+			try {
+				result = await runGenerate(
+					true,
+					initialSystemMode,
+					overrideSystemPrompt,
+				);
+			} catch (error) {
+				const aborted =
+					runAbortController.signal.aborted || isAbortLikeError(error);
+				if (isSystemMessagePlacementError(error) && !aborted) {
+					try {
+						result = await runGenerate(true, "inline", overrideSystemPrompt);
+					} catch (retryError) {
+						if (isMissingToolUseIdError(retryError)) {
+							result = await runGenerate(false, "inline", overrideSystemPrompt);
+						} else {
+							throw retryError;
+						}
 					}
-				}
-			} else if (isMissingToolUseIdError(error) && !aborted) {
-				try {
-					result = await runGenerate(false, initialSystemMode, overrideSystemPrompt);
-				} catch (retryError) {
-					if (isSystemMessagePlacementError(retryError)) {
-						result = await runGenerate(false, "inline", overrideSystemPrompt);
-					} else {
-						throw retryError;
+				} else if (isMissingToolUseIdError(error) && !aborted) {
+					try {
+						result = await runGenerate(
+							false,
+							initialSystemMode,
+							overrideSystemPrompt,
+						);
+					} catch (retryError) {
+						if (isSystemMessagePlacementError(retryError)) {
+							result = await runGenerate(false, "inline", overrideSystemPrompt);
+						} else {
+							throw retryError;
+						}
 					}
-				}
-			} else throw error;
-		}
-		return result;
-	};
+				} else throw error;
+			}
+			return result;
+		};
 
-	const isLikelyActionRequest = (text: string): boolean => {
-		void text;
-		return false;
-		const t = text.trim();
-		if (t.length === 0) return false;
-		const hasAction =
-			/(备份|backup|恢复|restore|迁移|migrate|部署|deploy|创建|create|删除|delete|移除|remove|更新|update|设置|set|配置|config|启动|start|停止|stop|重启|restart|导入|import|导出|export|挂载|mount|日志|log|logs|容器|container|docker)/i.test(
-				t,
-			);
-		if (!hasAction) return false;
-		return !/(\?|？)/.test(t);
-	};
+		const isLikelyActionRequest = (text: string): boolean => {
+			if (!AUTO_EXECUTE_ACTION_REQUESTS) return false;
+			const t = text.trim();
+			if (t.length === 0) return false;
+			const hasAction =
+				/(备份|backup|恢复|restore|迁移|migrate|部署|deploy|创建|create|删除|delete|移除|remove|更新|update|设置|set|配置|config|启动|start|停止|stop|重启|restart|导入|import|导出|export|挂载|mount|日志|log|logs|容器|container|docker)/i.test(
+					t,
+				);
+			if (!hasAction) return false;
+			return !/(\?|？)/.test(t);
+		};
 
-	const safeSuccessTools = new Set([
-		"trpc_procedure_search",
-		"trpc_procedure_suggest",
-		"trpc_procedure_describe",
-		"tool_search",
-		"tool_suggest",
-		"tool_describe",
-	]);
-	const isSafeSuccessTool = (toolName: string) => {
-		if (safeSuccessTools.has(toolName)) return true;
-		const t = toolRegistry.get(toolName);
-		return !!t && t.riskLevel === "low" && !t.requiresApproval;
-	};
+		const safeSuccessTools = new Set([
+			"trpc_procedure_search",
+			"trpc_procedure_suggest",
+			"trpc_procedure_describe",
+			"tool_search",
+			"tool_suggest",
+			"tool_describe",
+		]);
+		const isSafeSuccessTool = (toolName: string) => {
+			if (safeSuccessTools.has(toolName)) return true;
+			const t = toolRegistry.get(toolName);
+			return !!t && t.riskLevel === "low" && !t.requiresApproval;
+		};
 
-	const maxTurns = agenticEnabled ? 12 : 1;
-	const maxPlatformToolCalls = agenticEnabled ? toolStepBudget : 0;
-	let platformToolCalls = 0;
+		const maxTurns = agenticEnabled ? 12 : 1;
+		const maxPlatformToolCalls = agenticEnabled ? toolStepBudget : 0;
+		let platformToolCalls = 0;
 
-	let finalText = "";
-	const allToolCalls: NonNullable<GeneratedTurn["toolCalls"]> = [];
-	const allToolResults: unknown[] = [];
-	const aggregatedUsage: { inputTokens?: number; outputTokens?: number } = {
-		inputTokens: 0,
-		outputTokens: 0,
-	};
-
-	await refreshSystemPrompt();
-	await updateRun(runId, {
-		status: "executing",
-		startedAt: run.startedAt || new Date().toISOString(),
-	});
-
-	for (let turn = 0; turn < maxTurns; turn++) {
-		if (runAbortController.signal.aborted) return;
-		const refreshed = await db.query.aiRuns.findFirst({
-			where: eq(aiRuns.runId, runId),
-			columns: { status: true },
-		});
-		if (refreshed?.status === "cancelled") return;
+		let finalText = "";
+		const allToolCalls: NonNullable<GeneratedTurn["toolCalls"]> = [];
+		const allToolResults: unknown[] = [];
+		const aggregatedUsage: { inputTokens?: number; outputTokens?: number } = {
+			inputTokens: 0,
+			outputTokens: 0,
+		};
 
 		await refreshSystemPrompt();
+		await updateRun(runId, {
+			status: "executing",
+			startedAt: run.startedAt || new Date().toISOString(),
+		});
 
-		const turnResults: GeneratedTurn[] = [];
-		let result = await runGenerateWithFallback(systemPrompt);
-		turnResults.push(result);
-
-		const reasoningSnippet = safeTruncateString(
-			(typeof result.reasoningText === "string" ? result.reasoningText : "").trim(),
-			8000,
-		);
-		if (reasoningSnippet.length > 0 && reasoningSnippet !== lastReasoningDelta) {
-			lastReasoningDelta = reasoningSnippet;
-			await saveAgentEventMessage({
-				conversationId: run.conversationId,
-				payload: {
-					type: "agent.output.reasoning",
-					runId,
-					text: reasoningSnippet,
-				},
+		for (let turn = 0; turn < maxTurns; turn++) {
+			if (runAbortController.signal.aborted) return;
+			const refreshed = await db.query.aiRuns.findFirst({
+				where: eq(aiRuns.runId, runId),
+				columns: { status: true },
 			});
-		}
+			if (refreshed?.status === "cancelled") return;
 
-		if (isLikelyActionRequest(goal)) {
-			const toolResults = (result as unknown as { toolResults?: unknown }).toolResults;
-			const retryable = getRetryableToolCallFailures(toolResults);
-			const needsToolKickoff = !Array.isArray(result.toolCalls)
-				? true
-				: !result.toolCalls.some((tc) => tc.toolName === "tool_call");
-			const onlySafeSuccesses =
-				retryable.successfulTools.length === 0 ||
-				retryable.successfulTools.every(isSafeSuccessTool);
-			const needsParamRepair =
-				retryable.failures.length > 0 &&
-				!retryable.hasPendingApproval &&
-				onlySafeSuccesses;
+			await refreshSystemPrompt();
 
-			if ((turn === 0 && needsToolKickoff) || needsParamRepair) {
-				const hint = safeTruncateString(goal.trim(), 200);
-				const hintForPrompt = hint
-					.replaceAll("\\", "\\\\")
-					.replaceAll("\"", "\\\"")
-					.replaceAll("\n", " ")
-					.replaceAll("\r", " ");
-				const failureDetails = needsParamRepair
-					? safeJsonForPrompt(retryable.failures, 2500)
-					: "";
-				const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST use tools (not a text-only plan).\n- If you already know the exact tool/procedure + params, call tool_call directly.\n- If you need to discover tRPC procedures, use trpc_procedure_suggest (query: \"${hintForPrompt}\") or trpc_procedure_search, then call trpc_procedure_call.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nIf blocked, ask exactly ONE question.`;
-				try {
-					await refreshSystemPrompt();
-					result = await runGenerateWithFallback(`${systemPrompt}${extra}`);
-					turnResults.push(result);
-				} catch {}
+			const turnResults: GeneratedTurn[] = [];
+			let result = await runGenerateWithFallback(systemPrompt);
+			turnResults.push(result);
+
+			const reasoningSnippet = safeTruncateString(
+				(typeof result.reasoningText === "string"
+					? result.reasoningText
+					: ""
+				).trim(),
+				8000,
+			);
+			if (
+				reasoningSnippet.length > 0 &&
+				reasoningSnippet !== lastReasoningDelta
+			) {
+				lastReasoningDelta = reasoningSnippet;
+				await saveAgentEventMessage({
+					conversationId: run.conversationId,
+					payload: {
+						type: "agent.output.reasoning",
+						runId,
+						text: reasoningSnippet,
+					},
+				});
 			}
-		}
 
-		const turnToolCalls: NonNullable<GeneratedTurn["toolCalls"]> = [];
-		const turnToolResults: unknown[] = [];
-		for (const r of turnResults) {
-			const turnText =
-				normalizeAssistantMessageContent(
-					"assistant",
-					typeof r.text === "string" ? r.text : "",
-				) ?? "";
-			finalText += turnText;
-			if (Array.isArray(r.toolCalls)) {
-				allToolCalls.push(...r.toolCalls);
-				turnToolCalls.push(...r.toolCalls);
-			}
-			const toolResults = (r as unknown as { toolResults?: unknown }).toolResults;
-			if (Array.isArray(toolResults)) {
-				allToolResults.push(...toolResults);
-				turnToolResults.push(...toolResults);
-			}
-			aggregatedUsage.inputTokens =
-				(aggregatedUsage.inputTokens ?? 0) + (r.usage?.inputTokens ?? 0);
-			aggregatedUsage.outputTokens =
-				(aggregatedUsage.outputTokens ?? 0) + (r.usage?.outputTokens ?? 0);
-		}
+			if (isLikelyActionRequest(goal)) {
+				const toolResults = (result as unknown as { toolResults?: unknown })
+					.toolResults;
+				const retryable = getRetryableToolCallFailures(toolResults);
+				const needsToolKickoff = !Array.isArray(result.toolCalls)
+					? true
+					: !result.toolCalls.some((tc) => tc.toolName === "tool_call");
+				const onlySafeSuccesses =
+					retryable.successfulTools.length === 0 ||
+					retryable.successfulTools.every(isSafeSuccessTool);
+				const needsParamRepair =
+					retryable.failures.length > 0 &&
+					!retryable.hasPendingApproval &&
+					onlySafeSuccesses;
 
-		const assistantSnippet = safeTruncateString(
-			(
-				normalizeAssistantMessageContent(
-					"assistant",
-					typeof result.text === "string" ? result.text : "",
-				) ?? ""
-			).trim(),
-			4000,
-		);
+				if ((turn === 0 && needsToolKickoff) || needsParamRepair) {
+					const hint = safeTruncateString(goal.trim(), 200);
+					const hintForPrompt = hint
+						.replaceAll("\\", "\\\\")
+						.replaceAll('"', '\\"')
+						.replaceAll("\n", " ")
+						.replaceAll("\r", " ");
+					const failureDetails = needsParamRepair
+						? safeJsonForPrompt(retryable.failures, 2500)
+						: "";
+					const extra = `\n\nCRITICAL: The user request requires real platform actions.\nYou MUST use tools (not a text-only plan).\n- If you already know the exact tool/procedure + params, call tool_call directly.\n- If you need to discover tRPC procedures, use trpc_procedure_suggest (query: \"${hintForPrompt}\") or trpc_procedure_search, then call trpc_procedure_call.\n- If a tool_call failed due to invalid params or unknown tool, fix and retry immediately (use data.exampleToolCall if present).\n${failureDetails ? `\nPrevious tool_call failures:\n${failureDetails}\n` : ""}\nIf blocked, ask exactly ONE question.`;
+					try {
+						await refreshSystemPrompt();
+						result = await runGenerateWithFallback(`${systemPrompt}${extra}`);
+						turnResults.push(result);
+					} catch {}
+				}
+			}
+
+			const turnToolCalls: NonNullable<GeneratedTurn["toolCalls"]> = [];
+			const turnToolResults: unknown[] = [];
+			for (const r of turnResults) {
+				const turnText =
+					normalizeAssistantMessageContent(
+						"assistant",
+						typeof r.text === "string" ? r.text : "",
+					) ?? "";
+				finalText += turnText;
+				if (Array.isArray(r.toolCalls)) {
+					allToolCalls.push(...r.toolCalls);
+					turnToolCalls.push(...r.toolCalls);
+				}
+				const toolResults = (r as unknown as { toolResults?: unknown })
+					.toolResults;
+				if (Array.isArray(toolResults)) {
+					allToolResults.push(...toolResults);
+					turnToolResults.push(...toolResults);
+				}
+				aggregatedUsage.inputTokens =
+					(aggregatedUsage.inputTokens ?? 0) + (r.usage?.inputTokens ?? 0);
+				aggregatedUsage.outputTokens =
+					(aggregatedUsage.outputTokens ?? 0) + (r.usage?.outputTokens ?? 0);
+			}
+
+			const assistantSnippet = safeTruncateString(
+				(
+					normalizeAssistantMessageContent(
+						"assistant",
+						typeof result.text === "string" ? result.text : "",
+					) ?? ""
+				).trim(),
+				4000,
+			);
 			if (assistantSnippet.length > 0 && assistantSnippet !== lastOutputDelta) {
 				lastOutputDelta = assistantSnippet;
 				await saveAgentEventMessage({
@@ -7823,7 +8136,10 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 				const exec =
 					pendingExecutionId.trim().length > 0
 						? await db.query.aiToolExecutions.findFirst({
-								where: eq(aiToolExecutions.executionId, pendingExecutionId.trim()),
+								where: eq(
+									aiToolExecutions.executionId,
+									pendingExecutionId.trim(),
+								),
 							})
 						: null;
 				await updateRun(runId, { status: "waiting_approval" });
@@ -7844,16 +8160,19 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 				return;
 			}
 
-		const platformThisTurn = turnToolCalls.filter(
-			(tc) => tc.toolName === "tool_call",
-		).length;
-		platformToolCalls += platformThisTurn;
-		if (maxPlatformToolCalls > 0 && platformToolCalls >= maxPlatformToolCalls) {
-			const msg = "Agent tool call budget exceeded";
-			await markSelectedPlaybooksFailed();
-			await updateRun(runId, {
-				status: "failed",
-				error: msg,
+			const platformThisTurn = turnToolCalls.filter(
+				(tc) => tc.toolName === "tool_call",
+			).length;
+			platformToolCalls += platformThisTurn;
+			if (
+				maxPlatformToolCalls > 0 &&
+				platformToolCalls >= maxPlatformToolCalls
+			) {
+				const msg = "Agent tool call budget exceeded";
+				await markSelectedPlaybooksFailed();
+				await updateRun(runId, {
+					status: "failed",
+					error: msg,
 					completedAt: new Date().toISOString(),
 				});
 				await saveAgentEventMessage({
@@ -7884,112 +8203,125 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 				return;
 			}
 
-		{
-			const executionIds = Array.from(
-				new Set(
-					turnToolResults
-						.map((tr) => {
-							if (!tr || typeof tr !== "object") return "";
-							const directExecutionId =
-								typeof (tr as { executionId?: unknown }).executionId === "string"
-									? (tr as { executionId: string }).executionId
-									: "";
-							if (directExecutionId.trim().length > 0) {
-								return directExecutionId.trim();
-							}
-							const resultValue =
-								(tr as { result?: unknown }).result ??
-								(tr as { output?: unknown }).output ??
-								tr;
-							if (!isRecord(resultValue)) return "";
-							if (typeof resultValue.executionId === "string") {
-								return resultValue.executionId.trim();
-							}
-							const nested = resultValue.data;
-							if (isRecord(nested) && typeof nested.executionId === "string") {
-								return nested.executionId.trim();
-							}
-							return "";
-						})
-						.filter((id) => id.trim().length > 0),
-				),
-			).slice(0, 20);
+			{
+				const executionIds = Array.from(
+					new Set(
+						turnToolResults
+							.map((tr) => {
+								if (!tr || typeof tr !== "object") return "";
+								const directExecutionId =
+									typeof (tr as { executionId?: unknown }).executionId ===
+									"string"
+										? (tr as { executionId: string }).executionId
+										: "";
+								if (directExecutionId.trim().length > 0) {
+									return directExecutionId.trim();
+								}
+								const resultValue =
+									(tr as { result?: unknown }).result ??
+									(tr as { output?: unknown }).output ??
+									tr;
+								if (!isRecord(resultValue)) return "";
+								if (typeof resultValue.executionId === "string") {
+									return resultValue.executionId.trim();
+								}
+								const nested = resultValue.data;
+								if (
+									isRecord(nested) &&
+									typeof nested.executionId === "string"
+								) {
+									return nested.executionId.trim();
+								}
+								return "";
+							})
+							.filter((id) => id.trim().length > 0),
+					),
+				).slice(0, 20);
 
-			if (executionIds.length > 0) {
-				const executions = await db.query.aiToolExecutions.findMany({
-					where: inArray(aiToolExecutions.executionId, executionIds),
-				});
+				if (executionIds.length > 0) {
+					const executions = await db.query.aiToolExecutions.findMany({
+						where: inArray(aiToolExecutions.executionId, executionIds),
+					});
 
-				const currentRun = await db.query.aiRuns.findFirst({
-					where: eq(aiRuns.runId, runId),
-					columns: { plan: true },
-				});
-				const prevSteps = Array.isArray(currentRun?.plan?.steps)
-					? currentRun?.plan?.steps
-					: [];
-				const nextSteps = prevSteps.slice();
-				const existingIds = new Set(prevSteps.map((s) => s.id));
+					const currentRun = await db.query.aiRuns.findFirst({
+						where: eq(aiRuns.runId, runId),
+						columns: { plan: true },
+					});
+					const prevSteps = Array.isArray(currentRun?.plan?.steps)
+						? currentRun?.plan?.steps
+						: [];
+					const nextSteps = prevSteps.slice();
+					const existingIds = new Set(prevSteps.map((s) => s.id));
 
-				for (const exec of executions) {
-					if (!exec.executionId) continue;
-					if (!existingIds.has(exec.executionId)) {
-						existingIds.add(exec.executionId);
-						nextSteps.push({
-							id: exec.executionId,
-							toolName: exec.toolName,
-							description: `Execute ${exec.toolName}`,
-							parameters: (exec.parameters || {}) as Record<string, unknown>,
-							requiresApproval: !!exec.requiresApproval,
+					for (const exec of executions) {
+						if (!exec.executionId) continue;
+						if (!existingIds.has(exec.executionId)) {
+							existingIds.add(exec.executionId);
+							nextSteps.push({
+								id: exec.executionId,
+								toolName: exec.toolName,
+								description: `Execute ${exec.toolName}`,
+								parameters: (exec.parameters || {}) as Record<string, unknown>,
+								requiresApproval: !!exec.requiresApproval,
+							});
+						}
+
+						const success =
+							typeof exec.result?.success === "boolean"
+								? exec.result.success
+								: false;
+						const summary =
+							(typeof exec.result?.message === "string" &&
+								exec.result.message) ||
+							exec.error ||
+							(success ? "Success" : "Failed");
+						await saveAgentEventMessage({
+							conversationId: run.conversationId,
+							payload: {
+								type: "agent.step.result",
+								runId,
+								stepId: exec.executionId,
+								executionId: exec.executionId,
+								toolName: exec.toolName,
+								success,
+								summary,
+								dataPreview:
+									exec.result?.data != null
+										? safeJsonForPrompt(exec.result.data, 4000)
+										: undefined,
+							},
 						});
 					}
 
-					const success =
-						typeof exec.result?.success === "boolean" ? exec.result.success : false;
-					const summary =
-						(typeof exec.result?.message === "string" && exec.result.message) ||
-						exec.error ||
-						(success ? "Success" : "Failed");
-					await saveAgentEventMessage({
-						conversationId: run.conversationId,
-						payload: {
-							type: "agent.step.result",
-							runId,
-							stepId: exec.executionId,
-							executionId: exec.executionId,
-							toolName: exec.toolName,
-							success,
-							summary,
-							dataPreview:
-								exec.result?.data != null
-									? safeJsonForPrompt(exec.result.data, 4000)
-									: undefined,
-						},
-					});
-				}
-
-				if (nextSteps.length !== prevSteps.length) {
-					await updateRun(runId, { plan: { steps: nextSteps } });
-					await saveAgentEventMessage({
-						conversationId: run.conversationId,
-						payload: {
-							type: "agent.plan",
-							runId,
-							plan: { steps: nextSteps },
-						},
-					});
+					if (nextSteps.length !== prevSteps.length) {
+						await updateRun(runId, { plan: { steps: nextSteps } });
+						await saveAgentEventMessage({
+							conversationId: run.conversationId,
+							payload: {
+								type: "agent.plan",
+								runId,
+								plan: { steps: nextSteps },
+							},
+						});
+					}
 				}
 			}
+
+			if (turnToolCalls.length === 0) break;
+
+			if (assistantSnippet.length > 0) {
+				messages = messages.concat({
+					role: "assistant",
+					content: assistantSnippet,
+				});
+			}
+			messages = messages.concat({
+				role: "user",
+				content: buildAgentContinuePrompt(),
+			});
 		}
 
-		if (turnToolCalls.length === 0) break;
-
-		if (assistantSnippet.length > 0) {
-			messages = messages.concat({ role: "assistant", content: assistantSnippet });
-		}
-		messages = messages.concat({ role: "user", content: buildAgentContinuePrompt() });
-	}
-
-	if (runAbortController.signal.aborted) return;
+		if (runAbortController.signal.aborted) return;
 
 		{
 			const toolCallsToPersist = buildPersistedToolCallsFromResults({
@@ -8004,7 +8336,8 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 						conversationId: run.conversationId,
 						role: "assistant",
 						content: finalText,
-						toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : null,
+						toolCalls:
+							toolCallsToPersist.length > 0 ? toolCallsToPersist : null,
 						promptTokens: aggregatedUsage.inputTokens ?? null,
 						completionTokens: aggregatedUsage.outputTokens ?? null,
 					});
@@ -8039,7 +8372,8 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 					conversationId: run.conversationId,
 					role: "assistant",
 					content: finalText,
-					toolCalls: toolCallsToPersist.length > 0 ? toolCallsToPersist : undefined,
+					toolCalls:
+						toolCallsToPersist.length > 0 ? toolCallsToPersist : undefined,
 					promptTokens: aggregatedUsage.inputTokens,
 					completionTokens: aggregatedUsage.outputTokens,
 				});
@@ -8053,29 +8387,32 @@ async function runLlmAgentRun(runId: string, ctx: ToolContext): Promise<void> {
 			}
 		}
 
-	await updateRun(runId, {
-		status: "completed",
-		result: { success: true, summary: safeTruncateString(finalText.trim(), 2000) },
-		completedAt: new Date().toISOString(),
-	});
-	await saveAgentEventMessage({
-		conversationId: run.conversationId,
-		payload: { type: "agent.run.finish", runId, status: "completed" },
-	});
+		await updateRun(runId, {
+			status: "completed",
+			result: {
+				success: true,
+				summary: safeTruncateString(finalText.trim(), 2000),
+			},
+			completedAt: new Date().toISOString(),
+		});
+		await saveAgentEventMessage({
+			conversationId: run.conversationId,
+			payload: { type: "agent.run.finish", runId, status: "completed" },
+		});
 
-			void (async () => {
-				const embeddingProvider = await resolveEmbeddingProviderConfig({
-					organizationId: ctx.organizationId,
-					aiSettings,
-				});
-				await upsertPlaybookFromSuccessfulRun({
-					organizationId: ctx.organizationId,
-					embeddingProvider,
-					goal,
-					runId,
-					finalSummary: finalText,
-				});
-			})().catch(() => {});
+		void (async () => {
+			const embeddingProvider = await resolveEmbeddingProviderConfig({
+				organizationId: ctx.organizationId,
+				aiSettings,
+			});
+			await upsertPlaybookFromSuccessfulRun({
+				organizationId: ctx.organizationId,
+				embeddingProvider,
+				goal,
+				runId,
+				finalSummary: finalText,
+			});
+		})().catch(() => {});
 	} catch (error) {
 		if (runAbortController.signal.aborted || isAbortLikeError(error)) {
 			return;
@@ -8117,7 +8454,10 @@ export const startAgentRun = async (params: {
 		const existingUiLocale = getUiLocaleFromMetadata(conversation.metadata);
 		if (requestedUiLocale && requestedUiLocale !== existingUiLocale) {
 			await updateConversation(params.conversationId, {
-				metadata: setUiLocaleInMetadata(conversation.metadata, requestedUiLocale),
+				metadata: setUiLocaleInMetadata(
+					conversation.metadata,
+					requestedUiLocale,
+				),
 			});
 		}
 	}
@@ -8146,8 +8486,7 @@ export const startAgentRun = async (params: {
 			attachments:
 				normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
 		});
-		userMessageId =
-			typeof saved?.messageId === "string" ? saved.messageId : "";
+		userMessageId = typeof saved?.messageId === "string" ? saved.messageId : "";
 	} catch {}
 
 	const assistantMessageId = await ensureAgentAssistantMessage({
@@ -8376,7 +8715,10 @@ export const approveToolExecution = async (
 		try {
 			const conversation = await getConversationById(updated.conversationId);
 			await updateConversation(updated.conversationId, {
-				metadata: setToolApprovalsDisabledInMetadata(conversation.metadata, true),
+				metadata: setToolApprovalsDisabledInMetadata(
+					conversation.metadata,
+					true,
+				),
 			});
 		} catch {}
 	}
@@ -8442,63 +8784,67 @@ async function autoContinueAfterApprovedToolExecution(params: {
 
 	initializeTools();
 
-	const history = await getMessages({ conversationId: params.conversationId, limit: 20 });
+	const history = await getMessages({
+		conversationId: params.conversationId,
+		limit: 20,
+	});
 	const messages: CoreMessage[] = history
 		.map(messageToCoreMessage)
 		.filter(Boolean) as CoreMessage[];
 
-		const internalPrompt = [
-			"Continue the task based on the conversation so far.",
-			`The last approved tool execution has ${params.outcome}.`,
-			`Tool: ${params.toolName}`,
+	const internalPrompt = [
+		"Continue the task based on the conversation so far.",
+		`The last approved tool execution has ${params.outcome}.`,
+		`Tool: ${params.toolName}`,
 		`Execution ID: ${params.executionId}`,
 		"",
 		"Rules:",
 		"- Use the recent tool execution context to reuse IDs and avoid repeating completed actions.",
 		"- If more actions are required, create tool_call(s) with all required params.",
-			"- If the task is already complete, briefly confirm and stop.",
-		].join("\n");
+		"- If the task is already complete, briefly confirm and stop.",
+	].join("\n");
 
-		const lastUserMessageForTools =
-			[...history]
-				.reverse()
-				.find((m) => m.role === "user" && (m.content ?? "").trim().length > 0)
-				?.content ?? internalPrompt;
+	const lastUserMessageForTools =
+		[...history]
+			.reverse()
+			.find((m) => m.role === "user" && (m.content ?? "").trim().length > 0)
+			?.content ?? internalPrompt;
 
-		messages.push({ role: "user", content: internalPrompt });
+	messages.push({ role: "user", content: internalPrompt });
 
 	const toolExecutionContextMessage = await buildToolExecutionContextMessage({
 		conversationId: params.conversationId,
 	});
 
-		const provider = selectAIProvider(aiSettings);
-		const model = provider(aiSettings.model);
+	const provider = selectAIProvider(aiSettings);
+	const model = provider(aiSettings.model);
+	const providerOptions = getOpenAIResponsesProviderOptions(aiSettings);
 
-			let playbookPrompt = "";
-			try {
-				const embeddingProvider = await resolveEmbeddingProviderConfig({
-					organizationId: conversation.organizationId,
-					aiSettings,
-				});
-				const playbooks = await findRelevantPlaybooks({
-					organizationId: conversation.organizationId,
-					embeddingProvider,
-					queryText: lastUserMessageForTools,
-				});
-				playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
-			} catch {}
-
-		const toolExposurePlan = buildToolExposurePlan({
-			userMessage: lastUserMessageForTools,
-			projectId: conversation.projectId || undefined,
-			serverId: conversation.serverId || undefined,
+	let playbookPrompt = "";
+	try {
+		const embeddingProvider = await resolveEmbeddingProviderConfig({
+			organizationId: conversation.organizationId,
+			aiSettings,
 		});
-		const baseSystemPrompt = [
-			buildSystemPrompt(conversation, toolExposurePlan.promptTools),
-			playbookPrompt,
-		]
-			.filter((s) => typeof s === "string" && s.trim().length > 0)
-			.join("\n\n");
+		const playbooks = await findRelevantPlaybooks({
+			organizationId: conversation.organizationId,
+			embeddingProvider,
+			queryText: lastUserMessageForTools,
+		});
+		playbookPrompt = buildPlaybookMemoryPrompt(playbooks);
+	} catch {}
+
+	const toolExposurePlan = buildToolExposurePlan({
+		userMessage: lastUserMessageForTools,
+		projectId: conversation.projectId || undefined,
+		serverId: conversation.serverId || undefined,
+	});
+	const baseSystemPrompt = [
+		buildSystemPrompt(conversation, toolExposurePlan.promptTools),
+		playbookPrompt,
+	]
+		.filter((s) => typeof s === "string" && s.trim().length > 0)
+		.join("\n\n");
 	const systemPrompt =
 		toolExecutionContextMessage.trim().length > 0
 			? `${baseSystemPrompt}\n\n${toolExecutionContextMessage.trim()}`
@@ -8544,6 +8890,7 @@ async function autoContinueAfterApprovedToolExecution(params: {
 				: messages;
 		return await generateText({
 			model,
+			providerOptions,
 			system: systemMode === "system" ? systemPrompt : undefined,
 			messages: nextMessages,
 			tools: withTools ? tools : undefined,
@@ -8579,7 +8926,7 @@ async function autoContinueAfterApprovedToolExecution(params: {
 		} else throw error;
 	}
 
-	let finalText =
+	const finalText =
 		normalizeAssistantMessageContent(
 			"assistant",
 			typeof result.text === "string" ? result.text : "",
@@ -8594,7 +8941,8 @@ async function autoContinueAfterApprovedToolExecution(params: {
 			if (!resultValue || typeof resultValue !== "object") continue;
 
 			const toolCallId =
-				(tr as { toolCallId?: unknown }).toolCallId ?? (tr as { id?: unknown }).id;
+				(tr as { toolCallId?: unknown }).toolCallId ??
+				(tr as { id?: unknown }).id;
 			if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) {
 				continue;
 			}
@@ -8607,7 +8955,8 @@ async function autoContinueAfterApprovedToolExecution(params: {
 				invokedToolNameByToolCallId.set(toolCallIdKey, invokedTool.trim());
 			}
 
-			const executionId = (resultValue as { executionId?: unknown }).executionId;
+			const executionId = (resultValue as { executionId?: unknown })
+				.executionId;
 			const nestedExecutionId =
 				(resultValue as { data?: unknown }).data &&
 				typeof (resultValue as { data?: unknown }).data === "object"
@@ -8670,6 +9019,7 @@ async function autoContinueAfterApprovedToolExecution(params: {
 	scheduleConversationSummaryUpdate({
 		conversationId: params.conversationId,
 		model,
+		providerOptions,
 	});
 }
 
@@ -8786,7 +9136,11 @@ export const executeApprovedTool = async (
 			toolName: execution.toolName,
 			executionId,
 			outcome: "failed",
-			result: { success: false, message: "Invalid parameters", error: errorMessage },
+			result: {
+				success: false,
+				message: "Invalid parameters",
+				error: errorMessage,
+			},
 		});
 		throw new TRPCError({
 			code: "BAD_REQUEST",
@@ -8886,7 +9240,11 @@ export const executeApprovedTool = async (
 			toolName: execution.toolName,
 			executionId,
 			outcome: "failed",
-			result: { success: false, message: "Tool execution failed", error: errorMessage },
+			result: {
+				success: false,
+				message: "Tool execution failed",
+				error: errorMessage,
+			},
 		});
 
 		throw new TRPCError({
