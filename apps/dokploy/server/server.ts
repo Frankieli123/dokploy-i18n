@@ -9,6 +9,7 @@ import {
 	initializeNetwork,
 	initSchedules,
 	initVolumeBackupsCronJobs,
+	migrateCertificateTraefikConfigs,
 	sendDokployRestartNotifications,
 	setupDirectories,
 } from "@dokploy/server";
@@ -51,6 +52,7 @@ void app
 				createDefaultMiddlewares();
 				await initializeNetwork();
 				createDefaultTraefikConfig();
+				migrateCertificateTraefikConfigs();
 				createDefaultServerTraefikConfig();
 				void ensureAiChatPerformanceIndexes();
 				await initCronJobs();

@@ -2,6 +2,8 @@ import {
 	chmodSync,
 	existsSync,
 	mkdirSync,
+	readdirSync,
+	renameSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -402,6 +404,34 @@ export const createDefaultTraefikConfig = () => {
 	const yamlStr = getDefaultTraefikConfig();
 	writeFileSync(mainConfig, yamlStr, "utf8");
 	console.log("Traefik config created successfully");
+};
+
+export const migrateCertificateTraefikConfigs = () => {
+	const { CERTIFICATES_PATH, DYNAMIC_TRAEFIK_PATH } = paths();
+	if (!existsSync(CERTIFICATES_PATH)) return;
+
+	for (const entry of readdirSync(CERTIFICATES_PATH, {
+		withFileTypes: true,
+	})) {
+		if (!entry.isDirectory()) continue;
+
+		const legacyConfig = path.join(
+			CERTIFICATES_PATH,
+			entry.name,
+			"certificate.yml",
+		);
+		if (!existsSync(legacyConfig)) continue;
+
+		const configFile = path.join(
+			DYNAMIC_TRAEFIK_PATH,
+			`certificate-${entry.name}.yml`,
+		);
+		if (existsSync(configFile)) {
+			rmSync(legacyConfig, { force: true });
+		} else {
+			renameSync(legacyConfig, configFile);
+		}
+	}
 };
 
 export const getDefaultMiddlewares = () => {

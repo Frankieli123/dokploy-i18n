@@ -3,10 +3,7 @@ import { join } from "node:path";
 import { paths } from "@dokploy/server/constants";
 import type { User } from "@dokploy/server/services/user";
 import { parse, stringify } from "yaml";
-import {
-	buildPanelTraefikHostRule,
-	getPanelHosts,
-} from "../panel-domains";
+import { buildPanelTraefikHostRule, getPanelHosts } from "../panel-domains";
 import {
 	loadOrCreateConfig,
 	removeTraefikConfig,
@@ -75,6 +72,7 @@ export const updateServerTraefik = (
 				rule,
 				service: `${appName}-service-app`,
 				entryPoints: ["websecure"],
+				tls: {},
 			};
 		}
 	} else {

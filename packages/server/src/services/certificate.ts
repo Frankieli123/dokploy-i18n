@@ -52,21 +52,24 @@ export const createCertificate = async (
 
 	const cer = certificate[0];
 
-	createCertificateFiles(cer);
+	try {
+		await createCertificateFiles(cer);
+	} catch (error) {
+		try {
+			await removeCertificateFiles(cer);
+		} catch {}
+		await db
+			.delete(certificates)
+			.where(eq(certificates.certificateId, cer.certificateId));
+		throw error;
+	}
 
 	return cer;
 };
 
 export const removeCertificateById = async (certificateId: string) => {
 	const certificate = await findCertificateById(certificateId);
-	const { CERTIFICATES_PATH } = paths(!!certificate.serverId);
-	const certDir = path.join(CERTIFICATES_PATH, certificate.certificatePath);
-
-	if (certificate.serverId) {
-		await execAsyncRemote(certificate.serverId, `rm -rf ${certDir}`);
-	} else {
-		await removeDirectoryIfExistsContent(certDir);
-	}
+	await removeCertificateFiles(certificate);
 
 	const result = await db
 		.delete(certificates)
@@ -83,8 +86,33 @@ export const removeCertificateById = async (certificateId: string) => {
 	return result;
 };
 
+const removeCertificateFiles = async (certificate: Certificate) => {
+	const { CERTIFICATES_PATH, DYNAMIC_TRAEFIK_PATH } = paths(
+		!!certificate.serverId,
+	);
+	const certDir = path.join(CERTIFICATES_PATH, certificate.certificatePath);
+	const configFile = path.join(
+		DYNAMIC_TRAEFIK_PATH,
+		`certificate-${certificate.certificatePath}.yml`,
+	);
+
+	if (certificate.serverId) {
+		await execAsyncRemote(
+			certificate.serverId,
+			`rm -rf "${certDir}"; rm -f "${configFile}"`,
+		);
+	} else {
+		await removeDirectoryIfExistsContent(certDir);
+		if (fs.existsSync(configFile)) {
+			fs.rmSync(configFile, { force: true });
+		}
+	}
+};
+
 const createCertificateFiles = async (certificate: Certificate) => {
-	const { CERTIFICATES_PATH } = paths(!!certificate.serverId);
+	const { CERTIFICATES_PATH, DYNAMIC_TRAEFIK_PATH } = paths(
+		!!certificate.serverId,
+	);
 	const certDir = path.join(CERTIFICATES_PATH, certificate.certificatePath);
 	const crtPath = path.join(certDir, "chain.crt");
 	const keyPath = path.join(certDir, "privkey.key");
@@ -102,16 +130,20 @@ const createCertificateFiles = async (certificate: Certificate) => {
 		},
 	};
 	const yamlConfig = stringify(traefikConfig);
-	const configFile = path.join(certDir, "certificate.yml");
+	const configFile = path.join(
+		DYNAMIC_TRAEFIK_PATH,
+		`certificate-${certificate.certificatePath}.yml`,
+	);
 
 	if (certificate.serverId) {
 		const certificateData = encodeBase64(certificate.certificateData);
 		const privateKey = encodeBase64(certificate.privateKey);
+		const encodedConfig = encodeBase64(yamlConfig);
 		const command = `
 			mkdir -p ${certDir};
 			echo "${certificateData}" | base64 -d > "${crtPath}";
 			echo "${privateKey}" | base64 -d > "${keyPath}";
-			echo "${yamlConfig}" > "${configFile}";
+			echo "${encodedConfig}" | base64 -d > "${configFile}";
 		`;
 
 		await execAsyncRemote(certificate.serverId, command);

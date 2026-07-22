@@ -5,8 +5,12 @@ vi.mock("node:fs", () => ({
 	default: fs,
 }));
 
-import { createDefaultServerTraefikConfig } from "@dokploy/server/setup/traefik-setup";
+import { paths } from "@dokploy/server/constants";
 import type { User } from "@dokploy/server/services/user";
+import {
+	createDefaultServerTraefikConfig,
+	migrateCertificateTraefikConfigs,
+} from "@dokploy/server/setup/traefik-setup";
 import { loadOrCreateConfig } from "@dokploy/server/utils/traefik/application";
 import type { FileConfig } from "@dokploy/server/utils/traefik/file-types";
 import { updateServerTraefik } from "@dokploy/server/utils/traefik/web-server";
@@ -83,6 +87,20 @@ test("Should read the configuration file", () => {
 	);
 });
 
+test("Should move legacy certificate configs to the watched directory", () => {
+	const { CERTIFICATES_PATH, DYNAMIC_TRAEFIK_PATH } = paths();
+	const legacyDirectory = `${CERTIFICATES_PATH}/certificate-example`;
+	const legacyConfig = `${legacyDirectory}/certificate.yml`;
+	const migratedConfig = `${DYNAMIC_TRAEFIK_PATH}/certificate-certificate-example.yml`;
+	vol.mkdirSync(legacyDirectory, { recursive: true });
+	vol.writeFileSync(legacyConfig, "tls: {}", "utf8");
+
+	migrateCertificateTraefikConfigs();
+
+	expect(vol.existsSync(legacyConfig)).toBe(false);
+	expect(vol.readFileSync(migratedConfig, "utf8")).toBe("tls: {}");
+});
+
 test("Should apply redirect-to-https", () => {
 	updateServerTraefik(
 		{
@@ -98,6 +116,22 @@ test("Should apply redirect-to-https", () => {
 	expect(config.http?.routers?.["dokploy-router-app"]?.middlewares).toContain(
 		"redirect-to-https",
 	);
+});
+
+test("Should enable TLS without a resolver for uploaded certificates", () => {
+	updateServerTraefik(
+		{
+			...baseAdmin,
+			https: true,
+			certificateType: "none",
+		},
+		"example.com",
+	);
+
+	const config: FileConfig = loadOrCreateConfig("dokploy");
+	const secureRouter = config.http?.routers?.["dokploy-router-app-secure"];
+
+	expect(secureRouter?.tls).toEqual({});
 });
 
 test("Should change only host when no certificate", () => {
