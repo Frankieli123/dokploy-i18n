@@ -115,7 +115,11 @@ export const initializeStandaloneTraefik = async ({
 		await newContainer.start();
 		console.log("Traefik Started ✅");
 	} catch (error) {
-		console.log("Traefik Not Found: Starting ", error);
+		console.error("Failed to start Traefik", error);
+		try {
+			await docker.getContainer(containerName).remove({ force: true });
+		} catch {}
+		throw error;
 	}
 };
 

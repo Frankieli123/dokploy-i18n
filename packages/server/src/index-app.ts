@@ -40,7 +40,7 @@ export { findRollbackById, removeRollbackById, rollback } from "./services/rollb
 export { createSecurity, deleteSecurityById, findSecurityById, updateSecurityById } from "./services/security";
 export type { Server } from "./services/server";
 export { createServer, deleteServer, findServerById, findServersByUserId, haveActiveServices, updateServerById } from "./services/server";
-export { DEFAULT_UPDATE_DATA, checkPortInUse, getDokployImage, getDokployImageTag, getUpdateData, readDirectory, readEnvironmentVariables, readPorts, reloadDockerResource, writeTraefikSetup } from "./services/settings";
+export { DEFAULT_UPDATE_DATA, checkPortInUse, ensureTraefik, getDokployImage, getDokployImageTag, getUpdateData, readDirectory, readEnvironmentVariables, readPorts, reloadDockerResource, reloadTraefik, writeTraefikSetup } from "./services/settings";
 export { createSshKey, findSSHKeyById, removeSSHKeyById, updateSSHKeyById } from "./services/ssh-key";
 export { addNewEnvironment, addNewProject, addNewService, checkEnvironmentAccess, checkEnvironmentCreationPermission, checkEnvironmentDeletionPermission, checkProjectAccess, checkServiceAccess, createApiKey, findMemberById, updateUser } from "./services/user";
 export { createVolumeBackup, findVolumeBackupById, removeVolumeBackup, updateVolumeBackup } from "./services/volume-backups";

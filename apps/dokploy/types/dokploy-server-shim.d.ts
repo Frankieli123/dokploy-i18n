@@ -111,6 +111,7 @@ declare module "@dokploy/server" {
   export const execAsync: any;
   export const execAsyncRemote: any;
   export const execFileAsync: any;
+  export const ensureTraefik: any;
   export const finPortById: any;
   export const findAdmin: any;
   export const findAllDeploymentsByApplicationId: any;
@@ -247,6 +248,7 @@ declare module "@dokploy/server" {
   export const recordAdvancedStats: any;
   export const recreateDirectory: any;
   export const reloadDockerResource: any;
+  export const reloadTraefik: any;
   export const removeBackupById: any;
   export const removeCertificateById: any;
   export const removeCompose: any;

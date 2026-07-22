@@ -443,9 +443,8 @@ export const getDockerResourceType = async (
 	resourceName: string,
 	serverId?: string,
 ) => {
-	try {
-		let result = "";
-		const command = `
+	let result = "";
+	const command = `
 RESOURCE_NAME="${resourceName}"
 if docker service inspect "$RESOURCE_NAME" >/dev/null 2>&1; then
 	echo "service"
@@ -455,24 +454,20 @@ else
 	echo "unknown"
 fi`;
 
-		if (serverId) {
-			const { stdout } = await execAsyncRemote(serverId, command);
-			result = stdout.trim();
-		} else {
-			const { stdout } = await execAsync(command);
-			result = stdout.trim();
-		}
-		if (result === "service") {
-			return "service";
-		}
-		if (result === "standalone") {
-			return "standalone";
-		}
-		return "unknown";
-	} catch (error) {
-		console.error(error);
-		return "unknown";
+	if (serverId) {
+		const { stdout } = await execAsyncRemote(serverId, command);
+		result = stdout.trim();
+	} else {
+		const { stdout } = await execAsync(command);
+		result = stdout.trim();
 	}
+	if (result === "service") {
+		return "service";
+	}
+	if (result === "standalone") {
+		return "standalone";
+	}
+	return "unknown";
 };
 
 export const reloadDockerResource = async (
@@ -643,16 +638,34 @@ export const writeTraefikSetup = async (input: TraefikOptions) => {
 			additionalPorts: input.additionalPorts,
 			serverId: input.serverId,
 		});
-		await reconnectServicesToTraefik(input.serverId);
-	} else if (resourceType === "standalone") {
+	} else {
 		await initializeStandaloneTraefik({
 			env: input.env,
 			additionalPorts: input.additionalPorts,
 			serverId: input.serverId,
 		});
-		await reconnectServicesToTraefik(input.serverId);
-	} else {
-		throw new Error("Traefik resource type not found");
+	}
+	await reconnectServicesToTraefik(input.serverId);
+};
+
+export const ensureTraefik = async (input: TraefikOptions = {}) => {
+	const resourceType = await getDockerResourceType(
+		"dokploy-traefik",
+		input.serverId,
+	);
+	if (resourceType !== "unknown") {
+		return false;
+	}
+
+	await initializeStandaloneTraefik(input);
+	await reconnectServicesToTraefik(input.serverId);
+	return true;
+};
+
+export const reloadTraefik = async (serverId?: string) => {
+	const created = await ensureTraefik({ serverId });
+	if (!created) {
+		await reloadDockerResource("dokploy-traefik", serverId);
 	}
 };
 

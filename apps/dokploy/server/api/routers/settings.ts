@@ -30,6 +30,7 @@ import {
 	readPorts,
 	recreateDirectory,
 	reloadDockerResource,
+	reloadTraefik,
 	sendDockerCleanupNotifications,
 	setupGPUSupport,
 	spawnAsync,
@@ -192,11 +193,7 @@ export const settingsRouter = createTRPCRouter({
 	reloadTraefik: adminProcedure
 		.input(apiServerSchema)
 		.mutation(async ({ input, ctx }) => {
-			try {
-				await reloadDockerResource("dokploy-traefik", input?.serverId);
-			} catch (err) {
-				console.error(err);
-			}
+			await reloadTraefik(input?.serverId);
 			await auditSettings(ctx, "reload", "dokploy-traefik", {
 				serverId: input?.serverId,
 			});

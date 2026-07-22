@@ -3,6 +3,7 @@ import {
 	createDefaultMiddlewares,
 	createDefaultServerTraefikConfig,
 	createDefaultTraefikConfig,
+	ensureTraefik,
 	IS_CLOUD,
 	initCancelDeployments,
 	initCronJobs,
@@ -54,6 +55,11 @@ void app
 				createDefaultTraefikConfig();
 				migrateCertificateTraefikConfigs();
 				createDefaultServerTraefikConfig();
+				try {
+					await ensureTraefik();
+				} catch (error) {
+					console.error("Traefik startup recovery failed", error);
+				}
 				void ensureAiChatPerformanceIndexes();
 				await initCronJobs();
 				await initSchedules();
