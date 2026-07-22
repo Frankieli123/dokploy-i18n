@@ -5,6 +5,10 @@ import { IS_CLOUD, paths } from "@dokploy/server/constants";
 import type { Destination } from "@dokploy/server/services/destination";
 import { getS3Credentials } from "../backups/utils";
 import { execAsync } from "../process/execAsync";
+import {
+	getDokployDatabaseCreateCommand,
+	preparePostgresDatabaseCreation,
+} from "./postgres-database";
 
 export const restoreWebServerBackup = async (
 	destination: Destination,
@@ -64,7 +68,9 @@ export const restoreWebServerBackup = async (
 				`test -d "${tempDir}/filesystem" && echo ok || true`,
 			);
 			if (!hasFilesystemDir.includes("ok")) {
-				throw new Error("Invalid backup structure: filesystem folder not found");
+				throw new Error(
+					"Invalid backup structure: filesystem folder not found",
+				);
 			}
 
 			// Validate database dump exists (either compressed or plain)
@@ -122,6 +128,10 @@ export const restoreWebServerBackup = async (
 			}
 
 			const postgresContainerId = postgresContainer.trim();
+			const databaseTemplate = await preparePostgresDatabaseCreation(
+				postgresContainerId,
+				emit,
+			);
 
 			// Drop and recreate database
 			emit("Disconnecting all users from database...");
@@ -136,7 +146,7 @@ export const restoreWebServerBackup = async (
 
 			emit("Creating fresh database...");
 			await execAsync(
-				`docker exec ${postgresContainerId} psql -U dokploy postgres -c "CREATE DATABASE dokploy;"`,
+				getDokployDatabaseCreateCommand(postgresContainerId, databaseTemplate),
 			);
 
 			// Copy the backup file into the container
