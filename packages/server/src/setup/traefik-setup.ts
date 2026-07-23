@@ -34,12 +34,36 @@ export interface TraefikOptions {
 	}[];
 }
 
+const getTraefikHostPaths = (
+	serverId: string | undefined,
+	mainTraefikPath: string,
+	dynamicTraefikPath: string,
+) => {
+	const hostEtcPath = serverId
+		? undefined
+		: process.env.DOKPLOY_HOST_ETC_DIR?.trim();
+	if (!hostEtcPath) {
+		return { mainTraefikPath, dynamicTraefikPath };
+	}
+
+	const hostTraefikPath = path.posix.join(hostEtcPath, "traefik");
+	return {
+		mainTraefikPath: hostTraefikPath,
+		dynamicTraefikPath: path.posix.join(hostTraefikPath, "dynamic"),
+	};
+};
+
 export const initializeStandaloneTraefik = async ({
 	env,
 	serverId,
 	additionalPorts = [],
 }: TraefikOptions = {}) => {
 	const { MAIN_TRAEFIK_PATH, DYNAMIC_TRAEFIK_PATH } = paths(!!serverId);
+	const hostPaths = getTraefikHostPaths(
+		serverId,
+		MAIN_TRAEFIK_PATH,
+		DYNAMIC_TRAEFIK_PATH,
+	);
 	const imageName = `traefik:v${TRAEFIK_VERSION}`;
 	const containerName = "dokploy-traefik";
 
@@ -86,8 +110,8 @@ export const initializeStandaloneTraefik = async ({
 				Name: "always",
 			},
 			Binds: [
-				`${MAIN_TRAEFIK_PATH}/traefik.yml:/etc/traefik/traefik.yml`,
-				`${DYNAMIC_TRAEFIK_PATH}:/etc/dokploy/traefik/dynamic`,
+				`${hostPaths.mainTraefikPath}/traefik.yml:/etc/traefik/traefik.yml`,
+				`${hostPaths.dynamicTraefikPath}:/etc/dokploy/traefik/dynamic`,
 				"/var/run/docker.sock:/var/run/docker.sock",
 			],
 			PortBindings: portBindings,
@@ -129,6 +153,11 @@ export const initializeTraefikService = async ({
 	serverId,
 }: TraefikOptions) => {
 	const { MAIN_TRAEFIK_PATH, DYNAMIC_TRAEFIK_PATH } = paths(!!serverId);
+	const hostPaths = getTraefikHostPaths(
+		serverId,
+		MAIN_TRAEFIK_PATH,
+		DYNAMIC_TRAEFIK_PATH,
+	);
 	const imageName = `traefik:v${TRAEFIK_VERSION}`;
 	const appName = "dokploy-traefik";
 
@@ -141,12 +170,12 @@ export const initializeTraefikService = async ({
 				Mounts: [
 					{
 						Type: "bind",
-						Source: `${MAIN_TRAEFIK_PATH}/traefik.yml`,
+						Source: `${hostPaths.mainTraefikPath}/traefik.yml`,
 						Target: "/etc/traefik/traefik.yml",
 					},
 					{
 						Type: "bind",
-						Source: DYNAMIC_TRAEFIK_PATH,
+						Source: hostPaths.dynamicTraefikPath,
 						Target: "/etc/dokploy/traefik/dynamic",
 					},
 					{

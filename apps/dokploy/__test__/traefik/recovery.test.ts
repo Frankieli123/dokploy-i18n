@@ -6,7 +6,7 @@ import {
 } from "@dokploy/server/services/settings";
 import * as traefikSetup from "@dokploy/server/setup/traefik-setup";
 import * as execProcess from "@dokploy/server/utils/process/execAsync";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@dokploy/server/db", () => ({
 	db: {
@@ -29,11 +29,21 @@ vi.mock("@dokploy/server/utils/process/execAsync", () => ({
 }));
 
 describe("Traefik recovery", () => {
+	const originalHostEtcDir = process.env.DOKPLOY_HOST_ETC_DIR;
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.mocked(db.query.compose.findMany).mockResolvedValue([]);
 		vi.mocked(traefikSetup.initializeStandaloneTraefik).mockResolvedValue();
 		vi.mocked(traefikSetup.initializeTraefikService).mockResolvedValue();
+	});
+
+	afterEach(() => {
+		if (originalHostEtcDir === undefined) {
+			delete process.env.DOKPLOY_HOST_ETC_DIR;
+		} else {
+			process.env.DOKPLOY_HOST_ETC_DIR = originalHostEtcDir;
+		}
 	});
 
 	it("creates standalone Traefik when the resource is missing", async () => {
@@ -82,6 +92,28 @@ describe("Traefik recovery", () => {
 		expect(execProcess.execAsync).toHaveBeenLastCalledWith(
 			expect.stringContaining("docker service update --force dokploy-traefik"),
 		);
+	});
+
+	it("recreates standalone Traefik when host data mounts are incorrect", async () => {
+		process.env.DOKPLOY_HOST_ETC_DIR = "/data/dokploy";
+		vi.mocked(execProcess.execAsync)
+			.mockResolvedValueOnce({ stdout: "standalone\n", stderr: "" })
+			.mockResolvedValueOnce({
+				stdout: JSON.stringify([
+					{
+						Source: "/etc/dokploy/traefik/traefik.yml",
+						Destination: "/etc/traefik/traefik.yml",
+					},
+					{
+						Source: "/etc/dokploy/traefik/dynamic",
+						Destination: "/etc/dokploy/traefik/dynamic",
+					},
+				]),
+				stderr: "",
+			});
+
+		await expect(ensureTraefik()).resolves.toBe(true);
+		expect(traefikSetup.initializeStandaloneTraefik).toHaveBeenCalledWith({});
 	});
 
 	it("does not treat Docker execution failures as a missing resource", async () => {

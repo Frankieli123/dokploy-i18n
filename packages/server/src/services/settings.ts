@@ -648,11 +648,51 @@ export const writeTraefikSetup = async (input: TraefikOptions) => {
 	await reconnectServicesToTraefik(input.serverId);
 };
 
+const hasExpectedLocalTraefikMounts = async (serverId?: string) => {
+	const hostEtcPath = serverId
+		? undefined
+		: process.env.DOKPLOY_HOST_ETC_DIR?.trim().replace(/\/+$/, "");
+	if (!hostEtcPath) {
+		return true;
+	}
+
+	const { stdout } = await execAsync(
+		"docker inspect dokploy-traefik --format '{{json .Mounts}}'",
+	);
+	const mounts = JSON.parse(stdout.trim()) as Array<{
+		Source: string;
+		Destination: string;
+	}>;
+	const expectedMainConfig = `${hostEtcPath}/traefik/traefik.yml`;
+	const expectedDynamicDirectory = `${hostEtcPath}/traefik/dynamic`;
+
+	return (
+		mounts.some(
+			(mount) =>
+				mount.Source === expectedMainConfig &&
+				mount.Destination === "/etc/traefik/traefik.yml",
+		) &&
+		mounts.some(
+			(mount) =>
+				mount.Source === expectedDynamicDirectory &&
+				mount.Destination === "/etc/dokploy/traefik/dynamic",
+		)
+	);
+};
+
 export const ensureTraefik = async (input: TraefikOptions = {}) => {
 	const resourceType = await getDockerResourceType(
 		"dokploy-traefik",
 		input.serverId,
 	);
+	if (
+		resourceType === "standalone" &&
+		!(await hasExpectedLocalTraefikMounts(input.serverId))
+	) {
+		await initializeStandaloneTraefik(input);
+		await reconnectServicesToTraefik(input.serverId);
+		return true;
+	}
 	if (resourceType !== "unknown") {
 		return false;
 	}

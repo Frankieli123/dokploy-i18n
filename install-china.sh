@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -o pipefail
+
 # Detect version from environment variable or default to latest
 # Usage: DOKPLOY_VERSION=canary bash install.sh
 # Usage: DOKPLOY_VERSION=feature bash install.sh
@@ -70,6 +72,113 @@ install_dokploy() {
       command -v "$@" > /dev/null 2>&1
     }
 
+    ensure_traefik() {
+        local dokploy_root="$1"
+        local traefik_dir="${dokploy_root%/}/traefik"
+        local main_config="$traefik_dir/traefik.yml"
+        local dynamic_dir="$traefik_dir/dynamic"
+        local timeout="${TRAEFIK_INSTALL_TIMEOUT:-180}"
+        local waited=0
+        local traefik_image="traefik:v${TRAEFIK_VERSION:-3.6.1}"
+        case "$timeout" in
+            ''|*[!0-9]*)
+                echo "Error: TRAEFIK_INSTALL_TIMEOUT must be a non-negative integer" >&2
+                return 1
+                ;;
+        esac
+
+        mkdir -p "$dynamic_dir"
+        echo "Waiting for Dokploy to prepare the Traefik configuration..."
+
+        while [ ! -s "$main_config" ]; do
+            if ! docker service inspect dokploy >/dev/null 2>&1; then
+                echo "Error: Dokploy service was not created" >&2
+                return 1
+            fi
+            if [ "$waited" -ge "$timeout" ]; then
+                echo "Error: timed out waiting for $main_config" >&2
+                docker service logs --raw --tail 100 dokploy 2>&1 || true
+                return 1
+            fi
+            sleep 2
+            waited=$((waited + 2))
+        done
+
+        if docker inspect dokploy-traefik >/dev/null 2>&1; then
+            local current_main_source
+            local current_dynamic_source
+            current_main_source="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/etc/traefik/traefik.yml"}}{{.Source}}{{end}}{{end}}' dokploy-traefik 2>/dev/null || true)"
+            current_dynamic_source="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/etc/dokploy/traefik/dynamic"}}{{.Source}}{{end}}{{end}}' dokploy-traefik 2>/dev/null || true)"
+            if [ "$current_main_source" != "$main_config" ] || [ "$current_dynamic_source" != "$dynamic_dir" ]; then
+                echo "Recreating Traefik with the correct host data paths"
+                if ! docker rm -f dokploy-traefik >/dev/null; then
+                    echo "Error: failed to remove the incorrectly mounted Traefik container" >&2
+                    return 1
+                fi
+            fi
+        fi
+
+        if docker inspect dokploy-traefik >/dev/null 2>&1; then
+            echo "Traefik container already exists"
+            waited=0
+            while [ "$(docker inspect -f '{{.State.Running}}' dokploy-traefik 2>/dev/null || true)" != "true" ] && [ "$waited" -lt 10 ]; do
+                sleep 1
+                waited=$((waited + 1))
+            done
+            if [ "$(docker inspect -f '{{.State.Running}}' dokploy-traefik 2>/dev/null || true)" != "true" ]; then
+                if ! docker start dokploy-traefik >/dev/null; then
+                    echo "Error: failed to start the existing Traefik container" >&2
+                    docker logs --tail 100 dokploy-traefik 2>&1 || true
+                    return 1
+                fi
+            fi
+        else
+            if ! docker pull "$traefik_image"; then
+                echo "Error: failed to pull $traefik_image" >&2
+                return 1
+            fi
+            if ! docker run -d \
+                --name dokploy-traefik \
+                --restart always \
+                -v "$main_config:/etc/traefik/traefik.yml" \
+                -v "$dynamic_dir:/etc/dokploy/traefik/dynamic" \
+                -v /var/run/docker.sock:/var/run/docker.sock:ro \
+                -p 80:80/tcp \
+                -p 443:443/tcp \
+                -p 443:443/udp \
+                "$traefik_image"; then
+                echo "Error: failed to create the Traefik container" >&2
+                return 1
+            fi
+        fi
+
+        if ! docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' dokploy-traefik 2>/dev/null | grep -Fxq dokploy-network; then
+            if ! docker network connect dokploy-network dokploy-traefik; then
+                echo "Error: failed to connect Traefik to dokploy-network" >&2
+                return 1
+            fi
+        fi
+
+        waited=0
+        while [ "$(docker inspect -f '{{.State.Running}}' dokploy-traefik 2>/dev/null || true)" != "true" ]; do
+            if [ "$waited" -ge 20 ]; then
+                echo "Error: Traefik did not remain running" >&2
+                docker logs --tail 100 dokploy-traefik 2>&1 || true
+                return 1
+            fi
+            sleep 1
+            waited=$((waited + 1))
+        done
+
+        if [ -z "$(docker port dokploy-traefik 80/tcp 2>/dev/null || true)" ] || [ -z "$(docker port dokploy-traefik 443/tcp 2>/dev/null || true)" ]; then
+            echo "Error: Traefik is not publishing ports 80 and 443" >&2
+            docker logs --tail 100 dokploy-traefik 2>&1 || true
+            return 1
+        fi
+
+        echo "Traefik is ready"
+    }
+
     configure_tencent_mirror() {
       mkdir -p /etc/docker
       local daemon_json="/etc/docker/daemon.json"
@@ -128,9 +237,15 @@ EOF
         fi
       fi
       if [ -n "$docker_ce_codename" ]; then
-        bash <(curl -sSL https://linuxmirrors.cn/docker.sh) --source "$docker_ce_source" --protocol https --use-intranet-source false --codename "$docker_ce_codename" --designated-version 28.5.0 --ignore-backup-tips --pure-mode
+        if ! curl -fsSL https://linuxmirrors.cn/docker.sh | bash -s -- --source "$docker_ce_source" --protocol https --use-intranet-source false --codename "$docker_ce_codename" --designated-version 28.5.0 --ignore-backup-tips --pure-mode; then
+          echo "Error: Docker installation failed" >&2
+          exit 1
+        fi
       else
-        bash <(curl -sSL https://linuxmirrors.cn/docker.sh) --source "$docker_ce_source" --protocol https --use-intranet-source false --designated-version 28.5.0 --ignore-backup-tips --pure-mode
+        if ! curl -fsSL https://linuxmirrors.cn/docker.sh | bash -s -- --source "$docker_ce_source" --protocol https --use-intranet-source false --designated-version 28.5.0 --ignore-backup-tips --pure-mode; then
+          echo "Error: Docker installation failed" >&2
+          exit 1
+        fi
       fi
       
       
@@ -203,7 +318,7 @@ EOF
     }
 
     get_private_ip() {
-        ip addr show | grep -E "inet (192\.168\.|10\.|172\.1[6-9]\.\|172\.2[0-9]\.\|172\.3[0-1]\.)" | head -n1 | awk '{print $2}' | cut -d/ -f1
+        ip addr show | grep -E "inet (192\.168\.|10\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[0-1]\.)" | head -n1 | awk '{print $2}' | cut -d/ -f1
     }
 
     advertise_addr="${ADVERTISE_ADDR:-$(get_private_ip)}"
@@ -236,7 +351,10 @@ EOF
     echo "Swarm initialized"
 
     docker network rm -f dokploy-network 2>/dev/null
-    docker network create --driver overlay --attachable dokploy-network
+    docker network create --driver overlay --attachable dokploy-network || {
+        echo "Error: failed to create dokploy-network" >&2
+        exit 1
+    }
 
     echo "Network created"
 
@@ -252,14 +370,20 @@ EOF
     --env POSTGRES_DB=dokploy \
     --env POSTGRES_PASSWORD=amukds4wi9001583845717ad2 \
     --mount type=volume,source=dokploy-postgres,target=/var/lib/postgresql/data \
-    pgvector/pgvector:pg16
+    pgvector/pgvector:pg16 || {
+        echo "Error: failed to create dokploy-postgres" >&2
+        exit 1
+    }
 
     docker service create \
     --name dokploy-redis \
     --constraint 'node.role==manager' \
     --network dokploy-network \
     --mount type=volume,source=dokploy-redis,target=/data \
-    redis:7
+    redis:7 || {
+        echo "Error: failed to create dokploy-redis" >&2
+        exit 1
+    }
 
     # Installation
     # Set RELEASE_TAG environment variable for canary/feature versions
@@ -282,36 +406,13 @@ EOF
       $endpoint_mode \
       $release_tag_env \
       -e ADVERTISE_ADDR=$advertise_addr \
-      $DOCKER_IMAGE
+      -e DOKPLOY_HOST_ETC_DIR=/etc/dokploy \
+      "$DOCKER_IMAGE" || {
+        echo "Error: failed to create Dokploy service" >&2
+        exit 1
+      }
 
-    sleep 4
-
-    docker run -d \
-        --name dokploy-traefik \
-        --restart always \
-        -v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
-        -v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
-        -v /var/run/docker.sock:/var/run/docker.sock:ro \
-        -p 80:80/tcp \
-        -p 443:443/tcp \
-        -p 443:443/udp \
-        traefik:v3.6.1
-    
-    docker network connect dokploy-network dokploy-traefik
-
-
-    # Optional: Use docker service create instead of docker run
-    #   docker service create \
-    #     --name dokploy-traefik \
-    #     --constraint 'node.role==manager' \
-    #     --network dokploy-network \
-    #     --mount type=bind,source=/etc/dokploy/traefik/traefik.yml,target=/etc/traefik/traefik.yml \
-    #     --mount type=bind,source=/etc/dokploy/traefik/dynamic,target=/etc/dokploy/traefik/dynamic \
-    #     --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
-    #     --publish mode=host,published=443,target=443 \
-    #     --publish mode=host,published=80,target=80 \
-    #     --publish mode=host,published=443,target=443,protocol=udp \
-    #     traefik:v3.6.1
+    ensure_traefik /etc/dokploy || exit 1
 
     GREEN="\033[0;32m"
     YELLOW="\033[1;33m"
@@ -345,10 +446,24 @@ update_dokploy() {
     echo "Updating Dokploy to version: ${VERSION_TAG}"
     
     # Pull the image
-    docker pull $DOCKER_IMAGE
+    if ! docker pull "$DOCKER_IMAGE"; then
+        echo "Error: failed to pull $DOCKER_IMAGE" >&2
+        exit 1
+    fi
 
-    # Update the service
-    docker service update --image $DOCKER_IMAGE dokploy
+    release_tag_args=()
+    if docker service inspect dokploy --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' 2>/dev/null | grep -q '^RELEASE_TAG='; then
+        release_tag_args+=(--env-rm RELEASE_TAG)
+    fi
+    if [ "$VERSION_TAG" != "latest" ]; then
+        release_tag_args+=(--env-add "RELEASE_TAG=$VERSION_TAG")
+    fi
+    release_tag_args+=(--env-add "DOKPLOY_HOST_ETC_DIR=/etc/dokploy")
+
+    if ! docker service update --image "$DOCKER_IMAGE" "${release_tag_args[@]}" dokploy; then
+        echo "Error: failed to update Dokploy service" >&2
+        exit 1
+    fi
 
     echo "Dokploy has been updated to version: ${VERSION_TAG}"
 }
