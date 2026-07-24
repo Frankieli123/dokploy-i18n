@@ -1,11 +1,10 @@
 import path from "node:path";
-import {
-	findApplicationById,
-	findComposeById,
-	findDestinationById,
-	getS3Credentials,
-	paths,
-} from "../..";
+import { paths } from "@dokploy/server/constants";
+import { findApplicationById } from "@dokploy/server/services/application";
+import { findComposeById } from "@dokploy/server/services/compose";
+import { findDestinationById } from "@dokploy/server/services/destination";
+import { getS3Credentials } from "../backups/utils";
+import { resolveVolumeBackupDockerPath } from "./host-path";
 import {
 	ALL_MOUNTS_VOLUME_NAME,
 	getBackupBaseName,
@@ -31,7 +30,11 @@ export const restoreVolume = async (
 	const { VOLUME_BACKUPS_PATH } = paths(!!serverId);
 	const isBind = isBindPath(normalizedVolumeName);
 	const backupBaseName = getBackupBaseName(normalizedVolumeName);
-	const volumeBackupPath = path.join(VOLUME_BACKUPS_PATH, backupBaseName);
+	const volumeBackupPath = path.posix.join(VOLUME_BACKUPS_PATH, backupBaseName);
+	const volumeBackupDockerPath = resolveVolumeBackupDockerPath(
+		volumeBackupPath,
+		serverId,
+	);
 	const rcloneFlags = getS3Credentials(destination);
 	const bucketPath = `:s3:${destination.bucket}`;
 	const backupPath = `${bucketPath}/${backupFileName}`;
@@ -55,7 +58,7 @@ export const restoreVolume = async (
 
 		echo "Extracting mounts manifest..."
 		docker run --rm \
-			-v ${shEscape(volumeBackupPath)}:/backup \
+			-v ${shEscape(volumeBackupDockerPath)}:/backup \
 			ubuntu \
 			bash -c "set -e; (tar -xOf /backup/${backupFileName} .dokploy_all_mounts_mounts.txt > /backup/.dokploy_all_mounts_mounts.txt 2>/dev/null || tar -xOf /backup/${backupFileName} ./.dokploy_all_mounts_mounts.txt > /backup/.dokploy_all_mounts_mounts.txt)"
 
@@ -66,7 +69,7 @@ export const restoreVolume = async (
 
 		echo "Indexing archive..."
 		docker run --rm \
-			-v ${shEscape(volumeBackupPath)}:/backup \
+			-v ${shEscape(volumeBackupDockerPath)}:/backup \
 			ubuntu \
 			bash -c "set -e; tar -tf /backup/${backupFileName} > /backup/.dokploy_all_mounts_tar_list.txt"
 
@@ -122,7 +125,7 @@ export const restoreVolume = async (
 				fi
 				docker run --rm \
 					-v "${"$"}VOLUME_NAME":/target \
-					-v ${shEscape(volumeBackupPath)}:/backup \
+					-v ${shEscape(volumeBackupDockerPath)}:/backup \
 					ubuntu \
 					bash -c "set -e; tar xvf /backup/${backupFileName} -C /target --overwrite --strip-components=${"$"}STRIP_COMPONENTS \\"${"$"}ENTRY_DIR\\""
 			elif [ "$TYPE" = "bind" ]; then
@@ -138,7 +141,7 @@ export const restoreVolume = async (
 					mkdir -p "${"$"}HOST_PATH"
 					docker run --rm \
 						--mount "type=bind,source=${"$"}HOST_PATH,target=/target" \
-						-v ${shEscape(volumeBackupPath)}:/backup \
+						-v ${shEscape(volumeBackupDockerPath)}:/backup \
 						ubuntu \
 						bash -c "set -e; tar xvf /backup/${backupFileName} -C /target --overwrite --strip-components=${"$"}STRIP_COMPONENTS \\"${"$"}ENTRY_DIR\\""
 				else
@@ -148,7 +151,7 @@ export const restoreVolume = async (
 					mkdir -p "${"$"}HOST_DIR"
 					docker run --rm \
 						--mount "type=bind,source=${"$"}HOST_DIR,target=/target" \
-						-v ${shEscape(volumeBackupPath)}:/backup \
+						-v ${shEscape(volumeBackupDockerPath)}:/backup \
 						ubuntu \
 						bash -c "set -e; tar xvf /backup/${backupFileName} -C /tmp --overwrite \\"${"$"}ENTRY_FILE\\"; cp -f \\"/tmp/${"$"}ENTRY_FILE\\" \\"/target/${"$"}HOST_FILE\\""
 				fi
@@ -296,23 +299,29 @@ export const restoreVolume = async (
 	${downloadCommand}
 	echo "Download completed ✅"
 	TARGET_PATH=${shEscape(normalizedVolumeName)}
-	if [ -d "$TARGET_PATH" ] || [ "\${TARGET_PATH%/}" != "$TARGET_PATH" ]; then
+	if docker run --rm \
+		--mount "type=bind,source=$TARGET_PATH,target=/target,readonly" \
+		ubuntu test -d /target; then
 		echo "Restoring to directory: $TARGET_PATH"
-		mkdir -p "$TARGET_PATH"
 		docker run --rm \
-			-v "$TARGET_PATH":/target \
-			-v ${shEscape(volumeBackupPath)}:/backup \
+			--mount "type=bind,source=$TARGET_PATH,target=/target" \
+			-v ${shEscape(volumeBackupDockerPath)}:/backup \
 			ubuntu \
-			bash -c "tar xvf /backup/${backupFileName} -C /target --overwrite"
-	else
+			tar xvf ${shEscape(`/backup/${backupFileName}`)} -C /target --overwrite
+	elif docker run --rm \
+		--mount "type=bind,source=$TARGET_PATH,target=/target,readonly" \
+		ubuntu test -f /target; then
 		TARGET_DIR=$(dirname "$TARGET_PATH")
+		TARGET_FILE=$(basename "$TARGET_PATH")
 		echo "Restoring to file directory: $TARGET_DIR"
-		mkdir -p "$TARGET_DIR"
 		docker run --rm \
-			-v "$TARGET_DIR":/target \
-			-v ${shEscape(volumeBackupPath)}:/backup \
+			--mount "type=bind,source=$TARGET_DIR,target=/target" \
+			-v ${shEscape(volumeBackupDockerPath)}:/backup \
 			ubuntu \
-			bash -c "tar xvf /backup/${backupFileName} -C /target --overwrite"
+			bash -c 'set -e; TMP=$(mktemp -d); cleanup_tmp() { rm -rf "$TMP"; }; trap cleanup_tmp EXIT; tar xvf "$1" -C "$TMP" --overwrite; SOURCE_FILE=$(find "$TMP" -type f | head -n 1); [ -n "$SOURCE_FILE" ]; cp -pf "$SOURCE_FILE" "/target/$2"' bash ${shEscape(`/backup/${backupFileName}`)} "$TARGET_FILE"
+	else
+		echo "Bind restore target does not exist on the Docker host: $TARGET_PATH"
+		exit 1
 	fi
 	echo "Bind restore completed ✅"
 	`;
@@ -353,7 +362,7 @@ export const restoreVolume = async (
 	echo "Creating new volume and restoring data..."
 	docker run --rm \
 		-v ${shEscape(volumeName)}:/volume_data \
-		-v ${shEscape(volumeBackupPath)}:/backup \
+		-v ${shEscape(volumeBackupDockerPath)}:/backup \
 		ubuntu \
 		bash -c "cd /volume_data && tar xvf /backup/${backupFileName} ."
 	echo "Volume restore completed ✅"

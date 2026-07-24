@@ -173,6 +173,9 @@ export const restoreWebServerBackup = async (
 				`docker exec ${postgresContainerId} rm /tmp/database.sql`,
 			);
 
+			emit("Running database migrations...");
+			await execAsync("node -r dotenv/config dist/migration.mjs");
+
 			emit("Restore completed successfully!");
 		} finally {
 			// Cleanup

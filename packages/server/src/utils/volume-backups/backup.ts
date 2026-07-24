@@ -2,11 +2,13 @@ import path from "node:path";
 import { paths } from "@dokploy/server/constants";
 import { findComposeById } from "@dokploy/server/services/compose";
 import type { findVolumeBackupById } from "@dokploy/server/services/volume-backups";
+import { buildS3ObjectPath, getS3Credentials } from "../backups/utils";
+import { resolveVolumeBackupDockerPath } from "./host-path";
 import {
-	buildS3ObjectPath,
-	getS3Credentials,
-} from "../backups/utils";
-import { ALL_MOUNTS_VOLUME_NAME, getBackupBaseName, isBindPath } from "./naming";
+	ALL_MOUNTS_VOLUME_NAME,
+	getBackupBaseName,
+	isBindPath,
+} from "./naming";
 
 const shEscape = (value: string | undefined): string => {
 	if (!value) return "''";
@@ -53,7 +55,14 @@ export const backupVolume = async (
 	);
 	const rcloneFlags = getS3Credentials(volumeBackup.destination);
 	const rcloneDestination = `:s3:${destination.bucket}/${bucketDestination}`;
-	const volumeBackupPath = path.join(VOLUME_BACKUPS_PATH, volumeBackup.appName);
+	const volumeBackupPath = path.posix.join(
+		VOLUME_BACKUPS_PATH,
+		volumeBackup.appName,
+	);
+	const volumeBackupDockerPath = resolveVolumeBackupDockerPath(
+		volumeBackupPath,
+		serverId,
+	);
 
 	const rcloneCommand = `rclone copyto ${rcloneFlags.join(" ")} "${volumeBackupPath}/${backupFileName}" "${rcloneDestination}"`;
 
@@ -93,14 +102,16 @@ export const backupVolume = async (
 		`;
 	};
 
-		if (isAllMounts) {
-			const buildDockerArgsFromMounts = `
+	if (isAllMounts) {
+		const buildDockerArgsFromMounts = `
 			BACKUP_DIR=${shEscape(volumeBackupPath)}
+			BACKUP_DOCKER_DIR=${shEscape(volumeBackupDockerPath)}
 			mkdir -p "$BACKUP_DIR"
 			MOUNTS_FILE="$BACKUP_DIR/.dokploy_all_mounts_mounts.txt"
+			MOUNTS_DOCKER_FILE="$BACKUP_DOCKER_DIR/.dokploy_all_mounts_mounts.txt"
 			: > "$MOUNTS_FILE"
 			MOUNT_COUNT=0
-			set -- docker run --rm -v "$BACKUP_DIR:/backup" --mount "type=bind,source=$MOUNTS_FILE,target=/sources/.dokploy_all_mounts_mounts.txt,readonly" ubuntu bash -c "cd /sources; tar cvf \"/backup/${backupFileName}\" .; TAR_STATUS=$?; if [ $TAR_STATUS -gt 1 ]; then exit $TAR_STATUS; fi; exit 0"
+			set -- docker run --rm -v "$BACKUP_DOCKER_DIR:/backup" --mount "type=bind,source=$MOUNTS_DOCKER_FILE,target=/sources/.dokploy_all_mounts_mounts.txt,readonly" ubuntu bash -c "cd /sources; tar cvf \"/backup/${backupFileName}\" .; TAR_STATUS=$?; if [ $TAR_STATUS -gt 1 ]; then exit $TAR_STATUS; fi; exit 0"
 			MOUNTS_RAW_FILE="$BACKUP_DIR/.dokploy_all_mounts_raw.txt"
 			printf '%s\n' "$MOUNTS_RAW" > "$MOUNTS_RAW_FILE"
 			while IFS='|' read -r TYPE SOURCE NAME DEST RW; do
@@ -197,7 +208,8 @@ export const backupVolume = async (
 					volumeBackup.compose?.composeId || "",
 				);
 				const serviceName = volumeBackup.serviceName;
-				if (!serviceName) throw new Error("serviceName is required for ALL_MOUNTS");
+				if (!serviceName)
+					throw new Error("serviceName is required for ALL_MOUNTS");
 
 				const containerIdCommand =
 					compose.composeType === "stack"
@@ -240,9 +252,12 @@ export const backupVolume = async (
 		}
 
 		if (serviceType === "compose") {
-			const compose = await findComposeById(volumeBackup.compose?.composeId || "");
+			const compose = await findComposeById(
+				volumeBackup.compose?.composeId || "",
+			);
 			const serviceName = volumeBackup.serviceName;
-			if (!serviceName) throw new Error("serviceName is required for ALL_MOUNTS");
+			if (!serviceName)
+				throw new Error("serviceName is required for ALL_MOUNTS");
 
 			if (compose.composeType === "stack") {
 				return withVolumeBackupLock(`
@@ -294,7 +309,7 @@ export const backupVolume = async (
 	  if ! docker run --rm \
 	    --mount type=bind,source="$SOURCE_PATH",target=/source_data,readonly \
 	    -e SOURCE_PATH="$SOURCE_PATH" \
-	    -v ${shEscape(volumeBackupPath)}:/backup \
+	    -v ${shEscape(volumeBackupDockerPath)}:/backup \
 	    ubuntu \
 	    bash -c 'set -e
 	      if [ -d /source_data ]; then
@@ -314,7 +329,7 @@ export const backupVolume = async (
 	  `
 		: `docker run --rm \
 	  -v ${shEscape(volumeName)}:/volume_data \
-	  -v ${shEscape(volumeBackupPath)}:/backup \
+	  -v ${shEscape(volumeBackupDockerPath)}:/backup \
 	  ubuntu \
   bash -c "cd /volume_data && tar cvf /backup/${backupFileName} ."
   `;
