@@ -17,18 +17,25 @@ import {
 	getUserByToken,
 } from "../services/admin";
 import { createAuditLog } from "../services/proprietary/audit-log";
-import { getWebServerSettings, updateWebServerSettings } from "../services/web-server-settings";
 import { updateUser } from "../services/user";
-import { buildPanelTrustedOrigins } from "../utils/panel-domains";
+import {
+	getWebServerSettings,
+	updateWebServerSettings,
+} from "../services/web-server-settings";
 import {
 	getInvitationEmailContent,
 	getResetPasswordEmailContent,
 	getVerifyEmailContent,
 } from "../utils/i18n/backend";
+import { buildPanelTrustedOrigins } from "../utils/panel-domains";
 import { getHubSpotUTK, submitToHubSpot } from "../utils/tracking/hubspot";
 import { sendEmail } from "../verification/send-verification-email";
 import { getPublicIpWithFallback } from "../wss/utils";
 import { ac, adminRole, memberRole, ownerRole } from "./access-control";
+import {
+	getAuthCookieOptions,
+	resolveSelfHostedServerIp,
+} from "./auth-options";
 
 export {
 	getInvitationEmailContent,
@@ -42,6 +49,7 @@ const { handler, api } = betterAuth({
 		schema: schema,
 	}),
 	secret: BETTER_AUTH_SECRET,
+	...getAuthCookieOptions(IS_CLOUD),
 	disabledPaths: [
 		"/sso/register",
 		"/organization/create",
@@ -184,13 +192,18 @@ const { handler, api } = betterAuth({
 					});
 
 					if (!IS_CLOUD) {
-						const publicIp = await getPublicIpWithFallback();
-						await updateUser(user.id, {
-							serverIp: publicIp,
-						});
-						await updateWebServerSettings({
-							serverIp: publicIp,
-						});
+						const settings = await getWebServerSettings().catch(() => null);
+						const serverIp = await resolveSelfHostedServerIp(
+							settings?.serverIp,
+							getPublicIpWithFallback,
+						);
+
+						if (serverIp) {
+							await updateUser(user.id, { serverIp });
+							if (!settings?.serverIp) {
+								await updateWebServerSettings({ serverIp });
+							}
+						}
 					}
 
 					if (IS_CLOUD) {

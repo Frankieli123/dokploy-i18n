@@ -46,10 +46,14 @@ export const readValidDirectory = (
 };
 
 export const getPublicIpWithFallback = async () => {
+	const options = {
+		onlyHttps: true,
+		timeout: 1500,
+	};
 	// @ts-ignore
 	let ip = null;
 	try {
-		ip = await publicIpv4();
+		ip = await publicIpv4(options);
 	} catch (error) {
 		console.log(
 			"Error obtaining public IPv4 address, falling back to IPv6",
@@ -57,7 +61,7 @@ export const getPublicIpWithFallback = async () => {
 			error.message,
 		);
 		try {
-			ip = await publicIpv6();
+			ip = await publicIpv6(options);
 		} catch (error) {
 			// @ts-ignore
 			console.error("Error obtaining public IPv6 address", error.message);
