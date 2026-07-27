@@ -349,80 +349,139 @@ export const restoreVolume = async (
 		return bindRestoreCommand;
 	}
 
-	// Base restore command that creates the volume and restores data
-	const baseRestoreCommand = `
-	set -e
-	echo "Volume name: ${volumeName}"
-	echo "Backup file name: ${backupFileName}"
-	echo "Volume backup path: ${volumeBackupPath}"
-	echo "Downloading backup from S3..."
-	mkdir -p ${shEscape(volumeBackupPath)}
-	${downloadCommand}
-	echo "Download completed ✅"
-	echo "Creating new volume and restoring data..."
-	docker run --rm \
-		-v ${shEscape(volumeName)}:/volume_data \
-		-v ${shEscape(volumeBackupDockerPath)}:/backup \
-		ubuntu \
-		bash -c "cd /volume_data && tar xvf /backup/${backupFileName} ."
-	echo "Volume restore completed ✅"
-	`;
+	const archiveValidationScript = shEscape(`set -e
+	ARCHIVE="$1"
+	test -f "$ARCHIVE"
+	tar -tf "$ARCHIVE" > /tmp/archive-list
+	awk 'BEGIN { invalid=0 } substr($0, 1, 1) == "/" { invalid=1 } { count=split($0, parts, "/"); for (index=1; index<=count; index++) if (parts[index] == "..") invalid=1 } END { exit invalid }' /tmp/archive-list`);
 
-	// Function to check if volume exists and get containers using it
-	const checkVolumeCommand = `
-	# Check if volume exists
-	VOLUME_EXISTS=$(docker volume ls -q --filter name="^${volumeName}$" | wc -l)
-	echo "Volume exists: $VOLUME_EXISTS"
-	
-	if [ "$VOLUME_EXISTS" = "0" ]; then
-		echo "Volume doesn't exist, proceeding with direct restore"
-		${baseRestoreCommand}
-	else
-		echo "Volume exists, checking for containers using it (including stopped ones)..."
-		
-		# Get ALL containers (running and stopped) using this volume - much simpler with native filter!
-		CONTAINERS_USING_VOLUME=$(docker ps -a --filter "volume=${volumeName}" --format "{{.ID}}|{{.Names}}|{{.State}}|{{.Labels}}")
-		
-		if [ -z "$CONTAINERS_USING_VOLUME" ]; then
-			echo "Volume exists but no containers are using it"
-			echo "Removing existing volume and proceeding with restore"
-			docker volume rm ${volumeName} --force
-			${baseRestoreCommand}
-		else
-			echo ""
-			echo "⚠️  WARNING: Cannot restore volume as it is currently in use!"
-			echo ""
-			echo "📋 The following containers are using volume '${volumeName}':"
-			echo ""
-			
-			echo "$CONTAINERS_USING_VOLUME" | while IFS='|' read container_id container_name container_state labels; do
-				echo "   🐳 Container: $container_name ($container_id)"
-				echo "      Status: $container_state"
-				
-				# Determine container type
-				if echo "$labels" | grep -q "com.docker.swarm.service.name="; then
-					SERVICE_NAME=$(echo "$labels" | grep -o "com.docker.swarm.service.name=[^,]*" | cut -d'=' -f2)
-					echo "      Type: Docker Swarm Service ($SERVICE_NAME)"
-				elif echo "$labels" | grep -q "com.docker.compose.project="; then
-					PROJECT_NAME=$(echo "$labels" | grep -o "com.docker.compose.project=[^,]*" | cut -d'=' -f2)
-					echo "      Type: Docker Compose ($PROJECT_NAME)"
-				else
-					echo "      Type: Regular Container"
-				fi
-				echo ""
-			done
-			
-			echo ""
-			echo "🔧 To restore this volume, please:"
-			echo "   1. Stop all containers/services using this volume"
-			echo "   2. Remove the existing volume: docker volume rm ${volumeName}"
-			echo "   3. Run the restore operation again"
-			echo ""
-			echo "❌ Volume restore aborted - volume is in use"
-			
+	const namedVolumeRestoreCommand = `
+	set -e
+	VOLUME_NAME=${shEscape(normalizedVolumeName)}
+	BACKUP_DIR=${shEscape(volumeBackupPath)}
+	BACKUP_DOCKER_DIR=${shEscape(volumeBackupDockerPath)}
+	ARCHIVE_PATH=${shEscape(`/backup/${backupFileName}`)}
+	STATE_DIR=$(mktemp -d)
+	CONTAINERS_FILE="$STATE_DIR/containers"
+	SERVICES_FILE="$STATE_DIR/services"
+	SERVICE_CANDIDATES_FILE="$STATE_DIR/service-candidates"
+	LIFECYCLE_STARTED=0
+	: > "$CONTAINERS_FILE"
+	: > "$SERVICES_FILE"
+	: > "$SERVICE_CANDIDATES_FILE"
+
+	restart_consumers() {
+		RESTART_STATUS=0
+		while IFS='|' read -r service replicas; do
+			[ -n "$service" ] || continue
+			echo "Restoring Swarm service $service to $replicas replicas..."
+			docker service scale "$service=$replicas" || RESTART_STATUS=1
+		done < "$SERVICES_FILE"
+		while IFS= read -r container_id; do
+			[ -n "$container_id" ] || continue
+			echo "Restarting container $container_id..."
+			docker start "$container_id" || RESTART_STATUS=1
+		done < "$CONTAINERS_FILE"
+		return "$RESTART_STATUS"
+	}
+
+	cleanup_restore() {
+		STATUS=$?
+		trap - EXIT
+		if [ "$LIFECYCLE_STARTED" = "1" ]; then
+			echo "Restore did not complete; restoring previously running consumers..."
+			restart_consumers || echo "One or more consumers could not be restarted automatically."
+		fi
+		rm -rf "$STATE_DIR"
+		exit "$STATUS"
+	}
+	trap cleanup_restore EXIT
+
+	echo "Volume name: $VOLUME_NAME"
+	echo "Backup file name: ${backupFileName}"
+	echo "Volume backup path: $BACKUP_DIR"
+	echo "Downloading backup from S3..."
+	mkdir -p "$BACKUP_DIR"
+	${downloadCommand}
+	echo "Download completed"
+
+	echo "Validating backup archive..."
+	docker run --rm \
+		-v "$BACKUP_DOCKER_DIR:/backup" \
+		ubuntu \
+		bash -c ${archiveValidationScript} bash "$ARCHIVE_PATH"
+	echo "Backup archive is valid"
+
+	CONSUMERS=$(docker ps -a --filter "volume=$VOLUME_NAME" --format "{{.ID}}")
+	for container_id in $CONSUMERS; do
+		service=$(docker inspect --format '{{if .Config.Labels}}{{index .Config.Labels "com.docker.swarm.service.name"}}{{end}}' "$container_id")
+		if [ -n "$service" ] && [ "$service" != "<no value>" ]; then
+			echo "$service" >> "$SERVICE_CANDIDATES_FILE"
+			continue
+		fi
+
+		state=$(docker inspect --format '{{.State.Status}}' "$container_id")
+		if [ "$state" = "running" ]; then
+			echo "$container_id" >> "$CONTAINERS_FILE"
+		fi
+	done
+	sort -u "$SERVICE_CANDIDATES_FILE" -o "$SERVICE_CANDIDATES_FILE"
+
+	while IFS= read -r service; do
+		[ -n "$service" ] || continue
+		if ! service_state=$(docker service inspect "$service" --format '{{if .Spec.Mode.Replicated}}replicated|{{.Spec.Mode.Replicated.Replicas}}{{else}}global|0{{end}}' 2>/dev/null); then
+			echo "Ignoring stale task for missing Swarm service: $service"
+			continue
+		fi
+		mode=$(printf '%s' "$service_state" | cut -d'|' -f1)
+		replicas=$(printf '%s' "$service_state" | cut -d'|' -f2)
+		if [ "$mode" != "replicated" ]; then
+			echo "Cannot safely restore a volume used by global Swarm service: $service"
 			exit 1
 		fi
+		if [ "$replicas" -gt 0 ]; then
+			echo "$service|$replicas" >> "$SERVICES_FILE"
+		fi
+	done < "$SERVICE_CANDIDATES_FILE"
+
+	LIFECYCLE_STARTED=1
+	while IFS= read -r container_id; do
+		[ -n "$container_id" ] || continue
+		echo "Stopping container $container_id..."
+		docker stop "$container_id"
+	done < "$CONTAINERS_FILE"
+	while IFS='|' read -r service replicas; do
+		[ -n "$service" ] || continue
+		echo "Scaling Swarm service $service from $replicas replicas to 0..."
+		docker service scale "$service=0"
+	done < "$SERVICES_FILE"
+
+	WAIT_COUNT=0
+	while docker ps -q --filter "volume=$VOLUME_NAME" | grep -q .; do
+		WAIT_COUNT=$((WAIT_COUNT+1))
+		if [ "$WAIT_COUNT" -ge 60 ]; then
+			echo "Timed out waiting for running consumers to release volume: $VOLUME_NAME"
+			exit 1
+		fi
+		sleep 1
+	done
+
+	echo "Restoring data in place..."
+	docker run --rm \
+		-v "$VOLUME_NAME:/volume_data" \
+		-v "$BACKUP_DOCKER_DIR:/backup" \
+		ubuntu \
+		bash -c 'set -e; find /volume_data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; tar xf "$1" -C /volume_data' bash "$ARCHIVE_PATH"
+	echo "Volume data restored"
+
+	if ! restart_consumers; then
+		echo "Volume data was restored, but one or more consumers could not be restarted."
+		exit 1
 	fi
+	LIFECYCLE_STARTED=0
+	trap - EXIT
+	rm -rf "$STATE_DIR"
+	echo "Volume restore completed"
 	`;
 
 	if (serviceType === "application") {
@@ -430,7 +489,7 @@ export const restoreVolume = async (
 		return `
 		echo "=== VOLUME RESTORE FOR APPLICATION ==="
 		echo "Application: ${application.appName}"
-		${checkVolumeCommand}
+		${namedVolumeRestoreCommand}
 		`;
 	}
 
@@ -441,10 +500,10 @@ export const restoreVolume = async (
 		echo "=== VOLUME RESTORE FOR COMPOSE ==="
 		echo "Compose: ${compose.appName}"
 		echo "Compose Type: ${compose.composeType}"
-		${checkVolumeCommand}
+		${namedVolumeRestoreCommand}
 		`;
 	}
 
 	// Fallback for unknown service types
-	return checkVolumeCommand;
+	return namedVolumeRestoreCommand;
 };

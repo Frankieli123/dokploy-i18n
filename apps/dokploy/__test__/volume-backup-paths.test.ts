@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import path from "node:path";
 import { backupVolume } from "@dokploy/server/utils/volume-backups/backup";
 import { resolveVolumeBackupDockerPath } from "@dokploy/server/utils/volume-backups/host-path";
 import { getBackupBaseName } from "@dokploy/server/utils/volume-backups/naming";
@@ -129,5 +131,97 @@ describe("volume backup Docker paths", () => {
 		expect(command).toContain(
 			`-v '/etc/dokploy/volume-backups/${backupBaseName}':/backup`,
 		);
+	});
+
+	it("restores named volumes in place after validating the archive", async () => {
+		const command = await restoreVolume(
+			"compose-id",
+			"destination-id",
+			"minio-data",
+			"minio/archive.tar",
+			"",
+			"compose",
+		);
+
+		expect(command).toContain('-v "$BACKUP_DOCKER_DIR:/backup"');
+		expect(command).toContain('tar -tf "$ARCHIVE"');
+		expect(command).toContain('parts[index] == ".."');
+		expect(command).toContain(
+			"find /volume_data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +",
+		);
+		expect(command).toContain('tar xf "$1" -C /volume_data');
+		expect(command).not.toContain("docker volume rm");
+		expect(command.indexOf("Validating backup archive")).toBeLessThan(
+			command.indexOf("LIFECYCLE_STARTED=1"),
+		);
+	});
+
+	it("preserves consumer state for Compose containers and Swarm services", async () => {
+		const command = await restoreVolume(
+			"compose-id",
+			"destination-id",
+			"minio-data",
+			"minio/archive.tar",
+			"",
+			"compose",
+		);
+
+		expect(command).toContain('if [ "$state" = "running" ]');
+		expect(command).toContain('docker stop "$container_id"');
+		expect(command).toContain('docker start "$container_id"');
+		expect(command).toContain(
+			"{{if .Spec.Mode.Replicated}}replicated|{{.Spec.Mode.Replicated.Replicas}}{{else}}global|0{{end}}",
+		);
+		expect(command).toContain('docker service scale "$service=0"');
+		expect(command).toContain('docker service scale "$service=$replicas"');
+		expect(command).toContain(
+			"Cannot safely restore a volume used by global Swarm service",
+		);
+	});
+
+	it("restarts previously running consumers when restoration fails", async () => {
+		const command = await restoreVolume(
+			"application-id",
+			"destination-id",
+			"app-data",
+			"app/archive.tar",
+			"",
+			"application",
+		);
+
+		expect(command).toContain("trap cleanup_restore EXIT");
+		expect(command).toContain(
+			"Restore did not complete; restoring previously running consumers",
+		);
+		expect(command).toContain("restart_consumers ||");
+		expect(command).toContain("Application: demo");
+	});
+
+	it("generates a syntactically valid Bash restore command", async () => {
+		const command = await restoreVolume(
+			"compose-id",
+			"destination-id",
+			"minio-data",
+			"minio/archive.tar",
+			"",
+			"compose",
+		);
+		const bashExecutable =
+			process.platform === "win32"
+				? path.join(
+						process.env.ProgramFiles || "C:\\Program Files",
+						"Git",
+						"bin",
+						"bash.exe",
+					)
+				: "bash";
+		const result = spawnSync(bashExecutable, ["-n"], {
+			encoding: "utf8",
+			input: command,
+		});
+
+		expect(result.error).toBeUndefined();
+		expect(result.stderr).toBe("");
+		expect(result.status).toBe(0);
 	});
 });

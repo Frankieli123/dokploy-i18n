@@ -354,7 +354,7 @@ export const volumeBackupsRouter = createTRPCRouter({
 						emit.next("");
 						emit.next("✅ Volume restore completed successfully!");
 						emit.next(
-							"🎉 All containers/services have been restarted with the restored volume.",
+							"🎉 Previously running containers/services have been restarted with the restored volume.",
 						);
 					} catch {
 						emit.next("");
