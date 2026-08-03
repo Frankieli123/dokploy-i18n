@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/select";
 import {
 	Sheet,
+	SheetClose,
 	SheetContent,
 	SheetHeader,
 	SheetTitle,
@@ -680,6 +681,18 @@ export function AIChatDrawer({
 							>
 								<MessageSquarePlus className="h-4 w-4" />
 							</Button>
+							<SheetClose asChild>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon"
+									className="h-8 w-8 p-0"
+									title={t("button.close")}
+									aria-label={t("button.close")}
+								>
+									<X className="h-4 w-4" />
+								</Button>
+							</SheetClose>
 						</div>
 					</div>
 					{hasAiConfigs && (
