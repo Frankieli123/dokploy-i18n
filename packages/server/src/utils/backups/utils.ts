@@ -2,6 +2,7 @@ import { logger } from "@dokploy/server/lib/logger";
 import type { BackupSchedule } from "@dokploy/server/services/backup";
 import type { Destination } from "@dokploy/server/services/destination";
 import { scheduledJobs, scheduleJob } from "node-schedule";
+import { quote } from "shell-quote";
 import { keepLatestNBackups } from ".";
 import { runComposeBackup } from "./compose";
 import { runMariadbBackup } from "./mariadb";
@@ -109,16 +110,16 @@ export const getS3Credentials = (destination: Destination) => {
 	const { accessKey, secretAccessKey, region, endpoint, provider } =
 		destination;
 	const rcloneFlags = [
-		`--s3-access-key-id=${accessKey}`,
-		`--s3-secret-access-key=${secretAccessKey}`,
-		`--s3-region=${region}`,
-		`--s3-endpoint=${endpoint}`,
+		`--s3-access-key-id=${quote([accessKey])}`,
+		`--s3-secret-access-key=${quote([secretAccessKey])}`,
+		`--s3-region=${quote([region])}`,
+		`--s3-endpoint=${quote([endpoint])}`,
 		"--s3-no-check-bucket",
 		"--s3-force-path-style",
 	];
 
 	if (provider) {
-		rcloneFlags.unshift(`--s3-provider=${provider}`);
+		rcloneFlags.unshift(`--s3-provider=${quote([provider])}`);
 	}
 
 	return rcloneFlags;
@@ -128,7 +129,7 @@ export const getPostgresBackupCommand = (
 	database: string,
 	databaseUser: string,
 ) => {
-	return `docker exec -i $CONTAINER_ID bash -c "set -o pipefail; pg_dump -Fc --no-acl --no-owner -h localhost -U ${databaseUser} --no-password '${database}' | gzip"`;
+	return `docker exec -e DB_NAME=${quote([database])} -e DB_USER=${quote([databaseUser])} -i $CONTAINER_ID bash -c 'set -o pipefail; pg_dump -Fc --no-acl --no-owner -h localhost -U "$DB_USER" --no-password "$DB_NAME" | gzip'`;
 };
 
 export const getMariadbBackupCommand = (
@@ -136,14 +137,14 @@ export const getMariadbBackupCommand = (
 	databaseUser: string,
 	databasePassword: string,
 ) => {
-	return `docker exec -i $CONTAINER_ID bash -c "set -o pipefail; mariadb-dump --user='${databaseUser}' --password='${databasePassword}' --single-transaction --quick --databases ${database} | gzip"`;
+	return `docker exec -e DB_NAME=${quote([database])} -e DB_USER=${quote([databaseUser])} -e DB_PASS=${quote([databasePassword])} -i $CONTAINER_ID bash -c 'set -o pipefail; mariadb-dump --user="$DB_USER" --password="$DB_PASS" --single-transaction --quick --databases "$DB_NAME" | gzip'`;
 };
 
 export const getMysqlBackupCommand = (
 	database: string,
 	databasePassword: string,
 ) => {
-	return `docker exec -i $CONTAINER_ID bash -c "set -o pipefail; mysqldump --default-character-set=utf8mb4 -u 'root' --password='${databasePassword}' --single-transaction --no-tablespaces --quick '${database}' | gzip"`;
+	return `docker exec -e DB_NAME=${quote([database])} -e DB_PASS=${quote([databasePassword])} -i $CONTAINER_ID bash -c 'set -o pipefail; mysqldump --default-character-set=utf8mb4 -u root --password="$DB_PASS" --single-transaction --no-tablespaces --quick "$DB_NAME" | gzip'`;
 };
 
 export const getMongoBackupCommand = (
@@ -151,12 +152,13 @@ export const getMongoBackupCommand = (
 	databaseUser: string,
 	databasePassword: string,
 ) => {
-	const databaseFlag = database === "*" ? "" : ` -d '${database}'`;
-	return `docker exec -i $CONTAINER_ID bash -c "set -o pipefail; mongodump${databaseFlag} -u '${databaseUser}' -p '${databasePassword}' --archive --authenticationDatabase admin --gzip"`;
+	const databaseEnv = database === "*" ? "" : ` -e DB_NAME=${quote([database])}`;
+	const databaseFlag = database === "*" ? "" : ' -d "$DB_NAME"';
+	return `docker exec${databaseEnv} -e DB_USER=${quote([databaseUser])} -e DB_PASS=${quote([databasePassword])} -i $CONTAINER_ID bash -c 'set -o pipefail; mongodump${databaseFlag} -u "$DB_USER" -p "$DB_PASS" --archive --authenticationDatabase admin --gzip'`;
 };
 
 export const getServiceContainerCommand = (appName: string) => {
-	return `docker ps -q --filter "status=running" --filter "label=com.docker.swarm.service.name=${appName}" | head -n 1`;
+	return `docker ps -q --filter status=running --filter ${quote([`label=com.docker.swarm.service.name=${appName}`])} | head -n 1`;
 };
 
 export const getComposeContainerCommand = (
@@ -165,9 +167,9 @@ export const getComposeContainerCommand = (
 	composeType: "stack" | "docker-compose" | undefined,
 ) => {
 	if (composeType === "stack") {
-		return `docker ps -q --filter "status=running" --filter "label=com.docker.stack.namespace=${appName}" --filter "label=com.docker.swarm.service.name=${appName}_${serviceName}" | head -n 1`;
+		return `docker ps -q --filter status=running --filter ${quote([`label=com.docker.stack.namespace=${appName}`])} --filter ${quote([`label=com.docker.swarm.service.name=${appName}_${serviceName}`])} | head -n 1`;
 	}
-	return `docker ps -q --filter "status=running" --filter "label=com.docker.compose.project=${appName}" --filter "label=com.docker.compose.service=${serviceName}" | head -n 1`;
+	return `docker ps -q --filter status=running --filter ${quote([`label=com.docker.compose.project=${appName}`])} --filter ${quote([`label=com.docker.compose.service=${serviceName}`])} | head -n 1`;
 };
 
 const getContainerSearchCommand = (backup: BackupSchedule) => {
@@ -271,12 +273,10 @@ export const getBackupCommand = (
 ) => {
 	const containerSearch = getContainerSearchCommand(backup);
 	const backupCommand = generateBackupCommand(backup);
+	const safeLogPath = quote([logPath]);
 
 	logger.info(
 		{
-			containerSearch,
-			backupCommand,
-			rcloneCommand,
 			logPath,
 		},
 		`Executing backup command: ${backup.databaseType} ${backup.backupType}`,
@@ -284,35 +284,35 @@ export const getBackupCommand = (
 
 	return `
 	set -eo pipefail;
-	echo "[$(date)] Starting backup process..." >> ${logPath};
-	echo "[$(date)] Executing backup command..." >> ${logPath};
+	echo "[$(date)] Starting backup process..." >> ${safeLogPath};
+	echo "[$(date)] Executing backup command..." >> ${safeLogPath};
 	CONTAINER_ID=$(${containerSearch})
 
 	if [ -z "$CONTAINER_ID" ]; then
-		echo "[$(date)] ❌ Error: Container not found" >> ${logPath};
+		echo "[$(date)] ❌ Error: Container not found" >> ${safeLogPath};
 		exit 1;
 	fi
 
-	echo "[$(date)] Container Up: $CONTAINER_ID" >> ${logPath};
+	echo "[$(date)] Container Up: $CONTAINER_ID" >> ${safeLogPath};
 
 	# Run the backup command and capture the exit status
 	BACKUP_OUTPUT=$(${backupCommand} 2>&1 >/dev/null) || {
-		echo "[$(date)] ❌ Error: Backup failed" >> ${logPath};
-		echo "Error: $BACKUP_OUTPUT" >> ${logPath};
+		echo "[$(date)] ❌ Error: Backup failed" >> ${safeLogPath};
+		echo "Error: $BACKUP_OUTPUT" >> ${safeLogPath};
 		exit 1;
 	}
 
-	echo "[$(date)] ✅ backup completed successfully" >> ${logPath};
-	echo "[$(date)] Starting upload to S3..." >> ${logPath};
+	echo "[$(date)] ✅ backup completed successfully" >> ${safeLogPath};
+	echo "[$(date)] Starting upload to S3..." >> ${safeLogPath};
 
 	# Run the upload command and capture the exit status
 	UPLOAD_OUTPUT=$(${backupCommand} | ${rcloneCommand} 2>&1 >/dev/null) || {
-		echo "[$(date)] ❌ Error: Upload to S3 failed" >> ${logPath};
-		echo "Error: $UPLOAD_OUTPUT" >> ${logPath};
+		echo "[$(date)] ❌ Error: Upload to S3 failed" >> ${safeLogPath};
+		echo "Error: $UPLOAD_OUTPUT" >> ${safeLogPath};
 		exit 1;
 	}
 
-	echo "[$(date)] ✅ Upload to S3 completed successfully" >> ${logPath};
-	echo "Backup done ✅" >> ${logPath};
+	echo "[$(date)] ✅ Upload to S3 completed successfully" >> ${safeLogPath};
+	echo "Backup done ✅" >> ${safeLogPath};
 	`;
 };

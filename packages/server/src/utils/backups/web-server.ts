@@ -9,6 +9,7 @@ import {
 	updateDeploymentStatus,
 } from "@dokploy/server/services/deployment";
 import { findDestinationById } from "@dokploy/server/services/destination";
+import { quote } from "shell-quote";
 import { execAsync } from "../process/execAsync";
 import { getS3Credentials, normalizeS3Path } from "./utils";
 
@@ -52,34 +53,34 @@ export const runWebServerBackup = async (backup: BackupSchedule) => {
 			const postgresContainerId = containerId.trim();
 
 			// First dump the database inside the container
-			const dumpCommand = `docker exec ${postgresContainerId} pg_dump -v -Fc -U dokploy -d dokploy -f /tmp/database.sql`;
+			const dumpCommand = `docker exec ${quote([postgresContainerId])} pg_dump -v -Fc -U dokploy -d dokploy -f /tmp/database.sql`;
 			writeStream.write(`Running dump command: ${dumpCommand}\n`);
 			await execAsync(dumpCommand);
 
 			// Then copy the file from the container to host
-			const copyCommand = `docker cp ${postgresContainerId}:/tmp/database.sql ${tempDir}/database.sql`;
+			const copyCommand = `docker cp ${quote([`${postgresContainerId}:/tmp/database.sql`])} ${quote([`${tempDir}/database.sql`])}`;
 			writeStream.write(`Copying database dump: ${copyCommand}\n`);
 			await execAsync(copyCommand);
 
 			// Clean up the temp file in the container
-			const cleanupCommand = `docker exec ${postgresContainerId} rm -f /tmp/database.sql`;
+			const cleanupCommand = `docker exec ${quote([postgresContainerId])} rm -f /tmp/database.sql`;
 			writeStream.write(`Cleaning up temp file: ${cleanupCommand}\n`);
 			await execAsync(cleanupCommand);
 
 			await execAsync(
-				`rsync -a --ignore-errors --no-specials --no-devices --exclude='volume-backups/' ${BASE_PATH}/ ${tempDir}/filesystem/`,
+				`rsync -a --ignore-errors --no-specials --no-devices --exclude='volume-backups/' ${quote([`${BASE_PATH}/`])} ${quote([`${tempDir}/filesystem/`])}`,
 			);
 
 			writeStream.write("Copied filesystem to temp directory\n");
 
 			await execAsync(
 				// Zip all .sql files since we created more than one
-				`cd ${tempDir} && zip -r ${backupFileName} *.sql filesystem/ > /dev/null 2>&1`,
+				`cd ${quote([tempDir])} && zip -r ${quote([backupFileName])} *.sql filesystem/ > /dev/null 2>&1`,
 			);
 
 			writeStream.write("Zipped database and filesystem\n");
 
-			const uploadCommand = `rclone copyto ${rcloneFlags.join(" ")} "${tempDir}/${backupFileName}" "${s3Path}"`;
+			const uploadCommand = `rclone copyto ${rcloneFlags.join(" ")} ${quote([`${tempDir}/${backupFileName}`])} ${quote([s3Path])}`;
 			writeStream.write("Running command to upload backup to S3\n");
 			await execAsync(uploadCommand);
 			writeStream.write("Uploaded backup to S3 ✅\n");

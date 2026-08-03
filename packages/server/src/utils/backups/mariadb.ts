@@ -6,6 +6,7 @@ import {
 import { findEnvironmentById } from "@dokploy/server/services/environment";
 import type { Mariadb } from "@dokploy/server/services/mariadb";
 import { findProjectById } from "@dokploy/server/services/project";
+import { quote } from "shell-quote";
 import { sendDatabaseBackupNotifications } from "../notifications/database-backup";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
 import {
@@ -33,7 +34,7 @@ export const runMariadbBackup = async (
 	try {
 		const rcloneFlags = getS3Credentials(destination);
 		const rcloneDestination = `:s3:${destination.bucket}/${bucketDestination}`;
-		const rcloneCommand = `rclone rcat ${rcloneFlags.join(" ")} "${rcloneDestination}"`;
+		const rcloneCommand = `rclone rcat ${rcloneFlags.join(" ")} ${quote([rcloneDestination])}`;
 
 		const backupCommand = getBackupCommand(
 			backup,

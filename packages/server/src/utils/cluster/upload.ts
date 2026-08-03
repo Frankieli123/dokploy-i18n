@@ -1,4 +1,8 @@
-import type { Registry } from "@dokploy/server/services/registry";
+import {
+	type Registry,
+	safeDockerLoginCommand,
+} from "@dokploy/server/services/registry";
+import { quote } from "shell-quote";
 import type { ApplicationNested } from "../builders";
 
 export const uploadImageRemoteCommand = (application: ApplicationNested) => {
@@ -56,19 +60,24 @@ const getRegistryCommands = (
 	imageName: string,
 	registryTag: string,
 ): string => {
+	const loginCommand = safeDockerLoginCommand(
+		registry.registryUrl,
+		registry.username,
+		registry.password,
+	);
 	return `
-echo "📦 [Enabled Registry] Uploading image to '${registry.registryType}' | '${registryTag}'" ;
-echo "${registry.password}" | docker login ${registry.registryUrl} -u '${registry.username}' --password-stdin || { 
+echo ${quote([`📦 [Enabled Registry] Uploading image to '${registry.registryType}' | '${registryTag}'`])} ;
+${loginCommand} || {
 	echo "❌ DockerHub Failed" ;
 	exit 1;
 }
 echo "✅ Registry Login Success" ;
-docker tag ${imageName} ${registryTag} || { 
+docker tag ${quote([imageName])} ${quote([registryTag])} || {
 	echo "❌ Error tagging image" ;
 	exit 1;
 }
 echo "✅ Image Tagged" ;
-docker push ${registryTag} || { 
+docker push ${quote([registryTag])} || {
 	echo "❌ Error pushing image" ;
 	exit 1;
 }

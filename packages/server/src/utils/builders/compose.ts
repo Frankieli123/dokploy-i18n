@@ -45,17 +45,17 @@ Compose Type: ${composeType} ✅`;
 	const bashCommand = `
 	set -e
 	{
-		echo "${logBox}";
+		echo ${quote([logBox])};
 	
 		${newCompose}
 	
 		${envCommand}
 	
-		cd "${projectPath}";
+		cd ${quote([projectPath])};
 
-		${compose.isolatedDeployment ? `docker network inspect ${compose.appName} >/dev/null 2>&1 || docker network create --attachable ${compose.appName}` : ""}
-		env -i PATH="$PATH" ${exportEnvCommand} docker ${command.split(" ").join(" ")} 2>&1 || { echo "Error: ❌ Docker command failed"; exit 1; }
-		${compose.isolatedDeployment ? `docker network connect ${compose.appName} $(docker ps --filter "name=dokploy-traefik" -q) >/dev/null 2>&1` : ""}
+		${compose.isolatedDeployment ? `docker network inspect ${quote([compose.appName])} >/dev/null 2>&1 || docker network create --attachable ${quote([compose.appName])}` : ""}
+		env -i PATH="$PATH" HOME="$HOME" ${exportEnvCommand} docker ${command} 2>&1 || { echo "Error: ❌ Docker command failed"; exit 1; }
+		${compose.isolatedDeployment ? `docker network connect ${quote([compose.appName])} $(docker ps --filter "name=dokploy-traefik" -q) >/dev/null 2>&1` : ""}
 	
 		echo "Docker Compose Deployed: ✅";
 	} || {
@@ -67,8 +67,15 @@ Compose Type: ${composeType} ✅`;
 	return bashCommand;
 };
 
+const UNSAFE_COMPOSE_COMMAND = /[;&|`$(){}<>\n\\]/;
+
 const sanitizeCommand = (command: string) => {
 	const sanitizedCommand = command.trim();
+	if (UNSAFE_COMPOSE_COMMAND.test(sanitizedCommand)) {
+		throw new Error(
+			"Invalid characters in compose command: shell control characters are not allowed",
+		);
+	}
 
 	const parts = sanitizedCommand.split(/\s+/);
 
@@ -88,9 +95,9 @@ export const createCommand = (compose: ComposeNested) => {
 	let command = "";
 
 	if (composeType === "docker-compose") {
-		command = `compose -p ${appName} -f ${path} up -d --build --remove-orphans`;
+		command = `compose -p ${quote([appName])} -f ${quote([path])} up -d --build --remove-orphans`;
 	} else if (composeType === "stack") {
-		command = `stack deploy -c ${path} ${appName} --prune --with-registry-auth`;
+		command = `stack deploy -c ${quote([path])} ${quote([appName])} --prune --with-registry-auth`;
 	}
 
 	return command;
@@ -123,8 +130,8 @@ export const getCreateEnvFileCommand = (compose: ComposeNested) => {
 
 	const encodedContent = encodeBase64(envFileContent);
 	return `
-touch ${envFilePath};
-echo "${encodedContent}" | base64 -d > "${envFilePath}";
+touch ${quote([envFilePath])};
+echo "${encodedContent}" | base64 -d > ${quote([envFilePath])};
 	`;
 };
 

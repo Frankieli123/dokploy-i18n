@@ -11,6 +11,7 @@ import { pullImage } from "@dokploy/server/utils/docker/utils";
 import { execAsyncRemote } from "@dokploy/server/utils/process/execAsync";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
+import { quote } from "shell-quote";
 import { validUniqueServerAppName } from "./project";
 
 export type Redis = typeof redis.$inferSelect;
@@ -110,7 +111,7 @@ export const deployRedis = async (
 		if (redis.serverId) {
 			await execAsyncRemote(
 				redis.serverId,
-				`docker pull ${redis.dockerImage}`,
+				`docker pull ${quote([redis.dockerImage])}`,
 				onData,
 			);
 		} else {

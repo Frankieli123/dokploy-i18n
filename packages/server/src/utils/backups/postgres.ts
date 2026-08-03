@@ -6,6 +6,7 @@ import {
 import { findEnvironmentById } from "@dokploy/server/services/environment";
 import type { Postgres } from "@dokploy/server/services/postgres";
 import { findProjectById } from "@dokploy/server/services/project";
+import { quote } from "shell-quote";
 import { sendDatabaseBackupNotifications } from "../notifications/database-backup";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
 import {
@@ -35,7 +36,7 @@ export const runPostgresBackup = async (
 		const rcloneFlags = getS3Credentials(destination);
 		const rcloneDestination = `:s3:${destination.bucket}/${bucketDestination}`;
 
-		const rcloneCommand = `rclone rcat ${rcloneFlags.join(" ")} "${rcloneDestination}"`;
+		const rcloneCommand = `rclone rcat ${rcloneFlags.join(" ")} ${quote([rcloneDestination])}`;
 
 		const backupCommand = getBackupCommand(
 			backup,

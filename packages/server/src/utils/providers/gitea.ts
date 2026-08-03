@@ -7,6 +7,7 @@ import {
 } from "@dokploy/server/services/gitea";
 import type { InferResultType } from "@dokploy/server/types/with";
 import { TRPCError } from "@trpc/server";
+import { quote } from "shell-quote";
 
 export const getErrorCloneRequirements = (entity: {
 	giteaRepository?: string | null;
@@ -164,8 +165,8 @@ export const cloneGiteaRepository = async ({
 
 	const basePath = type === "compose" ? COMPOSE_PATH : APPLICATIONS_PATH;
 	const outputPath = outputPathOverride || join(basePath, appName, "code");
-	command += `rm -rf ${outputPath};`;
-	command += `mkdir -p ${outputPath};`;
+	command += `rm -rf ${quote([outputPath])};`;
+	command += `mkdir -p ${quote([outputPath])};`;
 
 	const repoClone = `${giteaOwner}/${giteaRepository}.git`;
 	const cloneUrl = buildGiteaCloneUrl(
@@ -175,8 +176,8 @@ export const cloneGiteaRepository = async ({
 		giteaRepository!,
 	);
 
-	command += `echo "Cloning Repo ${repoClone} to ${outputPath}: ✅";`;
-	command += `git clone --branch ${giteaBranch} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${cloneUrl} ${outputPath} --progress;`;
+	command += `echo ${quote([`Cloning Repo ${repoClone} to ${outputPath}: ✅`])};`;
+	command += `git clone --branch ${quote([String(giteaBranch ?? "")])} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${quote([cloneUrl])} ${quote([outputPath])} --progress;`;
 	return command;
 };
 

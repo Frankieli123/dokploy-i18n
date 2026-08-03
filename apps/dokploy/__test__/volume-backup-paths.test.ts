@@ -105,7 +105,7 @@ describe("volume backup Docker paths", () => {
 			`-v '/data/dokploy/volume-backups/${backupBaseName}':/backup`,
 		);
 		expect(command).toContain(
-			`"/etc/dokploy/volume-backups/${backupBaseName}/frps/archive.tar"`,
+			`/etc/dokploy/volume-backups/${backupBaseName}/frps/archive.tar`,
 		);
 		expect(command).toContain(
 			'--mount "type=bind,source=$TARGET_PATH,target=/target,readonly"',

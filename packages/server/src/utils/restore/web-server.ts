@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { IS_CLOUD, paths } from "@dokploy/server/constants";
 import type { Destination } from "@dokploy/server/services/destination";
+import { quote } from "shell-quote";
 import { getS3Credentials } from "../backups/utils";
 import { execAsync } from "../process/execAsync";
 import {
@@ -44,28 +45,28 @@ export const restoreWebServerBackup = async (
 
 			// Create temp directory
 			emit("Creating temporary directory...");
-			await execAsync(`mkdir -p ${tempDir}`);
+			await execAsync(`mkdir -p ${quote([tempDir])}`);
 
 			// Download backup from S3
 			emit("Downloading backup from S3...");
 			await execAsync(
-				`rclone copyto ${rcloneFlags.join(" ")} "${backupPath}" "${localBackupPath}"`,
+				`rclone copyto ${rcloneFlags.join(" ")} ${quote([backupPath])} ${quote([localBackupPath])}`,
 			);
 
 			// List files before extraction
 			emit("Listing files before extraction...");
-			const { stdout: beforeFiles } = await execAsync(`ls -la ${tempDir}`);
+			const { stdout: beforeFiles } = await execAsync(`ls -la ${quote([tempDir])}`);
 			emit(`Files before extraction: ${beforeFiles}`);
 
 			// Extract backup
 			emit("Extracting backup...");
 			await execAsync(
-				`cd ${tempDir} && unzip "${backupFileName}" > /dev/null 2>&1`,
+				`cd ${quote([tempDir])} && unzip ${quote([backupFileName])} > /dev/null 2>&1`,
 			);
 
 			// Validate extracted structure before overwriting BASE_PATH
 			const { stdout: hasFilesystemDir } = await execAsync(
-				`test -d "${tempDir}/filesystem" && echo ok || true`,
+				`test -d ${quote([`${tempDir}/filesystem`])} && echo ok || true`,
 			);
 			if (!hasFilesystemDir.includes("ok")) {
 				throw new Error(
@@ -75,7 +76,7 @@ export const restoreWebServerBackup = async (
 
 			// Validate database dump exists (either compressed or plain)
 			const { stdout: hasAnyDbDump } = await execAsync(
-				`ls "${tempDir}/database.sql" "${tempDir}/database.sql.gz" 2>/dev/null | head -n 1 || true`,
+				`ls ${quote([`${tempDir}/database.sql`])} ${quote([`${tempDir}/database.sql.gz`])} 2>/dev/null | head -n 1 || true`,
 			);
 			if (!hasAnyDbDump.trim()) {
 				throw new Error(
@@ -104,16 +105,16 @@ export const restoreWebServerBackup = async (
 
 			// Check if database.sql.gz exists and decompress it
 			const { stdout: hasGzFile } = await execAsync(
-				`ls ${tempDir}/database.sql.gz || true`,
+				`ls ${quote([`${tempDir}/database.sql.gz`])} || true`,
 			);
 			if (hasGzFile.includes("database.sql.gz")) {
 				emit("Found compressed database file, decompressing...");
-				await execAsync(`cd ${tempDir} && gunzip database.sql.gz`);
+				await execAsync(`cd ${quote([tempDir])} && gunzip database.sql.gz`);
 			}
 
 			// Verify database file exists
 			const { stdout: hasSqlFile } = await execAsync(
-				`ls ${tempDir}/database.sql || true`,
+				`ls ${quote([`${tempDir}/database.sql`])} || true`,
 			);
 			if (!hasSqlFile.includes("database.sql")) {
 				throw new Error("Database file not found after extraction");
@@ -152,7 +153,7 @@ export const restoreWebServerBackup = async (
 			// Copy the backup file into the container
 			emit("Copying backup file into container...");
 			await execAsync(
-				`docker cp ${tempDir}/database.sql ${postgresContainerId}:/tmp/database.sql`,
+				`docker cp ${quote([`${tempDir}/database.sql`])} ${quote([`${postgresContainerId}:/tmp/database.sql`])}`,
 			);
 
 			// Verify file in container

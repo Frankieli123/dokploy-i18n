@@ -2,6 +2,7 @@ import path from "node:path";
 import { paths } from "@dokploy/server/constants";
 import { findComposeById } from "@dokploy/server/services/compose";
 import type { findVolumeBackupById } from "@dokploy/server/services/volume-backups";
+import { quote } from "shell-quote";
 import { buildS3ObjectPath, getS3Credentials } from "../backups/utils";
 import { resolveVolumeBackupDockerPath } from "./host-path";
 import {
@@ -64,7 +65,7 @@ export const backupVolume = async (
 		serverId,
 	);
 
-	const rcloneCommand = `rclone copyto ${rcloneFlags.join(" ")} "${volumeBackupPath}/${backupFileName}" "${rcloneDestination}"`;
+	const rcloneCommand = `rclone copyto ${rcloneFlags.join(" ")} ${quote([`${volumeBackupPath}/${backupFileName}`])} ${quote([rcloneDestination])}`;
 
 	const serviceLockId =
 		serviceType === "application"

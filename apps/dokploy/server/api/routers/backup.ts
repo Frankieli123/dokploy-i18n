@@ -50,6 +50,7 @@ import {
 	restoreWebServerBackup,
 } from "@dokploy/server/utils/restore";
 import { TRPCError } from "@trpc/server";
+import { quote } from "shell-quote";
 import { observable } from "@trpc/server/observable";
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
@@ -94,7 +95,7 @@ const getDirectorySize = async (
 	rcloneFlags: string[],
 	serverId?: string,
 ) => {
-	const sizeCommand = `rclone size ${rcloneFlags.join(" ")} "${bucketPath}/${normalizeS3Path(filePath)}" --json 2>/dev/null`;
+	const sizeCommand = `rclone size ${rcloneFlags.join(" ")} ${quote([`${bucketPath}/${normalizeS3Path(filePath)}`])} --json 2>/dev/null`;
 
 	try {
 		const stdout = await runRcloneCommand(sizeCommand, serverId);
@@ -397,7 +398,7 @@ export const backupRouter = createTRPCRouter({
 						: input.search;
 
 				const searchPath = baseDir ? `${bucketPath}/${baseDir}` : bucketPath;
-				const listCommand = `rclone lsjson ${rcloneFlags.join(" ")} "${searchPath}" --no-mimetype --no-modtime 2>/dev/null`;
+				const listCommand = `rclone lsjson ${rcloneFlags.join(" ")} ${quote([searchPath])} --no-mimetype --no-modtime 2>/dev/null`;
 				const stdout = await runRcloneCommand(
 					listCommand,
 					input.serverId || undefined,

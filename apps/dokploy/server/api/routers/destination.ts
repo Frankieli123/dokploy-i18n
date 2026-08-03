@@ -9,6 +9,7 @@ import {
 } from "@dokploy/server";
 import { TRPCError } from "@trpc/server";
 import { desc, eq } from "drizzle-orm";
+import { quote } from "shell-quote";
 import {
 	adminProcedure,
 	createTRPCRouter,
@@ -62,7 +63,7 @@ export const destinationRouter = createTRPCRouter({
 					rcloneFlags.unshift(`--s3-provider="${provider}"`);
 				}
 				const rcloneDestination = `:s3:${bucket}`;
-				const rcloneCommand = `rclone ls ${rcloneFlags.join(" ")} "${rcloneDestination}"`;
+				const rcloneCommand = `rclone ls ${rcloneFlags.join(" ")} ${quote([rcloneDestination])}`;
 
 				if (IS_CLOUD && !input.serverId) {
 					throw new TRPCError({

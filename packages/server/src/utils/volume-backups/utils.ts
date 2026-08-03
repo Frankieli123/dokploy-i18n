@@ -12,6 +12,7 @@ import {
 } from "@dokploy/server/utils/process/execAsync";
 import { sendVolumeBackupNotifications } from "@dokploy/server/utils/notifications/volume-backup";
 import { scheduledJobs, scheduleJob } from "node-schedule";
+import { quote } from "shell-quote";
 import { buildS3RemotePath, getS3Credentials } from "../backups/utils";
 import { backupVolume, getVolumeServiceAppName } from "./backup";
 import {
@@ -73,7 +74,7 @@ const cleanupOldVolumeBackups = async (
 					const files = (
 						await Promise.all(
 							includePatterns.map(async (pattern) => {
-								const listCommand = `rclone lsf ${rcloneFlags.join(" ")} --files-only --include "${pattern}" "${backupFilesPath}" 2>/dev/null`;
+								const listCommand = `rclone lsf ${rcloneFlags.join(" ")} --files-only --include ${quote([pattern])} ${quote([backupFilesPath])} 2>/dev/null`;
 								const result = await runCommand(listCommand).catch(() => ({
 									stdout: "",
 									stderr: "",
@@ -97,7 +98,7 @@ const cleanupOldVolumeBackups = async (
 			.sort((left, right) => right.fileName.localeCompare(left.fileName));
 
 		for (const file of backupFiles.slice(keepLatestCount)) {
-			const deleteCommand = `rclone deletefile ${rcloneFlags.join(" ")} "${file.fullPath}"`;
+			const deleteCommand = `rclone deletefile ${rcloneFlags.join(" ")} ${quote([file.fullPath])}`;
 			await runCommand(deleteCommand);
 		}
 	} catch (error) {

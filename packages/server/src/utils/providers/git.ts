@@ -4,6 +4,7 @@ import {
 	findSSHKeyById,
 	updateSSHKeyById,
 } from "@dokploy/server/services/ssh-key";
+import { quote } from "shell-quote";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
 
 interface CloneGitRepository {
@@ -44,7 +45,7 @@ export const cloneGitRepository = async ({
 		const sshKey = await findSSHKeyById(customGitSSHKeyId);
 
 		command += `
-			echo "${sshKey.privateKey}" > ${temporalKeyPath}
+			printf '%s\n' ${quote([sshKey.privateKey])} > ${quote([temporalKeyPath])}
 			chmod 600 ${temporalKeyPath};
 			`;
 	}
@@ -59,9 +60,9 @@ export const cloneGitRepository = async ({
 		}
 		command += addHostToKnownHostsCommand(customGitUrl);
 	}
-	command += `rm -rf ${outputPath};`;
-	command += `mkdir -p ${outputPath};`;
-	command += `echo "Cloning Repo Custom ${customGitUrl} to ${outputPath}: ✅";`;
+	command += `rm -rf ${quote([outputPath])};`;
+	command += `mkdir -p ${quote([outputPath])};`;
+	command += `echo ${quote([`Cloning Repo Custom ${customGitUrl} to ${outputPath}: ✅`])};`;
 
 	if (customGitSSHKeyId) {
 		await updateSSHKeyById({
@@ -73,13 +74,13 @@ export const cloneGitRepository = async ({
 	if (customGitSSHKeyId) {
 		const sshKey = await findSSHKeyById(customGitSSHKeyId);
 		const { port } = sanitizeRepoPathSSH(customGitUrl);
-		const gitSshCommand = `ssh -i /tmp/id_rsa${port ? ` -p ${port}` : ""} -o UserKnownHostsFile=${knownHostsPath}`;
-		command += `echo "${sshKey.privateKey}" > /tmp/id_rsa;`;
+		const gitSshCommand = `ssh -i /tmp/id_rsa${port ? ` -p ${port}` : ""} -o UserKnownHostsFile=${knownHostsPath} -o StrictHostKeyChecking=accept-new`;
+		command += `printf '%s\n' ${quote([sshKey.privateKey])} > /tmp/id_rsa;`;
 		command += "chmod 600 /tmp/id_rsa;";
 		command += `export GIT_SSH_COMMAND="${gitSshCommand}";`;
 	}
-	command += `if ! git clone --branch ${customGitBranch} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} --progress ${customGitUrl} ${outputPath}; then
-				echo "❌ [ERROR] Fail to clone the repository ${customGitUrl}";
+	command += `if ! git clone --branch ${quote([String(customGitBranch ?? "")])} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} --progress ${quote([String(customGitUrl ?? "")])} ${quote([outputPath])}; then
+				echo ${quote([`❌ [ERROR] Fail to clone the repository ${customGitUrl}`])};
 				exit 1;
 			fi
 			`;
@@ -111,7 +112,7 @@ const addHostToKnownHostsCommand = (repositoryURL: string) => {
 	const { domain, port } = sanitizeRepoPathSSH(repositoryURL);
 	const knownHostsPath = path.join(SSH_PATH, "known_hosts");
 
-	return `ssh-keyscan -p ${port} ${domain} >> ${knownHostsPath};`;
+	return `ssh-keyscan -p ${Number(port)} ${quote([String(domain ?? "")])} >> ${quote([knownHostsPath])} || true;`;
 };
 const sanitizeRepoPathSSH = (input: string) => {
 	const SSH_PATH_RE = new RegExp(
@@ -169,7 +170,7 @@ export const getGitCommitInfo = async ({
 		hash: "",
 	};
 	try {
-		const gitCommand = `git -C ${outputPath} log -1 --pretty=format:"%H---DELIMITER---%B"`;
+		const gitCommand = `git -C ${quote([outputPath])} log -1 --pretty=format:"%H---DELIMITER---%B"`;
 		if (serverId) {
 			const { stdout } = await execAsyncRemote(serverId, gitCommand);
 			stdoutResult = stdout.trim();

@@ -1,3 +1,4 @@
+import { quote } from "shell-quote";
 import {
 	getComposeContainerCommand,
 	getServiceContainerCommand,
@@ -7,7 +8,7 @@ export const getPostgresRestoreCommand = (
 	database: string,
 	databaseUser: string,
 ) => {
-	return `docker exec -i $CONTAINER_ID sh -c "pg_restore -U '${databaseUser}' -d ${database} -O --clean --if-exists"`;
+	return `docker exec -e DB_NAME=${quote([database])} -e DB_USER=${quote([databaseUser])} -i $CONTAINER_ID sh -c 'pg_restore -U "$DB_USER" -d "$DB_NAME" -O --clean --if-exists'`;
 };
 
 export const getMariadbRestoreCommand = (
@@ -15,14 +16,14 @@ export const getMariadbRestoreCommand = (
 	databaseUser: string,
 	databasePassword: string,
 ) => {
-	return `docker exec -i $CONTAINER_ID sh -c "mariadb -u '${databaseUser}' -p'${databasePassword}' ${database}"`;
+	return `docker exec -e DB_NAME=${quote([database])} -e DB_USER=${quote([databaseUser])} -e DB_PASS=${quote([databasePassword])} -i $CONTAINER_ID sh -c 'mariadb -u "$DB_USER" -p"$DB_PASS" "$DB_NAME"'`;
 };
 
 export const getMysqlRestoreCommand = (
 	database: string,
 	databasePassword: string,
 ) => {
-	return `docker exec -i $CONTAINER_ID sh -c "mysql -u root -p'${databasePassword}' ${database}"`;
+	return `docker exec -e DB_NAME=${quote([database])} -e DB_PASS=${quote([databasePassword])} -i $CONTAINER_ID sh -c 'mysql -u root -p"$DB_PASS" "$DB_NAME"'`;
 };
 
 export const getMongoRestoreCommand = (
@@ -30,8 +31,9 @@ export const getMongoRestoreCommand = (
 	databaseUser: string,
 	databasePassword: string,
 ) => {
-	const databaseFlag = database === "*" ? "" : ` --db '${database}'`;
-	return `docker exec -i $CONTAINER_ID sh -c "mongorestore --username '${databaseUser}' --password '${databasePassword}' --authenticationDatabase admin${databaseFlag} --archive --drop"`;
+	const databaseEnv = database === "*" ? "" : ` -e DB_NAME=${quote([database])}`;
+	const databaseFlag = database === "*" ? "" : ' --db "$DB_NAME"';
+	return `docker exec${databaseEnv} -e DB_USER=${quote([databaseUser])} -e DB_PASS=${quote([databasePassword])} -i $CONTAINER_ID sh -c 'mongorestore --username "$DB_USER" --password "$DB_PASS" --authenticationDatabase admin${databaseFlag} --archive --drop'`;
 };
 
 export const getComposeSearchCommand = (
@@ -89,8 +91,8 @@ rm -rf ${tempDir} && \
 mkdir -p ${tempDir} && \
 ${rcloneCommand} ${tempDir} && \
 cd ${tempDir} && \
-gunzip -f "${fileName}" && \
-${restoreCommand} < "${decompressedName}" && \
+gunzip -f ${quote([fileName])} && \
+${restoreCommand} < ${quote([decompressedName])} && \
 rm -rf ${tempDir}
 	`;
 };

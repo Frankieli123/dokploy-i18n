@@ -12,6 +12,7 @@ import { pullImage } from "@dokploy/server/utils/docker/utils";
 import { execAsyncRemote } from "@dokploy/server/utils/process/execAsync";
 import { TRPCError } from "@trpc/server";
 import { eq, getTableColumns } from "drizzle-orm";
+import { quote } from "shell-quote";
 import { validUniqueServerAppName } from "./project";
 
 export type MySql = typeof mysql.$inferSelect;
@@ -138,7 +139,7 @@ export const deployMySql = async (
 		if (mysql.serverId) {
 			await execAsyncRemote(
 				mysql.serverId,
-				`docker pull ${mysql.dockerImage}`,
+				`docker pull ${quote([mysql.dockerImage])}`,
 				onData,
 			);
 		} else {

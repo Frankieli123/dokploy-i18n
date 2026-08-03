@@ -3,6 +3,7 @@ import { paths } from "@dokploy/server/constants";
 import { findApplicationById } from "@dokploy/server/services/application";
 import { findComposeById } from "@dokploy/server/services/compose";
 import { findDestinationById } from "@dokploy/server/services/destination";
+import { quote } from "shell-quote";
 import { getS3Credentials } from "../backups/utils";
 import { resolveVolumeBackupDockerPath } from "./host-path";
 import {
@@ -40,7 +41,7 @@ export const restoreVolume = async (
 	const backupPath = `${bucketPath}/${backupFileName}`;
 
 	// Command to download backup file from S3
-	const downloadCommand = `rclone copyto ${rcloneFlags.join(" ")} "${backupPath}" "${volumeBackupPath}/${backupFileName}"`;
+	const downloadCommand = `rclone copyto ${rcloneFlags.join(" ")} ${quote([backupPath])} ${quote([`${volumeBackupPath}/${backupFileName}`])}`;
 
 	if (normalizedVolumeName === ALL_MOUNTS_VOLUME_NAME) {
 		const restoreAllMountsCommand = `

@@ -40,6 +40,7 @@ describe("createDomainLabels", () => {
 			"traefik.http.routers.test-app-1-websecure.entrypoints=websecure",
 			"traefik.http.services.test-app-1-websecure.loadbalancer.server.port=8080",
 			"traefik.http.routers.test-app-1-websecure.service=test-app-1-websecure",
+			"traefik.http.routers.test-app-1-websecure.tls=true",
 		]);
 	});
 
@@ -58,6 +59,7 @@ describe("createDomainLabels", () => {
 			"traefik.http.routers.test-app-1-websecure.entrypoints=websecure",
 			"traefik.http.services.test-app-1-websecure.loadbalancer.server.port=8080",
 			"traefik.http.routers.test-app-1-websecure.service=test-app-1-websecure",
+			"traefik.http.routers.test-app-1-websecure.tls=true",
 		]);
 	});
 

@@ -5,6 +5,7 @@ import {
 	findRegistryById,
 	IS_CLOUD,
 	removeRegistry,
+	safeDockerLoginCommand,
 	updateRegistry,
 } from "@dokploy/server";
 import { TRPCError } from "@trpc/server";
@@ -101,7 +102,11 @@ export const registryRouter = createTRPCRouter({
 				if (input.serverId && input.serverId !== "none") {
 					await execAsyncRemote(
 						input.serverId,
-						`echo ${input.password} | docker ${args.join(" ")}`,
+						safeDockerLoginCommand(
+							input.registryUrl,
+							input.username,
+							input.password,
+						),
 					);
 				} else {
 					await execFileAsync("docker", args, {

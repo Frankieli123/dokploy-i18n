@@ -11,6 +11,7 @@ import {
 } from "@dokploy/server/services/bitbucket";
 import type { InferResultType } from "@dokploy/server/types/with";
 import { TRPCError } from "@trpc/server";
+import { quote } from "shell-quote";
 
 export type ApplicationWithBitbucket = InferResultType<
 	"applications",
@@ -118,12 +119,12 @@ export const cloneBitbucketRepository = async ({
 	}
 	const basePath = type === "compose" ? COMPOSE_PATH : APPLICATIONS_PATH;
 	const outputPath = outputPathOverride || join(basePath, appName, "code");
-	command += `rm -rf ${outputPath};`;
-	command += `mkdir -p ${outputPath};`;
+	command += `rm -rf ${quote([outputPath])};`;
+	command += `mkdir -p ${quote([outputPath])};`;
 	const repoclone = `bitbucket.org/${bitbucketOwner}/${bitbucketRepository}.git`;
 	const cloneUrl = getBitbucketCloneUrl(bitbucket, repoclone);
-	command += `echo "Cloning Repo ${repoclone} to ${outputPath}: ✅";`;
-	command += `git clone --branch ${bitbucketBranch} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${cloneUrl} ${outputPath} --progress;`;
+	command += `echo ${quote([`Cloning Repo ${repoclone} to ${outputPath}: ✅`])};`;
+	command += `git clone --branch ${quote([String(bitbucketBranch ?? "")])} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${quote([cloneUrl])} ${quote([outputPath])} --progress;`;
 	return command;
 };
 

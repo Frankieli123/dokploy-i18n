@@ -6,6 +6,7 @@ import {
 	execAsyncRemote,
 } from "@dokploy/server/utils/process/execAsync";
 import { and, eq } from "drizzle-orm";
+import { quote } from "shell-quote";
 import { db } from "../db";
 import { compose } from "../db/schema";
 import {
@@ -723,7 +724,7 @@ export const reconnectServicesToTraefik = async (serverId?: string) => {
 
 	let commands = "";
 	for (const composeItem of composeResult) {
-		commands += `docker network connect ${composeItem.appName} $(docker ps --filter "name=dokploy-traefik" -q) >/dev/null 2>&1\n`;
+		commands += `docker network connect ${quote([composeItem.appName])} $(docker ps --filter "name=dokploy-traefik" -q) >/dev/null 2>&1\n`;
 	}
 
 	if (!commands.trim()) {

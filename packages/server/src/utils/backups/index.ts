@@ -4,6 +4,7 @@ import type { BackupSchedule } from "@dokploy/server/services/backup";
 import { getAllServers } from "@dokploy/server/services/server";
 import { eq } from "drizzle-orm";
 import { scheduleJob } from "node-schedule";
+import { quote } from "shell-quote";
 import { db } from "../../db/index";
 import { startLogCleanup } from "../access-log/handler";
 import {
@@ -136,7 +137,7 @@ export const keepLatestNBackups = async (
 		const backupFiles = (
 			await Promise.all(
 				pathCandidates.map(async (backupFilesPath) => {
-					const rcloneList = `rclone lsf ${rcloneFlags.join(" ")} --files-only --include "*${backupExtension}" "${backupFilesPath}" 2>/dev/null`;
+					const rcloneList = `rclone lsf ${rcloneFlags.join(" ")} --files-only --include ${quote([`*${backupExtension}`])} ${quote([backupFilesPath])} 2>/dev/null`;
 					const result = await runCommand(rcloneList).catch(() => ({
 						stdout: "",
 						stderr: "",
@@ -159,7 +160,7 @@ export const keepLatestNBackups = async (
 		const filesToDelete = backupFiles.slice(backup.keepLatestCount);
 
 		for (const file of filesToDelete) {
-			const deleteCommand = `rclone deletefile ${rcloneFlags.join(" ")} "${file.fullPath}"`;
+			const deleteCommand = `rclone deletefile ${rcloneFlags.join(" ")} ${quote([file.fullPath])}`;
 			await runCommand(deleteCommand);
 		}
 	} catch (error) {
