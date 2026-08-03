@@ -7,7 +7,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, isAPIError } from "better-auth/api";
 import { admin, organization, twoFactor } from "better-auth/plugins";
 import { and, desc, eq } from "drizzle-orm";
-import { BETTER_AUTH_SECRET, IS_CLOUD } from "../constants";
+import { IS_CLOUD } from "../constants";
 import { db } from "../db";
 import * as schema from "../db/schema";
 import {
@@ -32,6 +32,7 @@ import { getHubSpotUTK, submitToHubSpot } from "../utils/tracking/hubspot";
 import { sendEmail } from "../verification/send-verification-email";
 import { getPublicIpWithFallback } from "../wss/utils";
 import { ac, adminRole, memberRole, ownerRole } from "./access-control";
+import { betterAuthSecret } from "./auth-secret";
 import {
 	getAuthCookieOptions,
 	resolveSelfHostedServerIp,
@@ -48,7 +49,7 @@ const { handler, api } = betterAuth({
 		provider: "pg",
 		schema: schema,
 	}),
-	secret: BETTER_AUTH_SECRET,
+	secret: betterAuthSecret,
 	...getAuthCookieOptions(IS_CLOUD),
 	disabledPaths: [
 		"/sso/register",

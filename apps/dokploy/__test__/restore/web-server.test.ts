@@ -32,11 +32,14 @@ vi.mock("@dokploy/server/utils/restore/postgres-database", () => ({
 
 const migrationCommand = "node -r dotenv/config dist/migration.mjs";
 
-const configureCommands = (migrationError?: Error) => {
+const configureCommands = (migrationError?: Error, hasAuthSecret = false) => {
 	vi.mocked(execAsync).mockImplementation(async (command) => {
 		if (command === migrationCommand && migrationError) throw migrationError;
 		if (command.startsWith("ls -la ")) return { stdout: "files", stderr: "" };
 		if (command.startsWith("test -d ")) return { stdout: "ok", stderr: "" };
+		if (command.includes("filesystem/secrets/better-auth-secret")) {
+			return { stdout: hasAuthSecret ? "ok" : "", stderr: "" };
+		}
 		if (command.includes("database.sql.gz") && command.includes("head -n 1")) {
 			return { stdout: "/tmp/dokploy-restore-test/database.sql", stderr: "" };
 		}
@@ -86,6 +89,16 @@ describe("restoreWebServerBackup", () => {
 		expect(migrationIndex).toBeGreaterThan(restoreIndex);
 		expect(logs).toContain("Running database migrations...");
 		expect(logs).toContain("Restore completed successfully!");
+		expect(logs).toContain(
+			"Legacy backup detected, restoring the compatible auth secret...",
+		);
+		expect(
+			commands.some(
+				(command) =>
+					command.includes("better-auth-secret-123456789") &&
+					command.includes("chmod 600"),
+			),
+		).toBe(true);
 	});
 
 	it("does not report success when migrations fail", async () => {
@@ -109,5 +122,27 @@ describe("restoreWebServerBackup", () => {
 
 		expect(logs).not.toContain("Restore completed successfully!");
 		expect(logs.some((log) => log.includes("migration failed"))).toBe(true);
+	});
+
+	it("preserves the auth secret included in newer backups", async () => {
+		configureCommands(undefined, true);
+		const logs: string[] = [];
+
+		await restoreWebServerBackup(
+			{ bucket: "backups" } as never,
+			"web-server.dump.zip",
+			(log) => logs.push(log),
+		);
+
+		expect(logs).not.toContain(
+			"Legacy backup detected, restoring the compatible auth secret...",
+		);
+		expect(
+			vi
+				.mocked(execAsync)
+				.mock.calls.some(([command]) =>
+					command.includes("better-auth-secret-123456789"),
+				),
+		).toBe(false);
 	});
 });

@@ -6,6 +6,7 @@ import type { Destination } from "@dokploy/server/services/destination";
 import { quote } from "shell-quote";
 import { getS3Credentials } from "../backups/utils";
 import { execAsync } from "../process/execAsync";
+import { LEGACY_BETTER_AUTH_SECRET } from "../../lib/auth-secret";
 import {
 	getDokployDatabaseCreateCommand,
 	preparePostgresDatabaseCreation,
@@ -99,6 +100,19 @@ export const restoreWebServerBackup = async (
 			// Copy files preserving permissions
 			emit("Copying files...");
 			await execAsync(`cp -rp "${tempDir}/filesystem/"* "${BASE_PATH}/"`);
+
+			const backupAuthSecret = `${tempDir}/filesystem/secrets/better-auth-secret`;
+			const { stdout: hasAuthSecret } = await execAsync(
+				`test -s ${quote([backupAuthSecret])} && echo ok || true`,
+			);
+			if (!hasAuthSecret.includes("ok")) {
+				emit("Legacy backup detected, restoring the compatible auth secret...");
+				const authSecretDirectory = `${BASE_PATH}/secrets`;
+				const authSecretFile = `${authSecretDirectory}/better-auth-secret`;
+				await execAsync(
+					`mkdir -p ${quote([authSecretDirectory])} && chmod 700 ${quote([authSecretDirectory])} && printf %s ${quote([LEGACY_BETTER_AUTH_SECRET])} > ${quote([authSecretFile])} && chmod 600 ${quote([authSecretFile])}`,
+				);
+			}
 
 			// Now handle database restore
 			emit("Starting database restore...");

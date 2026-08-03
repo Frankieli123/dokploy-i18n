@@ -12,8 +12,6 @@ export const DOKPLOY_DOCKER_PORT = process.env.DOKPLOY_DOCKER_PORT
 		? Number(process.env.DOCKER_PORT)
 	: undefined;
 export const CLEANUP_CRON_JOB = "50 23 * * *";
-export const BETTER_AUTH_SECRET =
-	process.env.BETTER_AUTH_SECRET || "better-auth-secret-123456789";
 export const docker = new Docker({
 	...(DOKPLOY_DOCKER_API_VERSION && {
 		version: DOKPLOY_DOCKER_API_VERSION,

@@ -37,4 +37,12 @@ describe("installation scripts", () => {
 		expect(content).toContain("--env-rm RELEASE_TAG");
 		expect(content).toContain('--env-add "RELEASE_TAG=$VERSION_TAG"');
 	});
+
+	it.each(scripts)("creates a persistent auth secret in $name", ({ content }) => {
+		expect(content).toContain('AUTH_SECRET_FILE="$AUTH_SECRET_DIR/better-auth-secret"');
+		expect(content).toContain('chmod 600 "$AUTH_SECRET_FILE"');
+		expect(content).toContain(
+			"BETTER_AUTH_SECRET_FILE=/etc/dokploy/secrets/better-auth-secret",
+		);
+	});
 });

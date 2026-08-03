@@ -295,6 +295,18 @@ install_dokploy() {
 
     chmod 777 /etc/dokploy
 
+    AUTH_SECRET_DIR="/etc/dokploy/secrets"
+    AUTH_SECRET_FILE="$AUTH_SECRET_DIR/better-auth-secret"
+    mkdir -p "$AUTH_SECRET_DIR"
+    chmod 700 "$AUTH_SECRET_DIR"
+    if [ ! -s "$AUTH_SECRET_FILE" ]; then
+        (umask 077 && head -c 48 /dev/urandom | base64 | tr -d '\n' > "$AUTH_SECRET_FILE") || {
+            echo "Error: failed to create Dokploy auth secret" >&2
+            exit 1
+        }
+    fi
+    chmod 600 "$AUTH_SECRET_FILE"
+
     docker service create \
     --name dokploy-postgres \
     --constraint 'node.role==manager' \
@@ -340,6 +352,7 @@ install_dokploy() {
       $release_tag_env \
       -e ADVERTISE_ADDR=$advertise_addr \
       -e DOKPLOY_HOST_ETC_DIR=/etc/dokploy \
+      -e BETTER_AUTH_SECRET_FILE=/etc/dokploy/secrets/better-auth-secret \
       "$DOCKER_IMAGE" || {
         echo "Error: failed to create Dokploy service" >&2
         exit 1
