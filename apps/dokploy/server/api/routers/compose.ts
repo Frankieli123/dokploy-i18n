@@ -1,6 +1,7 @@
 import {
 	addDomainToCompose,
 	addNewService,
+	assertGitProviderAccess,
 	checkServiceAccess,
 	cloneCompose,
 	createCommand,
@@ -12,9 +13,13 @@ import {
 	execAsync,
 	execAsyncRemote,
 	findComposeById,
+	findBitbucketById,
 	findDomainsByComposeId,
 	findEnvironmentById,
+	findGiteaById,
 	findGitProviderById,
+	findGithubById,
+	findGitlabById,
 	findMemberById,
 	findProjectById,
 	findServerById,
@@ -165,7 +170,11 @@ export const composeRouter = createTRPCRouter({
 			if (gitProviderId) {
 				try {
 					const gitProvider = await findGitProviderById(gitProviderId);
-					if (gitProvider.userId !== ctx.session.userId) {
+					if (
+						gitProvider.organizationId !==
+							ctx.session.activeOrganizationId ||
+						gitProvider.userId !== ctx.session.userId
+					) {
 						hasGitProviderAccess = false;
 						unauthorizedProvider = compose.sourceType;
 					}
@@ -177,6 +186,43 @@ export const composeRouter = createTRPCRouter({
 
 			return {
 				...compose,
+				github: compose.github
+					? {
+							...compose.github,
+							githubClientSecret: "",
+							githubPrivateKey: "",
+							githubWebhookSecret: "",
+						}
+					: compose.github,
+				gitlab: compose.gitlab
+					? {
+							...compose.gitlab,
+							secret: "",
+							accessToken: "",
+							refreshToken: "",
+						}
+					: compose.gitlab,
+				bitbucket: compose.bitbucket
+					? { ...compose.bitbucket, appPassword: "", apiToken: "" }
+					: compose.bitbucket,
+				gitea: compose.gitea
+					? {
+							...compose.gitea,
+							clientSecret: "",
+							accessToken: "",
+							refreshToken: "",
+						}
+					: compose.gitea,
+				backups: compose.backups.map((backup) => ({
+					...backup,
+					destination: backup.destination
+						? {
+								...backup.destination,
+								accessKey: "",
+								secretAccessKey: "",
+							}
+						: backup.destination,
+				})),
 				hasGitProviderAccess,
 				unauthorizedProvider,
 			};
@@ -194,6 +240,18 @@ export const composeRouter = createTRPCRouter({
 					code: "UNAUTHORIZED",
 					message: "You are not authorized to update this compose",
 				});
+			}
+
+			const providers = await Promise.all([
+				input.githubId ? findGithubById(input.githubId) : null,
+				input.gitlabId ? findGitlabById(input.gitlabId) : null,
+				input.bitbucketId ? findBitbucketById(input.bitbucketId) : null,
+				input.giteaId ? findGiteaById(input.giteaId) : null,
+			]);
+			for (const provider of providers) {
+				if (provider) {
+					assertGitProviderAccess(ctx.session, provider.gitProvider);
+				}
 			}
 			return updateCompose(input.composeId, input);
 		}),
@@ -1070,7 +1128,9 @@ export const composeRouter = createTRPCRouter({
 				baseConditions.push(eq(environments.projectId, input.projectId));
 			}
 			if (input.environmentId) {
-				baseConditions.push(eq(composeTable.environmentId, input.environmentId));
+				baseConditions.push(
+					eq(composeTable.environmentId, input.environmentId),
+				);
 			}
 
 			if (input.q?.trim()) {

@@ -44,7 +44,7 @@ export const giteaRouter = createTRPCRouter({
 			const giteaProvider = await findGiteaById(input.giteaId);
 			if (
 				giteaProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
+					ctx.session.activeOrganizationId ||
 				giteaProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({
@@ -98,7 +98,7 @@ export const giteaRouter = createTRPCRouter({
 			const giteaProvider = await findGiteaById(giteaId);
 			if (
 				giteaProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
+					ctx.session.activeOrganizationId ||
 				giteaProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({
@@ -135,7 +135,7 @@ export const giteaRouter = createTRPCRouter({
 			const giteaProvider = await findGiteaById(giteaId);
 			if (
 				giteaProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
+					ctx.session.activeOrganizationId ||
 				giteaProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({
@@ -168,7 +168,7 @@ export const giteaRouter = createTRPCRouter({
 				const giteaProvider = await findGiteaById(giteaId);
 				if (
 					giteaProvider.gitProvider.organizationId !==
-						ctx.session.activeOrganizationId &&
+						ctx.session.activeOrganizationId ||
 					giteaProvider.gitProvider.userId !== ctx.session.userId
 				) {
 					throw new TRPCError({
@@ -197,7 +197,7 @@ export const giteaRouter = createTRPCRouter({
 			const giteaProvider = await findGiteaById(input.giteaId);
 			if (
 				giteaProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
+					ctx.session.activeOrganizationId ||
 				giteaProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({
@@ -239,7 +239,7 @@ export const giteaRouter = createTRPCRouter({
 			const giteaProvider = await findGiteaById(giteaId);
 			if (
 				giteaProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
+					ctx.session.activeOrganizationId ||
 				giteaProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({

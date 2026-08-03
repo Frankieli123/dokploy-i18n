@@ -1,4 +1,5 @@
-import { createGithub } from "@dokploy/server";
+import { createGithub, validateRequest } from "@dokploy/server";
+import { hasPermission } from "@dokploy/server/services/permission";
 import { eq } from "drizzle-orm";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { Octokit } from "octokit";
@@ -21,16 +22,22 @@ export default async function handler(
 	if (!code) {
 		return res.status(400).json({ error: "Missing code parameter" });
 	}
-	const [action, ...rest] = state?.split(":");
+
+	const { user, session } = await validateRequest(req);
+	if (!user || !session?.activeOrganizationId) {
+		return res.status(401).json({ error: "Unauthorized" });
+	}
+	const ctx = {
+		user: { id: user.id },
+		session: { activeOrganizationId: session.activeOrganizationId },
+	};
+	if (!(await hasPermission(ctx, { gitProviders: ["create"] }))) {
+		return res.status(403).json({ error: "Forbidden" });
+	}
+
+	const [action, ...rest] = state?.split(":") ?? [];
 
 	if (action === "gh_init") {
-		const organizationId = rest[0];
-		const userId = rest[1] || (req.query.userId as string);
-
-		if (!userId) {
-			return res.status(400).json({ error: "Missing userId parameter" });
-		}
-
 		const octokit = new Octokit({});
 		const { data } = await octokit.request(
 			"POST /app-manifests/{code}/conversions",
@@ -49,16 +56,31 @@ export default async function handler(
 				githubWebhookSecret: data.webhook_secret,
 				githubPrivateKey: data.pem,
 			},
-			organizationId as string,
-			userId,
+			session.activeOrganizationId,
+			user.id,
 		);
 	} else if (action === "gh_setup") {
+		const githubId = rest[0];
+		if (!githubId) {
+			return res.status(400).json({ error: "Missing github provider id" });
+		}
+		const provider = await db.query.github.findFirst({
+			where: eq(github.githubId, githubId),
+			with: { gitProvider: true },
+		});
+		if (
+			!provider ||
+			provider.gitProvider.organizationId !== session.activeOrganizationId ||
+			provider.gitProvider.userId !== user.id
+		) {
+			return res.status(404).json({ error: "Github provider not found" });
+		}
 		await db
 			.update(github)
 			.set({
 				githubInstallationId: installation_id,
 			})
-			.where(eq(github.githubId, rest[0] as string))
+			.where(eq(github.githubId, githubId))
 			.returning();
 	}
 

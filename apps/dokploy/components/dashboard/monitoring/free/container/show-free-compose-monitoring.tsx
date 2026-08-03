@@ -28,12 +28,14 @@ interface Props {
 	appName: string;
 	serverId?: string;
 	appType: "stack" | "docker-compose";
+	serviceId: string;
 }
 
 export const ComposeFreeMonitoring = ({
 	appName,
 	appType = "stack",
 	serverId,
+	serviceId,
 }: Props) => {
 	const { t } = useTranslation("common");
 	const { data, isPending } = api.docker.getContainersByAppNameMatch.useQuery(
@@ -137,9 +139,9 @@ export const ComposeFreeMonitoring = ({
 				<ContainerFreeMonitoring
 					appName={containerAppName || ""}
 					appType={appType}
+					serviceId={serviceId}
 				/>
 			</CardContent>
 		</>
 	);
 };
-

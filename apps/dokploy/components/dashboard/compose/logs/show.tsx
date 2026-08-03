@@ -36,12 +36,14 @@ interface Props {
 	appName: string;
 	serverId?: string;
 	appType: "stack" | "docker-compose";
+	serviceId: string;
 }
 
 export const ShowDockerLogsCompose = ({
 	appName,
 	appType,
 	serverId,
+	serviceId,
 }: Props) => {
 	const { t } = useTranslation("common");
 	const { data, isLoading } = api.docker.getContainersByAppNameMatch.useQuery(
@@ -112,6 +114,7 @@ export const ShowDockerLogsCompose = ({
 					serverId={serverId || ""}
 					containerId={containerId || "select-a-container"}
 					runType="native"
+					serviceId={serviceId}
 				/>
 			</CardContent>
 		</Card>

@@ -231,6 +231,7 @@ export const ShowGeneralMariadb = ({ mariadbId }: Props) => {
 						<DockerTerminalModal
 							appName={data?.appName || ""}
 							serverId={data?.serverId || ""}
+							serviceId={data?.mariadbId}
 						>
 							<Button
 								variant="outline"
@@ -267,4 +268,3 @@ export const ShowGeneralMariadb = ({ mariadbId }: Props) => {
 		</>
 	);
 };
-

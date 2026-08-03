@@ -256,6 +256,7 @@ const Postgresql = (
 													<>
 														<ContainerFreeMonitoring
 															appName={data?.appName || ""}
+															serviceId={data?.postgresId}
 														/>
 													</>
 												)}
@@ -267,6 +268,7 @@ const Postgresql = (
 											<ShowDockerLogs
 												serverId={data?.serverId || ""}
 												appName={data?.appName || ""}
+												serviceId={data?.postgresId || postgresId}
 											/>
 										</div>
 									</TabsContent>

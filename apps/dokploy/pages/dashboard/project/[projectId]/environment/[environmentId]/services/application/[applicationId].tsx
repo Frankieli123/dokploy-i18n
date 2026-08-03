@@ -316,6 +316,7 @@ const Service = (
 														<div>
 															<ContainerFreeMonitoring
 																appName={data?.appName || ""}
+																serviceId={data?.applicationId}
 															/>
 														</div>
 														{/* )} */}
@@ -330,6 +331,7 @@ const Service = (
 											<ShowDockerLogs
 												appName={data?.appName || ""}
 												serverId={data?.serverId || ""}
+												serviceId={data?.applicationId || applicationId}
 											/>
 										</div>
 									</TabsContent>

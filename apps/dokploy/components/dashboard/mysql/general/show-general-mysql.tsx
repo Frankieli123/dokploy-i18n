@@ -231,6 +231,7 @@ export const ShowGeneralMysql = ({ mysqlId }: Props) => {
 						<DockerTerminalModal
 							appName={data?.appName || ""}
 							serverId={data?.serverId || ""}
+							serviceId={data?.mysqlId}
 						>
 							<Button
 								variant="outline"
@@ -271,4 +272,3 @@ export const ShowGeneralMysql = ({ mysqlId }: Props) => {
 		</>
 	);
 };
-

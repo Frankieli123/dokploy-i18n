@@ -28,6 +28,21 @@ export const findGitProviderById = async (gitProviderId: string) => {
 	return result;
 };
 
+export const assertGitProviderAccess = (
+	session: { userId: string; activeOrganizationId: string },
+	provider: Pick<GitProvider, "organizationId" | "userId">,
+) => {
+	if (
+		provider.organizationId !== session.activeOrganizationId ||
+		provider.userId !== session.userId
+	) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not allowed to access this git provider",
+		});
+	}
+};
+
 export const updateGitProvider = async (
 	gitProviderId: string,
 	input: Partial<GitProvider>,

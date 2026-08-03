@@ -1,11 +1,16 @@
 import {
 	addNewService,
+	assertGitProviderAccess,
 	checkServiceAccess,
 	createApplication,
 	deleteAllMiddlewares,
 	findApplicationById,
 	findEnvironmentById,
+	findBitbucketById,
+	findGiteaById,
 	findGitProviderById,
+	findGithubById,
+	findGitlabById,
 	findMemberById,
 	findProjectById,
 	getApplicationStats,
@@ -34,10 +39,7 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import {
-	createTRPCRouter,
-	protectedProcedure,
-} from "@/server/api/trpc";
+import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { db } from "@/server/db";
 import {
 	apiCreateApplication,
@@ -166,7 +168,11 @@ export const applicationRouter = createTRPCRouter({
 			if (gitProviderId) {
 				try {
 					const gitProvider = await findGitProviderById(gitProviderId);
-					if (gitProvider.userId !== ctx.session.userId) {
+					if (
+						gitProvider.organizationId !==
+							ctx.session.activeOrganizationId ||
+						gitProvider.userId !== ctx.session.userId
+					) {
 						hasGitProviderAccess = false;
 						unauthorizedProvider = application.sourceType;
 					}
@@ -178,6 +184,39 @@ export const applicationRouter = createTRPCRouter({
 
 			return {
 				...application,
+				registry: application.registry
+					? { ...application.registry, password: "" }
+					: application.registry,
+				buildRegistry: application.buildRegistry
+					? { ...application.buildRegistry, password: "" }
+					: application.buildRegistry,
+				github: application.github
+					? {
+							...application.github,
+							githubClientSecret: "",
+							githubPrivateKey: "",
+							githubWebhookSecret: "",
+						}
+					: application.github,
+				gitlab: application.gitlab
+					? {
+							...application.gitlab,
+							secret: "",
+							accessToken: "",
+							refreshToken: "",
+						}
+					: application.gitlab,
+				bitbucket: application.bitbucket
+					? { ...application.bitbucket, appPassword: "", apiToken: "" }
+					: application.bitbucket,
+				gitea: application.gitea
+					? {
+							...application.gitea,
+							clientSecret: "",
+							accessToken: "",
+							refreshToken: "",
+						}
+					: application.gitea,
 				hasGitProviderAccess,
 				unauthorizedProvider,
 			};
@@ -201,7 +240,9 @@ export const applicationRouter = createTRPCRouter({
 
 				await updateApplicationStatus(input.applicationId, "idle");
 				await mechanizeDockerContainer(
-					application as unknown as Parameters<typeof mechanizeDockerContainer>[0],
+					application as unknown as Parameters<
+						typeof mechanizeDockerContainer
+					>[0],
 				);
 				await updateApplicationStatus(input.applicationId, "done");
 				return true;
@@ -246,7 +287,9 @@ export const applicationRouter = createTRPCRouter({
 			const cleanupOperations = [
 				async () =>
 					await deleteAllMiddlewares(
-						application as unknown as Parameters<typeof deleteAllMiddlewares>[0],
+						application as unknown as Parameters<
+							typeof deleteAllMiddlewares
+						>[0],
 					),
 				async () =>
 					await removeDeployments(
@@ -418,6 +461,8 @@ export const applicationRouter = createTRPCRouter({
 					message: "You are not authorized to save this github provider",
 				});
 			}
+			const provider = await findGithubById(input.githubId);
+			assertGitProviderAccess(ctx.session, provider.gitProvider);
 			await updateApplication(input.applicationId, {
 				repository: input.repository,
 				branch: input.branch,
@@ -446,6 +491,8 @@ export const applicationRouter = createTRPCRouter({
 					message: "You are not authorized to save this gitlab provider",
 				});
 			}
+			const provider = await findGitlabById(input.gitlabId);
+			assertGitProviderAccess(ctx.session, provider.gitProvider);
 			await updateApplication(input.applicationId, {
 				gitlabRepository: input.gitlabRepository,
 				gitlabOwner: input.gitlabOwner,
@@ -475,6 +522,8 @@ export const applicationRouter = createTRPCRouter({
 					message: "You are not authorized to save this bitbucket provider",
 				});
 			}
+			const provider = await findBitbucketById(input.bitbucketId);
+			assertGitProviderAccess(ctx.session, provider.gitProvider);
 			await updateApplication(input.applicationId, {
 				bitbucketRepository: input.bitbucketRepository,
 				bitbucketOwner: input.bitbucketOwner,
@@ -502,6 +551,8 @@ export const applicationRouter = createTRPCRouter({
 					message: "You are not authorized to save this gitea provider",
 				});
 			}
+			const provider = await findGiteaById(input.giteaId);
+			assertGitProviderAccess(ctx.session, provider.gitProvider);
 			await updateApplication(input.applicationId, {
 				giteaRepository: input.giteaRepository,
 				giteaOwner: input.giteaOwner,
@@ -1010,7 +1061,9 @@ export const applicationRouter = createTRPCRouter({
 				baseConditions.push(eq(environments.projectId, input.projectId));
 			}
 			if (input.environmentId) {
-				baseConditions.push(eq(applications.environmentId, input.environmentId));
+				baseConditions.push(
+					eq(applications.environmentId, input.environmentId),
+				);
 			}
 
 			if (input.q?.trim()) {

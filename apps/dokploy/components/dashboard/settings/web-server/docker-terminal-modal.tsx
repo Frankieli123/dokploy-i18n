@@ -41,6 +41,7 @@ interface Props {
 	children?: React.ReactNode;
 	serverId?: string;
 	appType?: "stack" | "docker-compose";
+	serviceId?: string;
 }
 
 export const DockerTerminalModal = ({
@@ -48,6 +49,7 @@ export const DockerTerminalModal = ({
 	appName,
 	serverId,
 	appType,
+	serviceId,
 }: Props) => {
 	const { t } = useTranslation("common");
 	const { data, isLoading } = api.docker.getContainersByAppNameMatch.useQuery(
@@ -139,6 +141,7 @@ export const DockerTerminalModal = ({
 					serverId={serverId || ""}
 					id="terminal"
 					containerId={containerId || "select-a-container"}
+					serviceId={serviceId}
 				/>
 				<Dialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
 					<DialogContent onEscapeKeyDown={(event) => event.preventDefault()}>

@@ -241,6 +241,7 @@ export const ShowGeneralPostgres = ({ postgresId }: Props) => {
 						<DockerTerminalModal
 							appName={data?.appName || ""}
 							serverId={data?.serverId || ""}
+							serviceId={data?.postgresId}
 						>
 							<Button
 								variant="outline"
@@ -281,4 +282,3 @@ export const ShowGeneralPostgres = ({ postgresId }: Props) => {
 		</>
 	);
 };
-

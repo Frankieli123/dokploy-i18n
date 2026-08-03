@@ -9,6 +9,7 @@ import {
 	haveActiveServices,
 	IS_CLOUD,
 	removeDeploymentsByServerId,
+	redactServerSshKey,
 	serverAudit,
 	serverSetup,
 	serverValidate,
@@ -20,7 +21,11 @@ import { observable } from "@trpc/server/observable";
 import { and, desc, eq, getTableColumns, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { updateServersBasedOnQuantity } from "@/pages/api/stripe/webhook";
-import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
+import {
+	createTRPCRouter,
+	protectedProcedure,
+	withPermission,
+} from "@/server/api/trpc";
 import { db } from "@/server/db";
 import {
 	apiCreateServer,
@@ -66,7 +71,7 @@ export const serverRouter = createTRPCRouter({
 			}
 		}),
 
-	one: protectedProcedure
+	one: withPermission("server", "read")
 		.input(apiFindOneServer)
 		.query(async ({ input, ctx }) => {
 			const server = await findServerById(input.serverId);
@@ -77,12 +82,18 @@ export const serverRouter = createTRPCRouter({
 				});
 			}
 
-			return server;
+			return redactServerSshKey(server);
 		}),
-	getDefaultCommand: protectedProcedure
+	getDefaultCommand: withPermission("server", "read")
 		.input(apiFindOneServer)
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
 			const server = await findServerById(input.serverId);
+			if (server.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this server",
+				});
+			}
 			const isBuildServer = server.serverType === "build";
 			return defaultCommand(isBuildServer);
 		}),
@@ -348,7 +359,7 @@ export const serverRouter = createTRPCRouter({
 				throw error;
 			}
 		}),
-	remove: protectedProcedure
+	remove: withPermission("server", "delete")
 		.input(apiRemoveServer)
 		.mutation(async ({ input, ctx }) => {
 			try {
@@ -377,7 +388,7 @@ export const serverRouter = createTRPCRouter({
 					await updateServersBasedOnQuantity(admin.id, admin.serversQuantity);
 				}
 
-				return currentServer;
+				return redactServerSshKey(currentServer);
 			} catch (error) {
 				throw error;
 			}

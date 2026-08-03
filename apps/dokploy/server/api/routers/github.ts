@@ -26,8 +26,8 @@ export const githubRouter = createTRPCRouter({
 			const githubProvider = await findGithubById(input.githubId);
 			if (
 				githubProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
-				githubProvider.gitProvider.userId === ctx.session.userId
+					ctx.session.activeOrganizationId ||
+				githubProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({
 					code: "UNAUTHORIZED",
@@ -108,8 +108,8 @@ export const githubRouter = createTRPCRouter({
 			const githubProvider = await findGithubById(input.githubId);
 			if (
 				githubProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
-				githubProvider.gitProvider.userId === ctx.session.userId
+					ctx.session.activeOrganizationId ||
+				githubProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({
 					code: "UNAUTHORIZED",
@@ -124,8 +124,8 @@ export const githubRouter = createTRPCRouter({
 			const githubProvider = await findGithubById(input.githubId || "");
 			if (
 				githubProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
-				githubProvider.gitProvider.userId === ctx.session.userId
+					ctx.session.activeOrganizationId ||
+				githubProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				//TODO: Remove this line when the cloud version is ready
 				throw new TRPCError({
@@ -170,8 +170,8 @@ export const githubRouter = createTRPCRouter({
 				const githubProvider = await findGithubById(input.githubId);
 				if (
 					githubProvider.gitProvider.organizationId !==
-						ctx.session.activeOrganizationId &&
-					githubProvider.gitProvider.userId === ctx.session.userId
+						ctx.session.activeOrganizationId ||
+					githubProvider.gitProvider.userId !== ctx.session.userId
 				) {
 					throw new TRPCError({
 						code: "UNAUTHORIZED",
@@ -193,8 +193,8 @@ export const githubRouter = createTRPCRouter({
 			const githubProvider = await findGithubById(input.githubId);
 			if (
 				githubProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
-				githubProvider.gitProvider.userId === ctx.session.userId
+					ctx.session.activeOrganizationId ||
+				githubProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({
 					code: "UNAUTHORIZED",

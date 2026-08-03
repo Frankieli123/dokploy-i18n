@@ -232,6 +232,7 @@ export const ShowGeneralRedis = ({ redisId }: Props) => {
 						<DockerTerminalModal
 							appName={data?.appName || ""}
 							serverId={data?.serverId || ""}
+							serviceId={data?.redisId}
 						>
 							<Button
 								variant="outline"
@@ -272,4 +273,3 @@ export const ShowGeneralRedis = ({ redisId }: Props) => {
 		</>
 	);
 };
-

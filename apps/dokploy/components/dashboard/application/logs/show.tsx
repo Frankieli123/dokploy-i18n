@@ -51,9 +51,10 @@ export const badgeStateColor = (state: string) => {
 interface Props {
 	appName: string;
 	serverId?: string;
+	serviceId: string;
 }
 
-export const ShowDockerLogs = ({ appName, serverId }: Props) => {
+export const ShowDockerLogs = ({ appName, serverId, serviceId }: Props) => {
 	const { t } = useTranslation("common");
 	const [containerId, setContainerId] = useState<string | undefined>();
 	const [option, setOption] = useState<"swarm" | "native">("native");
@@ -194,6 +195,7 @@ export const ShowDockerLogs = ({ appName, serverId }: Props) => {
 					serverId={serverId || ""}
 					containerId={containerId || "select-a-container"}
 					runType={option}
+					serviceId={serviceId}
 				/>
 			</CardContent>
 		</Card>

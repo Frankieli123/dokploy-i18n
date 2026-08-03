@@ -41,7 +41,7 @@ export const bitbucketRouter = createTRPCRouter({
 			const bitbucketProvider = await findBitbucketById(input.bitbucketId);
 			if (
 				bitbucketProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
+					ctx.session.activeOrganizationId ||
 				bitbucketProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({
@@ -77,7 +77,7 @@ export const bitbucketRouter = createTRPCRouter({
 			const bitbucketProvider = await findBitbucketById(input.bitbucketId);
 			if (
 				bitbucketProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
+					ctx.session.activeOrganizationId ||
 				bitbucketProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({
@@ -95,7 +95,7 @@ export const bitbucketRouter = createTRPCRouter({
 			);
 			if (
 				bitbucketProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
+					ctx.session.activeOrganizationId ||
 				bitbucketProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({
@@ -112,7 +112,7 @@ export const bitbucketRouter = createTRPCRouter({
 				const bitbucketProvider = await findBitbucketById(input.bitbucketId);
 				if (
 					bitbucketProvider.gitProvider.organizationId !==
-						ctx.session.activeOrganizationId &&
+						ctx.session.activeOrganizationId ||
 					bitbucketProvider.gitProvider.userId !== ctx.session.userId
 				) {
 					throw new TRPCError({
@@ -136,7 +136,7 @@ export const bitbucketRouter = createTRPCRouter({
 			const bitbucketProvider = await findBitbucketById(input.bitbucketId);
 			if (
 				bitbucketProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
+					ctx.session.activeOrganizationId ||
 				bitbucketProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({

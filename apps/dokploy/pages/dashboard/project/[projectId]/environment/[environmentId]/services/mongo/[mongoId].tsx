@@ -269,6 +269,7 @@ const Mongo = (
 															<div> */}
 														<ContainerFreeMonitoring
 															appName={data?.appName || ""}
+															serviceId={data?.mongoId}
 														/>
 														{/* </div> */}
 														{/* )} */}
@@ -282,6 +283,7 @@ const Mongo = (
 											<ShowDockerLogs
 												serverId={data?.serverId || ""}
 												appName={data?.appName || ""}
+												serviceId={data?.mongoId || mongoId}
 											/>
 										</div>
 									</TabsContent>

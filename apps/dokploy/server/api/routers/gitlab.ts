@@ -43,7 +43,7 @@ export const gitlabRouter = createTRPCRouter({
 			const gitlabProvider = await findGitlabById(input.gitlabId);
 			if (
 				gitlabProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
+					ctx.session.activeOrganizationId ||
 				gitlabProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({
@@ -87,7 +87,7 @@ export const gitlabRouter = createTRPCRouter({
 			const gitlabProvider = await findGitlabById(input.gitlabId);
 			if (
 				gitlabProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
+					ctx.session.activeOrganizationId ||
 				gitlabProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({
@@ -104,7 +104,7 @@ export const gitlabRouter = createTRPCRouter({
 			const gitlabProvider = await findGitlabById(input.gitlabId || "");
 			if (
 				gitlabProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
+					ctx.session.activeOrganizationId ||
 				gitlabProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({
@@ -121,7 +121,7 @@ export const gitlabRouter = createTRPCRouter({
 				const gitlabProvider = await findGitlabById(input.gitlabId || "");
 				if (
 					gitlabProvider.gitProvider.organizationId !==
-						ctx.session.activeOrganizationId &&
+						ctx.session.activeOrganizationId ||
 					gitlabProvider.gitProvider.userId !== ctx.session.userId
 				) {
 					throw new TRPCError({
@@ -145,7 +145,7 @@ export const gitlabRouter = createTRPCRouter({
 			const gitlabProvider = await findGitlabById(input.gitlabId);
 			if (
 				gitlabProvider.gitProvider.organizationId !==
-					ctx.session.activeOrganizationId &&
+					ctx.session.activeOrganizationId ||
 				gitlabProvider.gitProvider.userId !== ctx.session.userId
 			) {
 				throw new TRPCError({

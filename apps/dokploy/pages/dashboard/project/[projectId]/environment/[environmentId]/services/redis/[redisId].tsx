@@ -265,6 +265,7 @@ const Redis = (
 															<div> */}
 														<ContainerFreeMonitoring
 															appName={data?.appName || ""}
+															serviceId={data?.redisId}
 														/>
 														{/* </div> */}
 														{/* )} */}
@@ -278,6 +279,7 @@ const Redis = (
 											<ShowDockerLogs
 												serverId={data?.serverId || ""}
 												appName={data?.appName || ""}
+												serviceId={data?.redisId || redisId}
 											/>
 										</div>
 									</TabsContent>

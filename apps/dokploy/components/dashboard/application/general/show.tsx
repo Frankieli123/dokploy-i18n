@@ -259,6 +259,7 @@ export const ShowGeneralApplication = ({ applicationId }: Props) => {
 					<DockerTerminalModal
 						appName={data?.appName || ""}
 						serverId={data?.serverId || ""}
+						serviceId={data?.applicationId}
 					>
 						<Button
 							variant="outline"
@@ -322,4 +323,3 @@ export const ShowGeneralApplication = ({ applicationId }: Props) => {
 		</>
 	);
 };
-

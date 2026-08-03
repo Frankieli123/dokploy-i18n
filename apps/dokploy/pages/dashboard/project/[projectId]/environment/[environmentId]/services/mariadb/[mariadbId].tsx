@@ -268,6 +268,7 @@ const Mariadb = (
 															<div> */}
 														<ContainerFreeMonitoring
 															appName={data?.appName || ""}
+															serviceId={data?.mariadbId}
 														/>
 														{/* </div> */}
 														{/* )} */}
@@ -281,6 +282,7 @@ const Mariadb = (
 											<ShowDockerLogs
 												serverId={data?.serverId || ""}
 												appName={data?.appName || ""}
+												serviceId={data?.mariadbId || mariadbId}
 											/>
 										</div>
 									</TabsContent>

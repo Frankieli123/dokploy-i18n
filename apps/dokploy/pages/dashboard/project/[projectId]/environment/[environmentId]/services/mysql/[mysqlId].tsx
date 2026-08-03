@@ -247,6 +247,7 @@ const MySql = (
 														<>
 															<ContainerFreeMonitoring
 																appName={data?.appName || ""}
+																serviceId={data?.mysqlId}
 															/>
 														</>
 													)}
@@ -258,6 +259,7 @@ const MySql = (
 												<ShowDockerLogs
 													serverId={data?.serverId || ""}
 													appName={data?.appName || ""}
+													serviceId={data?.mysqlId || mysqlId}
 												/>
 											</div>
 										</TabsContent>

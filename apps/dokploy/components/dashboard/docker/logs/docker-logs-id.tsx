@@ -23,6 +23,7 @@ interface Props {
 	containerId: string;
 	serverId?: string | null;
 	runType: "swarm" | "native";
+	serviceId?: string;
 }
 
 export const priorities = [
@@ -52,6 +53,7 @@ export const DockerLogsId: React.FC<Props> = ({
 	containerId,
 	serverId,
 	runType,
+	serviceId,
 }) => {
 	const { t } = useTranslation("common");
 	const { data } = api.docker.getConfig.useQuery(
@@ -157,6 +159,9 @@ export const DockerLogsId: React.FC<Props> = ({
 		if (serverId) {
 			params.append("serverId", serverId);
 		}
+		if (serviceId) {
+			params.append("serviceId", serviceId);
+		}
 
 		const wsUrl = `${protocol}//${
 			window.location.host
@@ -223,7 +228,7 @@ export const DockerLogsId: React.FC<Props> = ({
 				ws.close();
 			}
 		};
-	}, [containerId, serverId, lines, search, since]);
+	}, [containerId, serverId, serviceId, runType, lines, search, since]);
 
 	const handleDownload = () => {
 		const logContent = filteredLogs

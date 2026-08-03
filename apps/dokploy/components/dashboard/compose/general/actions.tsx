@@ -198,6 +198,7 @@ export const ComposeActions = ({ composeId }: Props) => {
 				appName={data?.appName || ""}
 				serverId={data?.serverId || ""}
 				appType={data?.composeType || "docker-compose"}
+				serviceId={data?.composeId}
 			>
 				<Button
 					variant="outline"
@@ -233,4 +234,3 @@ export const ComposeActions = ({ composeId }: Props) => {
 		</div>
 	);
 };
-
